@@ -371,33 +371,54 @@ class TapWalker:
         return actions
 
     def _capture_screen(self, idx: int) -> dict | None:
-        """Dump UI hierarchy and screenshot from device."""
+        """Dump UI hierarchy and screenshot from device.
+
+        File structure:
+          dynamic/
+          ├── screenshots/           ← 고유 화면별 대표 스크린샷
+          │   ├── screen_000.png
+          │   └── screen_001.png
+          ├── xml/                   ← 고유 화면별 UI XML
+          │   ├── screen_000.xml
+          │   └── screen_001.xml
+          ├── raw/                   ← 모든 이벤트의 원본 (디버깅용)
+          │   ├── capture_0000.png
+          │   └── capture_0000.xml
+          └── states/                ← 상태 JSON
+              └── state_0000.json
+        """
         import subprocess
 
+        # Ensure directories
+        (self.output_dir / "screenshots").mkdir(exist_ok=True)
+        (self.output_dir / "xml").mkdir(exist_ok=True)
+        (self.output_dir / "raw").mkdir(exist_ok=True)
+        (self.output_dir / "states").mkdir(exist_ok=True)
+
         try:
-            # UI dump (use shell quoting to avoid Git Bash path mangling)
+            # UI dump
             subprocess.run(["adb", "-s", self.device_serial, "shell",
                             "uiautomator dump //sdcard//sa_dump.xml"],
                            capture_output=True, timeout=10, shell=False)
 
-            xml_path = self.output_dir / "states" / f"dump_{idx:04d}.xml"
+            raw_xml = self.output_dir / "raw" / f"capture_{idx:04d}.xml"
             subprocess.run(["adb", "-s", self.device_serial, "pull",
-                            "//sdcard//sa_dump.xml", str(xml_path)],
+                            "//sdcard//sa_dump.xml", str(raw_xml)],
                            capture_output=True, timeout=10)
 
             # Screenshot
-            screen_path = self.output_dir / "states" / f"screen_{idx:04d}.png"
+            raw_screen = self.output_dir / "raw" / f"capture_{idx:04d}.png"
             subprocess.run(["adb", "-s", self.device_serial, "shell",
                             "screencap -p //sdcard//sa_screen.png"],
                            capture_output=True, timeout=10)
             subprocess.run(["adb", "-s", self.device_serial, "pull",
-                            "//sdcard//sa_screen.png", str(screen_path)],
+                            "//sdcard//sa_screen.png", str(raw_screen)],
                            capture_output=True, timeout=10)
 
             # Parse XML
-            views = self._parse_ui_xml(xml_path)
+            views = self._parse_ui_xml(raw_xml)
 
-            # Get current activity (use encoding to handle Korean)
+            # Get current activity
             activity_result = subprocess.run(
                 ["adb", "-s", self.device_serial, "shell",
                  "dumpsys activity activities"],
@@ -418,12 +439,26 @@ class TapWalker:
                 f"{activity}|{json.dumps([v.get('text','') for v in views[:20]])}".encode()
             ).hexdigest()
 
+            # Determine canonical screen ID (will be set by main loop later)
+            # For now, use structure_str as screenshot filename
+            screen_name = f"screen_{hashlib.sha256(structure_str.encode()).hexdigest()[:8]}"
+
+            # Save screenshot to canonical location (only first time per screen)
+            canonical_screen = self.output_dir / "screenshots" / f"{screen_name}.png"
+            if not canonical_screen.exists() and raw_screen.exists():
+                import shutil
+                shutil.copy2(raw_screen, canonical_screen)
+                # Also save XML
+                canonical_xml = self.output_dir / "xml" / f"{screen_name}.xml"
+                if raw_xml.exists():
+                    shutil.copy2(raw_xml, canonical_xml)
+
             state = {
                 "state_str": state_str,
                 "structure_str": structure_str,
                 "activity": activity,
                 "views": views,
-                "screenshot_path": str(screen_path) if screen_path.exists() else "",
+                "screenshot_path": str(canonical_screen) if canonical_screen.exists() else str(raw_screen) if raw_screen.exists() else "",
             }
             self.states.append(state)
 
