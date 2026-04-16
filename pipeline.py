@@ -47,7 +47,7 @@ class PipelineState:
 
     def save(self, path: Path) -> None:
         self.updated_at = time.time()
-        path.write_text(json.dumps(asdict(self, encoding="utf-8"), indent=2, ensure_ascii=False))
+        path.write_text(json.dumps(asdict(self), indent=2, ensure_ascii=False), encoding="utf-8")
 
     @classmethod
     def load(cls, path: Path) -> "PipelineState":

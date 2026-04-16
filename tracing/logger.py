@@ -111,5 +111,5 @@ class TraceLogger:
         return []
 
     def _append_jsonl(self, data: dict) -> None:
-        with open(self.trace_file, "a", encoding="utf-8") as f:
+        with open(self.trace_file, "a") as f:
             f.write(json.dumps(data, ensure_ascii=False) + "\n")

@@ -34,12 +34,12 @@ def run_stage5(config: PipelineConfig) -> None:
     # 1. Analyze each screen
     screen_analyses = analyze_screens(client, screen_cards, metadata)
     sa_path = config.analysis_dir / "screen_analyses.json"
-    sa_path.write_text(json.dumps(screen_analyses, indent=2, ensure_ascii=False, encoding="utf-8"))
+    sa_path.write_text(json.dumps(screen_analyses, indent=2, ensure_ascii=False), encoding="utf-8")
 
     # 2. Derive subflows
     subflows = derive_subflows(client, screen_analyses, screen_cards, metadata)
     sg_path = config.analysis_dir / "subflows.json"
-    sg_path.write_text(json.dumps(subflows, indent=2, ensure_ascii=False, encoding="utf-8"))
+    sg_path.write_text(json.dumps(subflows, indent=2, ensure_ascii=False), encoding="utf-8")
 
     logger.info(
         "LLM analysis complete: %d screens analyzed, %d subflows derived",

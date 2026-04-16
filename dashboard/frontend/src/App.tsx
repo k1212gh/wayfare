@@ -82,6 +82,7 @@ export default function App() {
               onNodeSelect={setSelectedNode}
               filterCategory={filterCategory}
               searchQuery={searchQuery}
+              tourId={activeTourId}
             />
           )}
         </div>

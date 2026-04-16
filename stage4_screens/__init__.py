@@ -36,7 +36,7 @@ def run_stage4(config: PipelineConfig) -> None:
 
     # Save results
     output_path = config.analysis_dir / "screen_cards.json"
-    output_path.write_text(json.dumps(screen_cards, indent=2, ensure_ascii=False, encoding="utf-8"))
+    output_path.write_text(json.dumps(screen_cards, indent=2, ensure_ascii=False), encoding="utf-8")
 
     logger.info(
         "Preprocessing complete: %d states → %d pages → %d context units",

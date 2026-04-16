@@ -1,11 +1,13 @@
-import React, { useCallback, useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ReactFlow,
   Node,
   Edge,
   Background,
+  BackgroundVariant,
   Controls,
   MiniMap,
+  Panel,
   useNodesState,
   useEdgesState,
   MarkerType,
@@ -19,56 +21,58 @@ interface ScreenMapViewProps {
   onNodeSelect: (node: any) => void;
   filterCategory: string;
   searchQuery: string;
+  tourId: string;
 }
 
-/* No gradients, no shadows — border-only category indicators */
-const CATEGORY_DOT: Record<string, string> = {
-  home: '#0a0a0a',
-  login: '#FF4D1C',
-  settings: '#6b7280',
-  search: '#0a0a0a',
-  list: '#0a0a0a',
-  content_detail: '#0a0a0a',
-  form: '#FF4D1C',
-  profile: '#6b7280',
+const CATEGORY_COLOR: Record<string, string> = {
+  home: '#2563eb',
+  login: '#dc2626',
+  settings: '#7c3aed',
+  search: '#059669',
+  list: '#0891b2',
+  content_detail: '#d97706',
+  form: '#e11d48',
+  profile: '#4f46e5',
   navigation: '#6b7280',
-  other: '#6b7280',
+  other: '#9ca3af',
 };
 
-function buildLayout(nodes: any[], edges: any[]) {
+function buildLayout(nodes: any[], edges: any[], showScreenshots: boolean, tourId: string) {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: 'TB', nodesep: 50, ranksep: 70 });
+  const nodeW = showScreenshots ? 240 : 200;
+  const nodeH = showScreenshots ? 160 : 56;
+  g.setGraph({ rankdir: 'TB', nodesep: 40, ranksep: showScreenshots ? 100 : 70 });
 
   const flowNodes: Node[] = [];
   const flowEdges: Edge[] = [];
 
-  for (const n of nodes) g.setNode(n.screen_id, { width: 200, height: 52 });
+  for (const n of nodes) g.setNode(n.screen_id, { width: nodeW, height: nodeH });
   for (const e of edges) g.setEdge(e.from, e.to);
   dagre.layout(g);
 
   for (const n of nodes) {
     const pos = g.node(n.screen_id);
-    const dot = CATEGORY_DOT[n.functional_category] || '#6b7280';
-    const isEntry = n.functional_category === 'home' || n.functional_category === 'login';
+    const color = CATEGORY_COLOR[n.functional_category] || '#9ca3af';
+    const isEntry = n.screen_id === nodes[0]?.screen_id;
 
     flowNodes.push({
       id: n.screen_id,
-      data: { label: n.label || n.screen_id, ...n },
-      position: { x: (pos?.x || 0) - 100, y: (pos?.y || 0) - 26 },
-      style: {
-        background: '#ffffff',
+      data: { label: n.label || n.screen_id, ...n, showScreenshots, tourId, color },
+      position: { x: (pos?.x || 0) - nodeW / 2, y: (pos?.y || 0) - nodeH / 2 },
+      type: showScreenshots ? 'screenshotNode' : 'default',
+      style: showScreenshots ? undefined : {
+        background: '#fff',
         color: '#0a0a0a',
-        border: isEntry ? '2px solid #0a0a0a' : '1px solid #e5e5e5',
+        border: isEntry ? `2px solid ${color}` : '1px solid #d4d4d4',
         borderRadius: '8px',
         padding: '10px 14px',
         fontSize: '12px',
         fontFamily: "'Inter', sans-serif",
         fontWeight: 500,
-        width: 200,
+        width: nodeW,
         cursor: 'pointer',
-        borderLeft: `3px solid ${dot}`,
-        lineHeight: '1.3',
+        borderLeft: `4px solid ${color}`,
       },
     });
   }
@@ -76,35 +80,28 @@ function buildLayout(nodes: any[], edges: any[]) {
   for (const e of edges) {
     const isBack = e.trigger_action === 'press_back';
     const isAuto = e.trigger_action === 'auto';
-    const isConditional = !!e.condition;
+    const isWalk = e.source === 'walk';
+    const label = e.trigger_widget
+      ? `${e.trigger_action} ${e.trigger_widget}`
+      : e.trigger_action || '';
 
     flowEdges.push({
       id: e.edge_id || `${e.from}-${e.to}`,
       source: e.from,
       target: e.to,
-      label: e.trigger_widget
-        ? `${e.trigger_action} ${e.trigger_widget}`
-        : e.trigger_action || '',
-      labelStyle: {
-        fontSize: 10,
-        fill: '#6b7280',
-        fontFamily: "'JetBrains Mono', monospace",
-      },
-      labelBgStyle: {
-        fill: '#f7f7f7',
-        fillOpacity: 0.9,
-      },
+      label: label.length > 25 ? label.slice(0, 25) + '...' : label,
+      labelStyle: { fontSize: 10, fill: '#6b7280', fontFamily: "'JetBrains Mono', monospace" },
+      labelBgStyle: { fill: '#fff', fillOpacity: 0.95, rx: 3, ry: 3 },
       labelBgPadding: [4, 2] as [number, number],
       style: {
-        stroke: isBack ? '#d4d4d4' : '#0a0a0a',
-        strokeWidth: isBack ? 1 : 1.5,
-        strokeDasharray: isConditional || isAuto || isBack ? '4,4' : undefined,
+        stroke: isBack ? '#d4d4d4' : isWalk ? '#2563eb' : '#404040',
+        strokeWidth: isBack ? 1 : isWalk ? 2 : 1.5,
+        strokeDasharray: isBack || isAuto ? '6,4' : undefined,
       },
       markerEnd: {
         type: MarkerType.ArrowClosed,
-        width: 10,
-        height: 10,
-        color: isBack ? '#d4d4d4' : '#0a0a0a',
+        width: 12, height: 12,
+        color: isBack ? '#d4d4d4' : isWalk ? '#2563eb' : '#404040',
       },
     });
   }
@@ -112,43 +109,79 @@ function buildLayout(nodes: any[], edges: any[]) {
   return { nodes: flowNodes, edges: flowEdges };
 }
 
-export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery }: ScreenMapViewProps) {
+function ScreenshotNode({ data }: { data: any }) {
+  const color = data.color || '#9ca3af';
+  const screenshotUrl = `/api/tours/${data.tourId}/screenshot/${data.screen_id}`;
+  const [imgError, setImgError] = useState(false);
+
+  return (
+    <div style={{
+      width: 240, background: '#fff', border: '1px solid #d4d4d4',
+      borderRadius: '10px', overflow: 'hidden', cursor: 'pointer',
+      borderTop: `3px solid ${color}`,
+    }}>
+      <div style={{ height: 100, background: '#f5f5f5', overflow: 'hidden', position: 'relative' }}>
+        {!imgError ? (
+          <img src={screenshotUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            onError={() => setImgError(true)} />
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#d4d4d4', fontSize: '11px' }}>
+            No screenshot
+          </div>
+        )}
+        <span style={{
+          position: 'absolute', top: 4, right: 4, padding: '1px 6px',
+          fontSize: '9px', fontWeight: 600, borderRadius: '4px',
+          background: color, color: '#fff', fontFamily: "'JetBrains Mono', monospace",
+        }}>
+          {data.functional_category || 'other'}
+        </span>
+      </div>
+      <div style={{ padding: '8px 10px' }}>
+        <div style={{ fontSize: '11px', fontWeight: 600, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
+          {data.label || data.screen_id}
+        </div>
+        <div style={{ fontSize: '9px', color: '#9ca3af', marginTop: '2px', fontFamily: "'JetBrains Mono', monospace" }}>
+          {(data.activity || '').split('.').pop()}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const nodeTypes = { screenshotNode: ScreenshotNode };
+
+export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery, tourId }: ScreenMapViewProps) {
+  const [showScreenshots, setShowScreenshots] = useState(false);
+
   const filteredNodes = useMemo(() => {
     let nodes = graph.nodes;
-    if (filterCategory) {
-      nodes = nodes.filter((n: any) => n.functional_category === filterCategory);
-    }
+    if (filterCategory) nodes = nodes.filter((n: any) => n.functional_category === filterCategory);
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      nodes = nodes.filter(
-        (n: any) =>
-          (n.label || '').toLowerCase().includes(q) ||
-          (n.screen_purpose || '').toLowerCase().includes(q) ||
-          (n.activity || '').toLowerCase().includes(q)
+      nodes = nodes.filter((n: any) =>
+        (n.label || '').toLowerCase().includes(q) ||
+        (n.screen_purpose || '').toLowerCase().includes(q) ||
+        (n.activity || '').toLowerCase().includes(q)
       );
     }
     return nodes;
   }, [graph.nodes, filterCategory, searchQuery]);
 
-  const filteredNodeIds = useMemo(
-    () => new Set(filteredNodes.map((n: any) => n.screen_id)),
-    [filteredNodes]
-  );
-
+  const filteredNodeIds = useMemo(() => new Set(filteredNodes.map((n: any) => n.screen_id)), [filteredNodes]);
   const filteredEdges = useMemo(
     () => graph.edges.filter((e: any) => filteredNodeIds.has(e.from) && filteredNodeIds.has(e.to)),
     [graph.edges, filteredNodeIds]
   );
 
   const layout = useMemo(
-    () => buildLayout(filteredNodes, filteredEdges),
-    [filteredNodes, filteredEdges]
+    () => buildLayout(filteredNodes, filteredEdges, showScreenshots, tourId),
+    [filteredNodes, filteredEdges, showScreenshots, tourId]
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(layout.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(layout.edges);
 
-  // Sync layout changes into state (e.g. when graph data changes after navigation)
   useEffect(() => { setNodes(layout.nodes); }, [layout.nodes, setNodes]);
   useEffect(() => { setEdges(layout.edges); }, [layout.edges, setEdges]);
 
@@ -157,36 +190,61 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
     [onNodeSelect]
   );
 
+  const downloadKG = useCallback(() => {
+    const blob = new Blob([JSON.stringify({ nodes: graph.nodes, edges: graph.edges }, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = 'knowledge_graph.json'; a.click();
+  }, [graph]);
+
   return (
     <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      onNodesChange={onNodesChange}
-      onEdgesChange={onEdgesChange}
-      onNodeClick={onNodeClick}
-      fitView
-      minZoom={0.1}
-      maxZoom={2}
+      nodes={nodes} edges={edges}
+      onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
+      onNodeClick={onNodeClick} nodeTypes={nodeTypes}
+      fitView minZoom={0.05} maxZoom={2}
       proOptions={{ hideAttribution: true }}
     >
-      <Background color="#e5e5e5" gap={24} size={1} />
-      <Controls
-        showInteractive={false}
-        style={{
-          border: '1px solid #e5e5e5',
-          borderRadius: '8px',
-          overflow: 'hidden',
-        }}
-      />
+      <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#d4d4d4" />
+      <Controls showInteractive={false} style={{ border: '1px solid #e5e5e5', borderRadius: '8px', overflow: 'hidden' }} />
       <MiniMap
-        nodeColor={() => '#0a0a0a'}
-        maskColor="rgba(0,0,0,0.04)"
-        style={{
-          border: '1px solid #e5e5e5',
-          borderRadius: '8px',
-          overflow: 'hidden',
-        }}
+        nodeColor={(n) => CATEGORY_COLOR[(n.data as any)?.functional_category || 'other'] || '#9ca3af'}
+        maskColor="rgba(0,0,0,0.06)"
+        style={{ border: '1px solid #e5e5e5', borderRadius: '8px', overflow: 'hidden' }}
       />
+
+      <Panel position="top-right">
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <PanelBtn active={showScreenshots} onClick={() => setShowScreenshots(!showScreenshots)}>
+            {showScreenshots ? 'Hide Screenshots' : 'Show Screenshots'}
+          </PanelBtn>
+          <PanelBtn onClick={downloadKG}>Download ScreenMap</PanelBtn>
+        </div>
+      </Panel>
+
+      <Panel position="bottom-left">
+        <div style={{
+          display: 'flex', gap: '8px', flexWrap: 'wrap', padding: '6px 10px',
+          background: 'rgba(255,255,255,0.95)', border: '1px solid #e5e5e5', borderRadius: '6px', fontSize: '10px',
+        }}>
+          {Object.entries(CATEGORY_COLOR).slice(0, 7).map(([cat, color]) => (
+            <span key={cat} style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+              <span style={{ width: 8, height: 8, borderRadius: '2px', background: color }} /> {cat}
+            </span>
+          ))}
+          <span style={{ color: '#2563eb' }}>── walked</span>
+          <span style={{ color: '#d4d4d4' }}>- - back</span>
+        </div>
+      </Panel>
     </ReactFlow>
+  );
+}
+
+function PanelBtn({ children, onClick, active }: { children: React.ReactNode; onClick: () => void; active?: boolean }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: '5px 10px', fontSize: '11px', fontWeight: 500, fontFamily: 'var(--font)',
+      border: '1px solid #e5e5e5', borderRadius: '6px', cursor: 'pointer',
+      background: active ? '#0a0a0a' : '#fff', color: active ? '#fff' : '#404040',
+    }}>{children}</button>
   );
 }

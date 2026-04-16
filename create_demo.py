@@ -13,7 +13,7 @@ for d in ["apk", "static", "dynamic", "analysis", "output"]:
     "stage": "SCREENMAP_GENERATED",
     "apk_path": "demo.apk",
     "package_name": "com.example.app",
-    "started_at": time.time(, encoding="utf-8"),
+    "started_at": time.time(),
     "updated_at": time.time(),
     "error": None,
 }, indent=2))
@@ -124,6 +124,6 @@ screenmap = {
 }
 
 (base / "output" / "screen_map.json").write_text(
-    json.dumps(screenmap, indent=2, ensure_ascii=False, encoding="utf-8"), encoding="utf-8"
+    json.dumps(screenmap, indent=2, ensure_ascii=False), encoding="utf-8"
 )
 print(f"Demo data created at workspace/{tour_id}/")

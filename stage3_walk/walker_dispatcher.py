@@ -69,7 +69,7 @@ def _run_droidbot(apk_path, device_serial, output_dir, timeout, policy, is_emula
     log_path = Path(output_dir) / "droidbot_log.txt"
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    with open(log_path, "w", encoding="utf-8") as log_file:
+    with open(log_path, "w") as log_file:
         try:
             subprocess.run(cmd, stdout=log_file, stderr=subprocess.STDOUT, timeout=timeout + 300)
         except subprocess.TimeoutExpired:

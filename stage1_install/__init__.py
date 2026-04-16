@@ -25,4 +25,4 @@ def run_stage1(config: PipelineConfig) -> None:
     # Extract metadata
     metadata = extract_metadata(str(target))
     meta_path = config.apk_dir / "metadata.json"
-    meta_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False, encoding="utf-8"))
+    meta_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")

@@ -85,7 +85,7 @@ async def upload_apk(file: UploadFile = File(...)):
         "updated_at": time.time(),
         "error": None,
     }
-    (tour_dir / "pipeline_state.json").write_text(json.dumps(state, indent=2, ensure_ascii=False, encoding="utf-8"), encoding="utf-8")
+    (tour_dir / "pipeline_state.json").write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
     return {"tour_id": tour_id, "status": "uploaded", "filename": file.filename}
 
@@ -143,7 +143,7 @@ async def upload_split_apks(files: list[UploadFile] = File(...)):
         "updated_at": time.time(),
         "error": None,
     }
-    (tour_dir / "pipeline_state.json").write_text(json.dumps(state, indent=2, ensure_ascii=False, encoding="utf-8"), encoding="utf-8")
+    (tour_dir / "pipeline_state.json").write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
     return {"tour_id": tour_id, "status": "uploaded", "filename": f"base.apk (+{len(files)-1} splits)"}
 
@@ -211,7 +211,7 @@ def _run_pipeline_sync(tour_id: str):
                 if stages[sn]["status"] == "running":
                     stages[sn]["status"] = "failed"
 
-        state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False, encoding="utf-8"), encoding="utf-8")
+        state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -288,11 +288,15 @@ def _run_pipeline_sync(tour_id: str):
             run_stage4(config)
             update_stage("CARDS_READY")
 
-            if config.anthropic_api_key:
-                update_stage("LLM_ANALYZING")
+            # LLM analysis (CLI mode doesn't need API key)
+            llm_mode = os.environ.get("LLM_MODE", "cli")
+            if llm_mode == "cli" or config.anthropic_api_key:
+                update_stage("LLM_ANALYZING", detail="Claude CLI analyzing...")
                 from stage5_annotate import run_stage5
                 run_stage5(config)
                 update_stage("ANALYSIS_DONE")
+            else:
+                logger.info("Skipping LLM analysis (no API key and LLM_MODE != cli)")
 
             update_stage("BUILDING_SCREENMAP")
             from stage6_screenmap import run_stage6
@@ -382,7 +386,7 @@ def _build_static_screenmap(config):
     }
 
     output_path = config.output_dir / "screen_map.json"
-    output_path.write_text(json.dumps(screenmap, indent=2, ensure_ascii=False, encoding="utf-8"))
+    output_path.write_text(json.dumps(screenmap, indent=2, ensure_ascii=False), encoding="utf-8")
     logger.info("Built static-only ScreenMap: %d nodes, %d edges", len(nodes), len(edges))
 
 

@@ -162,10 +162,27 @@ class TapWalker:
             event_count += 1
             time.sleep(1)
 
-            # 6. Capture new state and record transition
+            # 6. Capture new state, compute its canonical ID, record transition
             new_screen = self._capture_screen(event_count)
             if new_screen:
-                new_canonical = new_screen.get("canonical_id", new_screen.get("state_str", ""))
+                # Hash the new state to get its canonical ID
+                new_fp = self.hasher.compute_fingerprint(
+                    new_screen.get("views", []),
+                    new_screen.get("activity", ""),
+                    new_screen.get("screenshot_path", ""),
+                )
+                new_match = self.hasher.find_match(new_fp)
+                if new_match:
+                    new_canonical = new_match
+                else:
+                    new_canonical = f"screen_{len(self.hasher.known_fingerprints):03d}"
+                    self.hasher.register(new_canonical, new_fp)
+                    self.hash_stats["new_screens"] += 1
+                    logger.info("  -> NEW screen: %s", new_canonical)
+
+                new_screen["canonical_id"] = new_canonical
+                new_screen["state_str"] = new_canonical
+
                 if new_canonical != prev_canonical:
                     self.transitions.append({
                         "from_screen": prev_canonical,
