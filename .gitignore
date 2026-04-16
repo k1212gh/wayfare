@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.env
+workspace/
+node_modules/
+dist/
+*.db
+*.egg-info/
+.claude/
+/cache/widget_cache.db
+/tmp/

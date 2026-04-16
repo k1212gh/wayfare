@@ -1,0 +1,21 @@
+# ScreenAtlas - App Flow Graph Pipeline
+# Core
+droidbot>=1.0.0
+anthropic>=0.40.0
+networkx>=3.0
+
+# Web server
+fastapi>=0.115.0
+uvicorn>=0.30.0
+
+# Image processing
+Pillow>=10.0
+
+# XML / APK parsing
+lxml>=5.0
+androguard>=4.0
+
+# Utilities
+pydantic>=2.0
+python-multipart>=0.0.9
+aiofiles>=24.0
