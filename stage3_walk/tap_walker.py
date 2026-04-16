@@ -283,9 +283,12 @@ class TapWalker:
             cls = view.get("class", "")
             bounds = view.get("bounds", {})
 
-            # Skip duplicate text elements (e.g., list items with same label)
+            # Skip duplicate elements — but for WebView apps (all View, no text),
+            # use bounds as uniqueness key instead of text
             label = text or desc or rid
-            if label in seen_texts and not rid:
+            if not label:
+                label = bounds  # WebView: use position as unique ID
+            if label in seen_texts:
                 continue
             seen_texts.add(label)
 
@@ -317,9 +320,26 @@ class TapWalker:
             elif "Tab" in cls:
                 score += 2.0
 
-            # Bonus: elements with resource-id (more likely real buttons)
+            # Bonus: elements with resource-id
             if rid:
                 score += 0.5
+
+            # WebView apps: most elements are bare "View" with no id/text
+            # Give them a small position-based diversity bonus
+            if cls == "View" and not rid and not text and not desc:
+                # Use bounds position to spread clicks across screen areas
+                try:
+                    import re
+                    nums = re.findall(r'\d+', str(bounds))
+                    if len(nums) >= 4:
+                        y_center = (int(nums[1]) + int(nums[3])) // 2
+                        # Bottom half of screen (nav area) gets bonus
+                        if y_center > 1500:
+                            score += 1.5  # Likely bottom nav
+                        elif y_center < 300:
+                            score += 1.0  # Likely top nav/header
+                except Exception:
+                    pass
 
             # PENALTY: visited many times
             score -= visit_count * 1.5
