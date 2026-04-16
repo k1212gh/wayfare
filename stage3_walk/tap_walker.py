@@ -123,31 +123,52 @@ class TapWalker:
                 self.stall_count = 0
             self.last_canonical = canonical_id
 
-            if self.stall_count >= 3:
-                logger.info("Stall on same screen, pressing back")
+            if self.stall_count >= 2:
+                logger.info("Stall on %s (%d times), pressing back", canonical_id, self.stall_count)
                 self._press_back()
                 self.back_count += 1
                 event_count += 1
-                if self.back_count >= 5:
-                    logger.info("Too many backs, restarting app")
+                time.sleep(0.5)
+
+                if self.back_count >= 3:
+                    # Restart app + reset tried actions for fresh walk
+                    logger.info("Restarting app + clearing tried_actions for fresh start")
+                    subprocess.run(["adb", "-s", self.device_serial, "shell",
+                                    "input keyevent KEYCODE_HOME"],
+                                   capture_output=True, timeout=5)
+                    time.sleep(1)
                     subprocess.run(["adb", "-s", self.device_serial, "shell",
                                     "am", "start", "-n", f"{package}/{main_activity}"],
                                    capture_output=True, timeout=10)
                     self.back_count = 0
+                    self.stall_count = 0
+                    # Clear tried actions so same screen gets fresh attempts
+                    self.tried_actions.clear()
                     time.sleep(2)
                 continue
 
             # 3. Get actionable elements and score them
             actions = self._get_scored_actions(state)
 
-            if not actions or (actions and actions[0]["score"] < -3.0):
-                # No viable actions (all tried or heavily penalized) → go back
-                logger.info("No viable actions (best=%.1f), pressing back",
-                            actions[0]["score"] if actions else -99)
+            if not actions:
                 self._press_back()
                 self.back_count += 1
                 event_count += 1
+                time.sleep(0.5)
                 continue
+
+            # If best score is very low but there are untried actions, still try them
+            if actions[0]["score"] < -2.0:
+                untried = [a for a in actions if a.get("desc", "") not in self.tried_actions.get(canonical_id, set())]
+                if untried:
+                    actions = untried  # Use untried actions even if scored low
+                else:
+                    logger.info("All %d actions tried on %s, backing out", len(actions), canonical_id)
+                    self._press_back()
+                    self.back_count += 1
+                    event_count += 1
+                    time.sleep(0.5)
+                    continue
 
             # 4. Pick best action (highest unseen score)
             best = actions[0]
@@ -160,7 +181,7 @@ class TapWalker:
             self.tried_actions[canonical_id].add(best.get("desc", ""))
             self._execute_action(best, state)
             event_count += 1
-            time.sleep(1)
+            time.sleep(0.7)  # Faster walk
 
             # 6. Capture new state, compute its canonical ID, record transition
             new_screen = self._capture_screen(event_count)
@@ -234,31 +255,45 @@ class TapWalker:
             seen_texts.add(label)
 
             action_desc = f"click {rid or text or desc or cls}"
+            combined = (rid + text + desc + cls).lower()
 
             # Base score
             score = 1.0
 
-            # Bonus: navigation-like elements (likely leads to NEW screen)
+            # === BONUS: never tried on this screen (biggest priority) ===
+            if action_desc not in self.tried_actions.get(canonical, set()):
+                score += 4.0
+
+            # Bonus: navigation-like elements
             nav_keywords = ["tab", "menu", "nav", "drawer", "settings", "more",
                             "home", "profile", "search", "toolbar", "option",
-                            "notification", "account", "calendar", "event"]
-            if any(k in (rid + text + desc + cls).lower() for k in nav_keywords):
-                score += 3.0
+                            "notification", "account", "calendar", "event",
+                            "write", "create", "add", "new", "compose", "edit",
+                            "back", "close", "cancel", "done", "save",
+                            "detail", "info", "about", "help"]
+            if any(k in combined for k in nav_keywords):
+                score += 2.0
 
-            # Bonus: buttons > text views
+            # Bonus: buttons
             if "Button" in cls:
                 score += 1.5
             elif "ImageView" in cls or "ImageButton" in cls:
                 score += 1.0
+            elif "Tab" in cls:
+                score += 2.0
 
-            # PENALTY: same page visited many times (exponential decay)
-            score -= visit_count * 1.0
+            # Bonus: elements with resource-id (more likely real buttons)
+            if rid:
+                score += 0.5
 
-            # PENALTY: already tried this exact action on this screen
+            # PENALTY: visited many times
+            score -= visit_count * 1.5
+
+            # PENALTY: already tried
             if action_desc in self.tried_actions.get(canonical, set()):
-                score -= 5.0  # Strong penalty — try something else
+                score -= 8.0
 
-            # Penalty: list items (repeated patterns)
+            # Penalty: list items
             if "RecyclerView" in str(view.get("parent_class", "")):
                 score -= 2.0
 
