@@ -8,6 +8,8 @@ import {
   Controls,
   MiniMap,
   Panel,
+  Handle,
+  Position,
   useNodesState,
   useEdgesState,
   MarkerType,
@@ -40,9 +42,9 @@ const CATEGORY_COLOR: Record<string, string> = {
 function buildLayout(nodes: any[], edges: any[], showScreenshots: boolean, tourId: string) {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
-  const nodeW = showScreenshots ? 240 : 200;
-  const nodeH = showScreenshots ? 160 : 56;
-  g.setGraph({ rankdir: 'TB', nodesep: 40, ranksep: showScreenshots ? 100 : 70 });
+  const nodeW = showScreenshots ? 180 : 200;
+  const nodeH = showScreenshots ? 260 : 56;
+  g.setGraph({ rankdir: 'TB', nodesep: showScreenshots ? 30 : 40, ranksep: showScreenshots ? 60 : 70 });
 
   const flowNodes: Node[] = [];
   const flowEdges: Edge[] = [];
@@ -113,16 +115,19 @@ function ScreenshotNode({ data }: { data: any }) {
   const color = data.color || '#9ca3af';
   const screenshotUrl = `/api/tours/${data.tourId}/screenshot/${data.screen_id}`;
   const [imgError, setImgError] = useState(false);
-
   return (
     <div style={{
-      width: 240, background: '#fff', border: '1px solid #d4d4d4',
+      width: 180, background: '#fff', border: '1px solid #d4d4d4',
       borderRadius: '10px', overflow: 'hidden', cursor: 'pointer',
       borderTop: `3px solid ${color}`,
     }}>
-      <div style={{ height: 100, background: '#f5f5f5', overflow: 'hidden', position: 'relative' }}>
+      {/* Connection handles for edges */}
+      <Handle type="target" position={Position.Top} style={{ background: color, width: 8, height: 8 }} />
+
+      {/* Screenshot — phone aspect ratio (9:16 cropped) */}
+      <div style={{ height: 200, background: '#f5f5f5', overflow: 'hidden', position: 'relative' }}>
         {!imgError ? (
-          <img src={screenshotUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          <img src={screenshotUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top' }}
             onError={() => setImgError(true)} />
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#d4d4d4', fontSize: '11px' }}>
@@ -137,14 +142,14 @@ function ScreenshotNode({ data }: { data: any }) {
           {data.functional_category || 'other'}
         </span>
       </div>
-      <div style={{ padding: '8px 10px' }}>
-        <div style={{ fontSize: '11px', fontWeight: 600, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
+      {/* Label */}
+      <div style={{ padding: '6px 8px' }}>
+        <div style={{ fontSize: '10px', fontWeight: 600, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
           {data.label || data.screen_id}
         </div>
-        <div style={{ fontSize: '9px', color: '#9ca3af', marginTop: '2px', fontFamily: "'JetBrains Mono', monospace" }}>
-          {(data.activity || '').split('.').pop()}
-        </div>
       </div>
+
+      <Handle type="source" position={Position.Bottom} style={{ background: color, width: 8, height: 8 }} />
     </div>
   );
 }
