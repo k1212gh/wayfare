@@ -59,10 +59,23 @@ class TapWalker:
         start_time = time.time()
         event_count = 0
 
-        # Install and start app
-        subprocess.run(["adb", "-s", self.device_serial, "install", "-r",
-                        str(Path(self.apk_path).resolve())],
-                       capture_output=True, timeout=60)
+        # Install app (supports split APKs)
+        apk_path = Path(self.apk_path).resolve()
+        sibling_apks = list(apk_path.parent.glob("*.apk"))
+
+        if len(sibling_apks) > 1:
+            # Split APK: use 'adb install-multiple'
+            logger.info("Installing %d split APKs: %s", len(sibling_apks),
+                        [a.name for a in sibling_apks])
+            subprocess.run(
+                ["adb", "-s", self.device_serial, "install-multiple", "-r"] +
+                [str(a) for a in sibling_apks],
+                capture_output=True, timeout=120)
+        else:
+            # Single APK
+            subprocess.run(["adb", "-s", self.device_serial, "install", "-r",
+                            str(apk_path)],
+                           capture_output=True, timeout=60)
 
         # Get package and launch
         from androguard.core.apk import APK
@@ -78,11 +91,33 @@ class TapWalker:
                        capture_output=True, timeout=10)
         time.sleep(2)
 
+        empty_count = 0  # Track consecutive empty UI dumps
+
         while event_count < self.max_events and (time.time() - start_time) < self.timeout:
             # 1. Capture current state
             state = self._capture_screen(event_count)
             if not state:
                 break
+
+            # Detect app crash: views=0 means UI dump failed
+            if len(state.get("views", [])) == 0:
+                empty_count += 1
+                logger.warning("Empty UI dump (%d consecutive)", empty_count)
+                if empty_count >= 3:
+                    logger.info("App likely crashed, restarting...")
+                    subprocess.run(["adb", "-s", self.device_serial, "shell",
+                                    "am", "force-stop", package],
+                                   capture_output=True, timeout=5)
+                    time.sleep(1)
+                    subprocess.run(["adb", "-s", self.device_serial, "shell",
+                                    "am", "start", "-n", f"{package}/{main_activity}"],
+                                   capture_output=True, timeout=10)
+                    empty_count = 0
+                    self.tried_actions.clear()
+                    time.sleep(3)
+                event_count += 1
+                continue
+            empty_count = 0
 
             # 3-Level hashing: find canonical screen ID
             fp = self.hasher.compute_fingerprint(
@@ -342,13 +377,14 @@ class TapWalker:
             # Parse XML
             views = self._parse_ui_xml(xml_path)
 
-            # Get current activity
+            # Get current activity (use encoding to handle Korean)
             activity_result = subprocess.run(
                 ["adb", "-s", self.device_serial, "shell",
                  "dumpsys activity activities"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, timeout=10,
             )
-            activity = self._extract_activity(activity_result.stdout or "")
+            stdout_text = activity_result.stdout.decode("utf-8", errors="replace") if activity_result.stdout else ""
+            activity = self._extract_activity(stdout_text)
 
             # Compute structure hash
             clickable_ids = sorted(
