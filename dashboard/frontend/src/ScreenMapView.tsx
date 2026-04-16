@@ -158,6 +158,32 @@ const nodeTypes = { screenshotNode: ScreenshotNode };
 
 export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery, tourId }: ScreenMapViewProps) {
   const [showScreenshots, setShowScreenshots] = useState(false);
+  const [pathSource, setPathSource] = useState<string | null>(null);
+  const [highlightedPath, setHighlightedPath] = useState<{ nodes: Set<string>; edges: Set<string> } | null>(null);
+  const [pathInfo, setPathInfo] = useState<string>('');
+
+  const findPath = useCallback(async (source: string, target: string) => {
+    try {
+      const res = await fetch(`/api/tours/${tourId}/path?source=${source}&target=${target}`);
+      if (!res.ok) { setPathInfo('No path found'); return; }
+      const data = await res.json();
+      const best = data.best;
+      if (best?.path) {
+        const pathNodeSet = new Set(best.path as string[]);
+        const pathEdgeSet = new Set<string>();
+        for (let i = 0; i < best.path.length - 1; i++) {
+          // Match edge by from+to
+          for (const e of graph.edges) {
+            if (e.from === best.path[i] && e.to === best.path[i + 1]) {
+              pathEdgeSet.add(e.edge_id || `${e.from}-${e.to}`);
+            }
+          }
+        }
+        setHighlightedPath({ nodes: pathNodeSet, edges: pathEdgeSet });
+        setPathInfo(`${best.hop_count} hops, cost ${best.total_cost}`);
+      }
+    } catch { setPathInfo('Path error'); }
+  }, [tourId, graph.edges]);
 
   const filteredNodes = useMemo(() => {
     let nodes = graph.nodes;
@@ -187,12 +213,48 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
   const [nodes, setNodes, onNodesChange] = useNodesState(layout.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(layout.edges);
 
-  useEffect(() => { setNodes(layout.nodes); }, [layout.nodes, setNodes]);
-  useEffect(() => { setEdges(layout.edges); }, [layout.edges, setEdges]);
+  // Apply path highlighting to nodes and edges
+  const styledNodes = useMemo(() => {
+    if (!highlightedPath) return layout.nodes;
+    return layout.nodes.map((n) => {
+      const onPath = highlightedPath.nodes.has(n.id);
+      if (!onPath) return { ...n, style: { ...n.style, opacity: 0.3 } };
+      return { ...n, style: { ...n.style, border: '3px solid #dc2626', opacity: 1 } };
+    });
+  }, [layout.nodes, highlightedPath]);
+
+  const styledEdges = useMemo(() => {
+    if (!highlightedPath) return layout.edges;
+    return layout.edges.map((e) => {
+      const onPath = highlightedPath.edges.has(e.id);
+      if (!onPath) return { ...e, style: { ...e.style, opacity: 0.15 } };
+      return {
+        ...e,
+        style: { ...e.style, stroke: '#dc2626', strokeWidth: 3, opacity: 1 },
+        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#dc2626' },
+        animated: true,
+      };
+    });
+  }, [layout.edges, highlightedPath]);
+
+  useEffect(() => { setNodes(styledNodes); }, [styledNodes, setNodes]);
+  useEffect(() => { setEdges(styledEdges); }, [styledEdges, setEdges]);
 
   const onNodeClick: NodeMouseHandler = useCallback(
-    (_event, node) => onNodeSelect(node.data),
-    [onNodeSelect]
+    (event, node) => {
+      const nativeEvent = event as unknown as MouseEvent;
+      if (nativeEvent.shiftKey && pathSource) {
+        // Shift+click = set path target → find path
+        findPath(pathSource, node.id);
+      } else {
+        // Normal click = select node + set as path source
+        onNodeSelect(node.data);
+        setPathSource(node.id);
+        setHighlightedPath(null);
+        setPathInfo('Shift+click another node for path');
+      }
+    },
+    [onNodeSelect, pathSource, findPath]
   );
 
   const downloadKG = useCallback(() => {
@@ -218,11 +280,21 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
       />
 
       <Panel position="top-right">
-        <div style={{ display: 'flex', gap: '6px' }}>
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
           <PanelBtn active={showScreenshots} onClick={() => setShowScreenshots(!showScreenshots)}>
             {showScreenshots ? 'Hide Screenshots' : 'Show Screenshots'}
           </PanelBtn>
+          {highlightedPath && (
+            <PanelBtn onClick={() => { setHighlightedPath(null); setPathSource(null); setPathInfo(''); }}>
+              Clear Path
+            </PanelBtn>
+          )}
           <PanelBtn onClick={downloadKG}>Download ScreenMap</PanelBtn>
+          {pathInfo && (
+            <span style={{ fontSize: '10px', color: '#dc2626', fontFamily: 'var(--font-mono)', padding: '0 6px' }}>
+              {pathInfo}
+            </span>
+          )}
         </div>
       </Panel>
 

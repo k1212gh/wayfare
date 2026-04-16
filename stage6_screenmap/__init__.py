@@ -38,8 +38,11 @@ def run_stage6(config: PipelineConfig) -> None:
     # 1. Build graph from subflows + screen analyses
     graph = build_graph(subflows, screen_analyses, screen_cards)
 
-    # 2. Inject walk transitions directly into graph
+    # 2. Inject walk transitions + compute edge weights from frequency
     _inject_walk_transitions(graph, walk_transitions, screen_cards, walk_screens)
+
+    # 2b. Compute edge weights from transition frequency
+    _compute_transition_weights(graph, walk_transitions, screen_cards, walk_screens)
 
     # 3. Enrich with static analysis
     graph = enrich_graph(graph, static_info)
@@ -164,3 +167,53 @@ def _find_matching_node(candidate: str, node_ids: set[str]) -> str | None:
             return nid
 
     return None
+
+
+def _compute_transition_weights(graph: dict, transitions: list[dict],
+                          screen_cards: list[dict], walk_screens: list[dict]) -> None:
+    """Compute edge weights from walk transition frequency.
+
+    Frequently traversed edges get lower weight (= preferred path).
+    weight = 1 / (frequency + 1)
+    """
+    from collections import Counter
+
+    struct_to_page: dict[str, str] = {}
+    for cu in screen_cards:
+        struct = cu.get("structure_str", "")
+        if struct:
+            struct_to_page[struct] = cu["screen_id"]
+            struct_to_page[struct[:16]] = cu["screen_id"]
+
+    exp_to_struct: dict[str, str] = {}
+    for s in walk_screens:
+        ss = s.get("state_str", "")
+        struct = s.get("structure_str", "")
+        if ss and struct:
+            exp_to_struct[ss] = struct
+
+    node_ids = {n["screen_id"] for n in graph.get("nodes", [])}
+
+    def resolve(exp_id):
+        if exp_id in node_ids:
+            return exp_id
+        struct = exp_to_struct.get(exp_id, "")
+        if struct:
+            return struct_to_page.get(struct) or struct_to_page.get(struct[:16])
+        return None
+
+    freq = Counter()
+    for t in transitions:
+        fn = resolve(t.get("from_screen", ""))
+        tn = resolve(t.get("to_screen", ""))
+        if fn and tn:
+            freq[(fn, tn)] += 1
+
+    for edge in graph.get("edges", []):
+        key = (edge["from"], edge["to"])
+        count = freq.get(key, 0)
+        edge["weight"] = round(1.0 / (count + 1), 3)
+        edge["frequency"] = count
+
+    weighted = sum(1 for e in graph["edges"] if e.get("frequency", 0) > 0)
+    logger.info("Edge weights: %d/%d edges have walk frequency", weighted, len(graph["edges"]))

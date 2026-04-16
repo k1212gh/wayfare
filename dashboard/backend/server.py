@@ -507,6 +507,43 @@ async def get_graph(tour_id: str):
     return JSONResponse(json.loads(graph_path.read_text(encoding="utf-8")))
 
 
+@app.get("/api/tours/{tour_id}/walk-live")
+async def get_walk_live(tour_id: str):
+    """Get live walk data (states + transitions so far).
+
+    Frontend polls this during WALKING stage to show real-time graph.
+    """
+    walk_path = WORKSPACE_ROOT / tour_id / "dynamic" / "walk.json"
+    if walk_path.exists():
+        data = json.loads(walk_path.read_text(encoding="utf-8"))
+        return JSONResponse({
+            "status": "complete",
+            "states": len(data.get("states", [])),
+            "transitions": len(data.get("transitions", [])),
+            "screens": data.get("stats", {}).get("unique_screens", 0),
+            "nodes": [
+                {"id": s.get("canonical_id", s.get("state_str", "")),
+                 "activity": s.get("activity", ""),
+                 "screenshot": s.get("screenshot_path", "")}
+                for s in data.get("states", [])[:50]
+            ],
+            "edges": data.get("transitions", [])[:100],
+        })
+
+    # Check if states dir is being populated (walk in progress)
+    states_dir = WORKSPACE_ROOT / tour_id / "dynamic" / "states"
+    if states_dir.exists():
+        state_files = sorted(states_dir.glob("state_*.json"))
+        screen_files = sorted(states_dir.glob("screen_*.png"))
+        return JSONResponse({
+            "status": "running",
+            "states": len(state_files),
+            "screenshots": len(screen_files),
+        })
+
+    return JSONResponse({"status": "not_started"})
+
+
 @app.get("/api/tours/{tour_id}/path")
 async def find_path(tour_id: str, source: str = "", target: str = ""):
     """Find shortest path between two nodes."""
@@ -530,6 +567,49 @@ async def find_path(tour_id: str, source: str = "", target: str = ""):
     alternatives = find_all_paths(screenmap, source, target, max_paths=3)
 
     return JSONResponse({"best": result, "alternatives": alternatives})
+
+
+@app.get("/api/tours/{tour_id}/plan")
+async def plan_task_endpoint(tour_id: str, task: str = ""):
+    """Plan a path for a natural language task (PoG-style)."""
+    if not task:
+        raise HTTPException(400, "task query param required (e.g., ?task=알림 끄기)")
+    graph_path = WORKSPACE_ROOT / tour_id / "output" / "screen_map.json"
+    if not graph_path.exists():
+        raise HTTPException(404, "Graph not found")
+
+    screenmap = json.loads(graph_path.read_text(encoding="utf-8"))
+
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from navigator import plan_task
+
+    # Try with LLM client
+    llm = None
+    try:
+        from stage5_annotate.llm_client import create_client
+        llm = create_client()
+    except Exception:
+        pass
+
+    result = plan_task(screenmap, task, llm_client=llm)
+    return JSONResponse(result)
+
+
+@app.get("/api/tours/{tour_id}/traces")
+async def get_traces(tour_id: str):
+    """Get JSONL execution traces for a tour."""
+    trace_path = WORKSPACE_ROOT / tour_id / "output" / "traces.jsonl"
+    if not trace_path.exists():
+        return JSONResponse({"traces": []})
+    traces = []
+    for line in trace_path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            try:
+                traces.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    return JSONResponse({"traces": traces})
 
 
 @app.get("/api/tours/{tour_id}/cache-stats")
