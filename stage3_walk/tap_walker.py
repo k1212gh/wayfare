@@ -272,8 +272,18 @@ class TapWalker:
         seen_texts = set()
 
         for view in views:
-            if not view.get("clickable") and not view.get("scrollable"):
-                continue
+            is_clickable = view.get("clickable")
+            is_scrollable = view.get("scrollable")
+            has_text = bool(view.get("text") or view.get("content_desc"))
+            is_view_class = view.get("class") in ("View", "android.view.View")
+
+            # Compose/WebView apps: View elements with text are likely tappable
+            # even if clickable=false (accessibility not properly exposed)
+            if not is_clickable and not is_scrollable:
+                if has_text and is_view_class:
+                    is_clickable = True  # Treat as clickable
+                else:
+                    continue
             if not view.get("visible", True):
                 continue
 
