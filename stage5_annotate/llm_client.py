@@ -13,11 +13,16 @@ logger = logging.getLogger(__name__)
 
 
 def create_client(**kwargs) -> "LLMClient":
-    """Factory: create the right client based on LLM_MODE env var."""
-    mode = os.environ.get("LLM_MODE", "cli").lower()
-    if mode == "api":
-        return APIClient(**kwargs)
-    return CLIClient(**kwargs)
+    """Factory: create the right client based on LLM_MODE env var.
+
+    Default: API mode (recommended for production).
+    CLI mode is deprecated — use only for local testing without API key.
+    """
+    mode = os.environ.get("LLM_MODE", "api").lower()
+    if mode == "cli":
+        logger.info("Using CLI mode (deprecated — switch to API when key available)")
+        return CLIClient(**kwargs)
+    return APIClient(**kwargs)
 
 
 class LLMClient:

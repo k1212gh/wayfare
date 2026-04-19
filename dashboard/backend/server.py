@@ -288,15 +288,24 @@ def _run_pipeline_sync(tour_id: str):
             run_stage4(config)
             update_stage("CARDS_READY")
 
-            # LLM analysis (CLI mode doesn't need API key)
-            llm_mode = os.environ.get("LLM_MODE", "cli")
-            if llm_mode == "cli" or config.anthropic_api_key:
+            # LLM analysis
+            llm_mode = os.environ.get("LLM_MODE", "api")
+            api_key = config.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+            has_valid_key = api_key and "PLACEHOLDER" not in api_key
+
+            if has_valid_key:
+                update_stage("LLM_ANALYZING", detail=f"Anthropic API ({llm_mode})...")
+                from stage5_annotate import run_stage5
+                run_stage5(config)
+                update_stage("ANALYSIS_DONE")
+            elif llm_mode == "cli":
                 update_stage("LLM_ANALYZING", detail="Claude CLI analyzing...")
                 from stage5_annotate import run_stage5
                 run_stage5(config)
                 update_stage("ANALYSIS_DONE")
             else:
-                logger.info("Skipping LLM analysis (no API key and LLM_MODE != cli)")
+                logger.info("Skipping LLM: API key is placeholder, will analyze when real key is set")
+                update_stage("ANALYSIS_DONE", detail="LLM skipped (API key pending)")
 
             update_stage("BUILDING_SCREENMAP")
             from stage6_screenmap import run_stage6
