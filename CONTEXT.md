@@ -1,89 +1,88 @@
-# ScreenAtlas — 대화 맥락 & 작업 이력 (2026-04-16)
+# ScreenAtlas — 다른 기기에서 이어서 작업하기
 
-## 이 문서의 목적
-다른 기기/세션에서 이어서 작업할 때 전체 맥락을 빠르게 파악하기 위한 문서.
+## 빠른 시작 (새 기기)
 
----
-
-## 프로젝트 한 줄 요약
-APK -> 정적분석 -> DroidBot/TapWalker 동적탐색 -> LLM(Claude CLI) 분석 -> Screen Map 생성 -> 웹 시각화
-
-## 현재 상태 (2026-04-16 22:00 기준)
-
-### 완료된 것
-- 6단계 파이프라인 전체 코드 (30+ Python 파일, 5 TSX 파일)
-- 전문가 리뷰 MUST 8건 + SHOULD 14건 전수 수정
-- TapWalker (자체 탐색 엔진, DroidBot 대체)
-- 3-Level Screen Signature (구조해시 + pHash + HashGNN)
-- 크로스앱 UI 패턴 캐싱 (SQLite)
-- 경로 탐색 API (Dijkstra + K-shortest)
-- 대시보드 UX (6단계 진행률 바)
-- 실기기(SM-S908N) 연동 테스트 완료
-- 노션 3페이지 기록
-
-### 알려진 이슈 (해결 필요)
-1. **Windows 인코딩**: `read_text()`/`write_text()`에 반드시 `encoding="utf-8"` 필요. 한글 경로 포함 시 CP949 충돌.
-2. **TapWalker 탐색 깊이**: 60초 테스트에서 3 화면만 발견. 탐색 루프 개선 완료했으나 재테스트 필요.
-3. **Git Bash 경로 변환**: ADB 경로에 `/sdcard/`가 Git Bash에서 `C:/Program Files/Git/sdcard/`로 변환됨. `//sdcard//` 이스케이프로 해결.
-4. **DroidBot 접근성**: 실기기에서 `-accessibility_auto` + droidbotApp.apk 수동 설치 필요.
-
-### 환경 (.env)
-```
-LLM_MODE=cli           # Claude Code CLI (API 키 불필요)
-WALK_MODE=tap     # TapWalker (DroidBot 대신)
-CACHE_ENABLED=true     # 크로스앱 UI 패턴 캐싱
-```
-
-### 서버 실행
 ```bash
+# 1. Clone
+git clone https://github.com/YOUR_GITHUB_ID/screenatlas.git
 cd screenatlas
-PYTHONPATH=. python -m uvicorn dashboard.backend.server:app --port 8000  # 백엔드
-cd dashboard/frontend && npx vite --port 5173  # 프론트엔드
-# http://127.0.0.1:5173
+git checkout feature/ScreenMap-POC
+
+# 2. Setup (의존성 + .env + demo)
+bash setup.sh        # Linux/Mac/Git Bash
+# 또는
+setup.bat            # Windows CMD
+
+# 3. .env에 실제 API 키 설정
+# ANTHROPIC_API_KEY=sk-ant-실제키
+
+# 4. 서버 시작
+run.bat              # Windows
+# 또는
+PYTHONPATH=. python -m uvicorn dashboard.backend.server:app --port 8000 &
+cd dashboard/frontend && npx vite --port 5173 &
+
+# 5. 브라우저: http://127.0.0.1:5173
+```
+
+## 작업 동기화 (기기 간 이동)
+
+```bash
+# 작업 끝날 때 (현재 기기)
+git add -A && git commit -m "WIP: 작업 내용" && git push
+
+# 다른 기기에서 이어서
+git pull
+# .env는 gitignore라 기기마다 별도 관리
+```
+
+## 현재 상태 (2026-04-17)
+
+### 완료
+- 6단계 파이프라인 (APK → 정적 → 탐색 → 전처리 → LLM → ScreenMap)
+- TapWalker (자체 탐색 엔진, 노벨티 스코어링)
+- 3-Level Screen Signature (구조/pHash/GNN)
+- 웹 대시보드 (업로드, 진행률, 그래프 뷰어)
+- 스크린샷 노드 (Show/Hide 토글, 폰 비율)
+- 경로 하이라이팅 (Shift+클릭)
+- PoG 태스크 경로 탐색 (/api/plan?task=...)
+- 크로스앱 UI 패턴 캐싱 (SQLite)
+- 엣지 가중치 (탐색 빈도 기반)
+- Split APK 설치 (adb install-multiple)
+- WebView/Compose 앱 대응
+- E2E 파이프라인 완주 (Samsung Calendar, 7분)
+
+### 알려진 이슈
+1. TapWalker 탐색 깊이: 120초에 4~5 화면 (목표 8+)
+2. WebView 앱(메가커피): clickable=false인 Compose 요소 감지 개선 중
+3. activity 추출 일부 기기에서 unknown
+
+### 환경 (.env) — 기기마다 별도
+```
+LLM_MODE=api
+ANTHROPIC_API_KEY=sk-ant-실제키여기
+WALK_MODE=tap
+CACHE_ENABLED=true
+NOTION_TOKEN=ntn_your_token
 ```
 
 ### 디바이스
-- SM-S908N (Galaxy S22 Ultra), serial: R5CT20G1ZFL
+- 테스트 기기: SM-S908N (Galaxy S22 Ultra)
 - ADB 연결 확인: `adb devices`
+- Split APK 설치: 자동 (adb install-multiple)
 
----
+### 핵심 파일 (수정 빈도 높은 것)
+- `stage3_walk/tap_walker.py` — 탐색 로직 (가장 자주 수정)
+- `dashboard/backend/server.py` — API 서버 (엔드포인트 추가)
+- `dashboard/frontend/src/ScreenMapView.tsx` — 그래프 UI
+- `.env` — 환경 설정 (gitignore, 기기별)
+- `stage6_screenmap/__init__.py` — ScreenMap 생성 (edge injection)
 
-## 아키텍처
+### GitLab
+- Repo: https://github.com/YOUR_GITHUB_ID/screenatlas
+- Branch: `feature/ScreenMap-POC`
+- 최근 커밋: 10개
 
-```
-APK 입력
-  -> Stage 1: APK 전처리 (androguard 메타데이터)
-  -> Stage 2: 정적분석 (바이너리 Manifest 파싱)
-  -> Stage 3: 동적탐색 (TapWalker + 3-Level Hashing)
-  -> Stage 4: 데이터 전처리 (XML 정제 + 클러스터링)
-  -> Stage 5: LLM 분석 (Claude CLI + 패턴 캐시)
-  -> Stage 6: ScreenMap 생성 (검증 + 직렬화)
-  -> 웹 시각화 (React Flow + dagre + 경로 탐색)
-```
-
-## 핵심 파일
-- `stage3_walk/tap_walker.py` — 자체 탐색 엔진 (가장 중요)
-- `stage3_walk/screen_signer.py` — 3-Level 해싱
-- `cache/widget_cache.py` — SQLite 크로스앱 캐시
-- `stage6_screenmap/route_finder.py` — Dijkstra 경로 탐색
-- `dashboard/backend/server.py` — FastAPI 서버 (업로드/실행/API)
-- `dashboard/frontend/src/Dashboard.tsx` — 대시보드 (진행률 바)
-- `dashboard/frontend/src/ScreenMapView.tsx` — React Flow 그래프
-
-## 레퍼런스 논문
-1. ScreenAtlas (2601.17418)
-2. MobileGPT (2312.03003)
-3. ScreenMap-RAG (2509.00366)
-4. 연구보고서 (A*Net + AgentTrace + PoG + MobileGUI-RL)
-
-## 노션 페이지
-- 전체 진행: https://www.notion.so/3445b1921b6e81f69a0fc02cb4871fca
-- 트러블슈팅: https://www.notion.so/3445b1921b6e81ae8142e63b818186ed
-- Phase 2 고도화: https://www.notion.so/3445b1921b6e81e3b31eea1a5acc9d40
-
-## 남은 작업 (우선순위)
-1. 전체 E2E 파이프라인 테스트 (업로드 -> 탐색 -> ScreenMap -> 시각화)
-2. 프론트 경로 하이라이팅
-3. pHash 단독 매칭 테스트
-4. PoG식 자연어 태스크 경로 탐색
-5. JSONL 구조화 로깅 전체 연동
+### 노션
+- 프로젝트 정리: "플젝 정리" 페이지 하위
+- 스크립트: `python scripts/notion_detailed_report.py` (NOTION_TOKEN 필요)
