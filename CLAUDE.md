@@ -4,6 +4,15 @@
 APK를 입력받아 앱 화면 흐름을 Screen Map로 자동 추출하는 파이프라인.
 GitLab: https://github.com/YOUR_GITHUB_ID/screenatlas (branch: feature/ScreenMap-POC)
 
+## ⚠️ Canonical 작업 폴더 — 반드시 확인
+- **이 파일이 위치한 디렉터리 (git 레포 루트)만이 유일한 canonical 소스**
+- git 미부착 파생본(`.\` 같은 팀 공유 복사본)이 존재할 수 있음 — **stale로 취급하고 읽지도 쓰지도 말 것**
+- 세션 시작·재개 시 다음 세 값이 일치하는지 첫 메시지에서 cross-check하고 사용자에게 보고:
+  1. shell CWD (`pwd`)
+  2. `git rev-parse --show-toplevel`
+  3. 이 `CLAUDE.md`의 위치
+- 셋이 다르면 즉시 멈추고 사용자에게 확인 요청. 절대 추정으로 진행하지 말 것.
+
 ## 환경
 - Python 3.12, Node 24, Windows/Linux
 - .env 파일에 ANTHROPIC_API_KEY, NOTION_TOKEN 등 설정

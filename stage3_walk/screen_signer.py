@@ -110,12 +110,18 @@ class ScreenSigner:
     # ─── Level 1: Structural Hash ─────────────────────────
 
     def _structural_hash(self, views: list[dict], activity: str) -> str:
-        """Hash based on UI tree structure only (class + depth).
+        """Hash based on UI tree structure.
 
-        Ignores: text, content-desc, bounds, resource-id values
-        Only keeps: widget class hierarchy + clickable/scrollable flags
+        Compose-aware: includes stable accessibility signals (content-desc,
+        resource-id) because Compose often renders different screens with
+        identical class hierarchies (e.g. all ComposeView + AndroidComposeView).
+        Without these signals, Home/Search/Library would all hash to the same
+        structural_hash and collapse into one node.
+
+        Still ignores: free-form `text` (changes with data/language), `bounds`.
         """
         structure_parts = []
+        accessibility_parts = []
         for v in views:
             cls = v.get("class", "")
             clickable = "C" if v.get("clickable") else ""
@@ -123,8 +129,14 @@ class ScreenSigner:
             editable = "E" if v.get("editable") else ""
             flags = clickable + scrollable + editable
             structure_parts.append(f"{cls}:{flags}")
+            # Stable a11y signals — same across visits to the same screen
+            rid = v.get("resource_id") or v.get("resource-id") or ""
+            desc = v.get("content_desc") or v.get("content-desc") or ""
+            if rid or desc:
+                accessibility_parts.append(f"{rid}@{desc}")
 
-        raw = f"{activity}|{'|'.join(sorted(structure_parts))}"
+        raw = (f"{activity}|{'|'.join(sorted(structure_parts))}"
+               f"||{'|'.join(sorted(set(accessibility_parts)))}")
         return hashlib.sha256(raw.encode()).hexdigest()
 
     # ─── Level 2: Perceptual Hash ─────────────────────────

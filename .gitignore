@@ -9,3 +9,29 @@ dist/
 .claude/
 /cache/widget_cache.db
 /tmp/
+
+# Runtime logs (backend, emulator output, walker debug)
+logs/
+*.log
+
+# Editor/tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.vscode/
+.idea/
+
+# Transient backups created during folder consolidation or recovery
+*.bak
+*.mine.bak
+*.orig
+
+# Runtime per-tour flags (workspace/ already ignored but spelled out
+# explicitly so they never sneak into a PR if workspace is ever re-added)
+cancel.flag
+paused.json
+scan_started.flag
+
+# OS cruft
+.DS_Store
+Thumbs.db

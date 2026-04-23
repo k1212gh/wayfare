@@ -9,19 +9,35 @@ logger = logging.getLogger(__name__)
 
 
 def extract_metadata(apk_path: str) -> dict:
-    """Extract package name, version, and permissions from APK.
+    """Extract package name, version, permissions, and framework from APK.
 
     Uses aapt2 if available, falls back to androguard.
+    Always adds framework detection (xml/compose/flutter/react-native).
     """
     if shutil.which("aapt2"):
-        return _extract_with_aapt2(apk_path)
+        metadata = _extract_with_aapt2(apk_path)
+    else:
+        try:
+            metadata = _extract_with_androguard(apk_path)
+        except ImportError:
+            raise RuntimeError(
+                "Neither aapt2 nor androguard is available. "
+                "Install Android SDK (aapt2) or run: pip install androguard"
+            )
+
+    # Framework detection (always run)
     try:
-        return _extract_with_androguard(apk_path)
-    except ImportError:
-        raise RuntimeError(
-            "Neither aapt2 nor androguard is available. "
-            "Install Android SDK (aapt2) or run: pip install androguard"
-        )
+        from .framework_detector import detect_framework
+        fw_result = detect_framework(apk_path)
+        metadata["framework"] = fw_result["framework"]
+        metadata["framework_evidence"] = fw_result["evidence"]
+        logger.info("Framework detected: %s (%s)", fw_result["framework"], fw_result["evidence"][:1])
+    except Exception as e:
+        logger.warning("Framework detection failed: %s", e)
+        metadata["framework"] = "xml"
+        metadata["framework_evidence"] = [f"detection failed: {e}"]
+
+    return metadata
 
 
 def _extract_with_aapt2(apk_path: str) -> dict:
@@ -51,7 +67,17 @@ def _extract_with_aapt2(apk_path: str) -> dict:
     m = re.search(r"launchable-activity:\s+name='([^']+)'", output)
     metadata["launch_activity"] = m.group(1) if m else ""
 
-    logger.info("Extracted metadata for %s", metadata["package_name"])
+    # human-readable app label (prefer localized, fall back to default)
+    m = (
+        re.search(r"application-label-ko:'([^']+)'", output)
+        or re.search(r"application-label-en:'([^']+)'", output)
+        or re.search(r"application-label:'([^']+)'", output)
+        or re.search(r"application:\s+label='([^']+)'", output)
+    )
+    metadata["app_label"] = m.group(1) if m else ""
+
+    logger.info("Extracted metadata for %s (label=%s)",
+                 metadata["package_name"], metadata.get("app_label", ""))
     return metadata
 
 
@@ -59,6 +85,11 @@ def _extract_with_androguard(apk_path: str) -> dict:
     from androguard.core.apk import APK
 
     apk = APK(apk_path)
+    label = ""
+    try:
+        label = apk.get_app_name() or ""
+    except Exception:
+        label = ""
     return {
         "source": "androguard",
         "package_name": apk.get_package(),
@@ -66,4 +97,5 @@ def _extract_with_androguard(apk_path: str) -> dict:
         "version_name": apk.get_androidversion_name() or "",
         "permissions": apk.get_permissions(),
         "launch_activity": apk.get_main_activity() or "",
+        "app_label": label,
     }

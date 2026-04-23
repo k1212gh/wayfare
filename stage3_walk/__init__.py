@@ -23,6 +23,14 @@ def run_stage3(config: PipelineConfig) -> None:
     if static_path.exists():
         static_info = json.loads(static_path.read_text(encoding="utf-8"))
 
+    # Load framework from metadata (detected in Stage 1)
+    meta_path = config.apk_dir / "metadata.json"
+    framework = "xml"
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        framework = meta.get("framework", "xml")
+        logger.info("Using framework=%s for walk", framework)
+
     # Run walk (TapWalker or DroidBot, based on WALK_MODE)
     run_droidbot(
         apk_path=apk_path,
@@ -31,6 +39,7 @@ def run_stage3(config: PipelineConfig) -> None:
         timeout=config.droidbot_timeout,
         policy=config.droidbot_policy,
         is_emulator=config.is_emulator,
+        framework=framework,
     )
 
     # TapWalker writes walk.json directly.

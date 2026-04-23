@@ -57,6 +57,8 @@ def build_screen_cards(pages: list[dict], transitions: list[dict]) -> list[dict]
         unit = {
             "screen_id": pid,
             "activity_name": page.get("activity", ""),
+            "fragment": page.get("fragment", ""),
+            "node_type": page.get("node_type", "activity"),
             "screenshot": page.get("screenshot_path", ""),
             "cleaned_xml": cleaned_xml,
             "available_actions": available_actions,
@@ -66,6 +68,7 @@ def build_screen_cards(pages: list[dict], transitions: list[dict]) -> list[dict]
             },
             "widget_count": len(page.get("elements", [])),
             "structure_str": page.get("structure_str", ""),
+            "label_hint": page.get("label_hint", ""),
         }
         screen_cards.append(unit)
 

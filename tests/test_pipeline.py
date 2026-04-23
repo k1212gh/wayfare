@@ -156,6 +156,41 @@ def test_page_transitions_coalesce():
     print("[PASS] test_page_transitions_coalesce")
 
 
+def test_activity_fragment_hierarchy():
+    """Same-activity pages should become fragment children of one host activity."""
+    states = [
+        {
+            "state_str": "hash_main_home",
+            "structure_str": "struct_main_home",
+            "activity": "com.example.MainActivity",
+            "fragment_class": "com.example.HomeFragment",
+            "views": MOCK_VIEWS_HOME,
+        },
+        {
+            "state_str": "hash_main_search",
+            "structure_str": "struct_main_search",
+            "activity": "com.example.MainActivity",
+            "fragment_class": "com.example.SearchFragment",
+            "views": MOCK_VIEWS_SEARCH,
+        },
+    ]
+
+    pages = cluster_screens_to_pages(states, [])
+
+    assert len(pages) == 2
+    assert all(p["node_type"] == "fragment" for p in pages), pages
+
+    parent_ids = {p["parent_activity_id"] for p in pages}
+    assert len(parent_ids) == 1 and "" not in parent_ids, parent_ids
+
+    fragment_names = {p["fragment_class"] for p in pages}
+    assert fragment_names == {
+        "com.example.HomeFragment",
+        "com.example.SearchFragment",
+    }, fragment_names
+    print("[PASS] test_activity_fragment_hierarchy")
+
+
 def test_grounding_checker():
     """Test grounding detection."""
     valid_ids = {"btn_search", "rv_feed"}
@@ -277,6 +312,69 @@ def test_graph_build_and_validate():
     print("[PASS] test_graph_build_and_validate")
 
 
+def test_fragment_host_injected_into_graph():
+    """Fragment nodes should gain a synthetic host activity and contains edges."""
+    screen_cards = [
+        {
+            "screen_id": "page_home",
+            "activity_name": "com.example.MainActivity",
+            "node_type": "fragment",
+            "parent_activity_id": "act_mainactivity_abc123",
+            "host_activity": "com.example.MainActivity",
+            "fragment_class": "com.example.HomeFragment",
+            "screenshot": "",
+            "cleaned_xml": "<hierarchy/>",
+            "available_actions": [],
+            "navigation_context": {"from_screens": [], "reachable_screens": ["page_search"]},
+        },
+        {
+            "screen_id": "page_search",
+            "activity_name": "com.example.MainActivity",
+            "node_type": "fragment",
+            "parent_activity_id": "act_mainactivity_abc123",
+            "host_activity": "com.example.MainActivity",
+            "fragment_class": "com.example.SearchFragment",
+            "screenshot": "",
+            "cleaned_xml": "<hierarchy/>",
+            "available_actions": [],
+            "navigation_context": {"from_screens": ["page_home"], "reachable_screens": []},
+        },
+    ]
+    screen_analyses = [
+        {
+            "screen_id": "page_home",
+            "activity_name": "com.example.MainActivity",
+            "screen_purpose": "Home tab",
+            "functional_category": "home",
+            "key_widgets": [],
+            "confidence": "high",
+        },
+        {
+            "screen_id": "page_search",
+            "activity_name": "com.example.MainActivity",
+            "screen_purpose": "Search tab",
+            "functional_category": "search",
+            "key_widgets": [],
+            "confidence": "high",
+        },
+    ]
+
+    graph = build_graph([], screen_analyses, screen_cards, entry_activity="com.example.MainActivity")
+
+    host = next(n for n in graph["nodes"] if n["screen_id"] == "act_mainactivity_abc123")
+    assert host["node_type"] == "activity"
+    assert host["activity"] == "com.example.MainActivity"
+
+    contains_edges = [e for e in graph["edges"] if e.get("kind") == "contains"]
+    assert len(contains_edges) == 2, contains_edges
+    assert any(e["from"] == "act_mainactivity_abc123" and e["to"] == "page_home" for e in contains_edges)
+
+    fragment_nav = [e for e in graph["edges"] if e.get("kind") == "fragment_nav"]
+    assert any(e["from"] == "page_home" and e["to"] == "page_search" for e in fragment_nav), fragment_nav
+    assert graph["entry_node"] == "page_home"
+    print("[PASS] test_fragment_host_injected_into_graph")
+
+
 def test_coverage_suffix_match():
     """Test that coverage tracker handles relative activity names."""
     walk = {
@@ -303,9 +401,11 @@ if __name__ == "__main__":
     test_structure_str_clustering()
     test_union_widgets()
     test_page_transitions_coalesce()
+    test_activity_fragment_hierarchy()
     test_grounding_checker()
     test_grounding_empty_valid_ids()
     test_graph_build_and_validate()
+    test_fragment_host_injected_into_graph()
     test_coverage_suffix_match()
     print()
-    print("=== ALL 9 TESTS PASSED ===")
+    print("=== ALL 11 TESTS PASSED ===")

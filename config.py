@@ -35,7 +35,7 @@ class PipelineConfig:
     apktool_path: str = "apktool"
 
     # Stage 3: DroidBot walk
-    droidbot_timeout: int = 600  # seconds
+    droidbot_timeout: int = 1200  # seconds (20 min — large apps like Spotify need this for decent UI coverage)
     droidbot_policy: str = "dfs_greedy"
     coverage_target: float = 0.8  # 80%
 
@@ -44,12 +44,18 @@ class PipelineConfig:
     screenshot_size: tuple[int, int] = (720, 1280)
     screenshot_quality: int = 85
 
-    # Stage 5: LLM
+    # Stage 5: LLM. Model names change with each Claude major release, so
+    # they're overridable via .env (LLM_MODEL_SCREEN, LLM_MODEL_WIDGET).
+    # Hardcoding yields 404 "not_found_error" when models are deprecated.
     anthropic_api_key: str = field(
         default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", "")
     )
-    llm_model_screen: str = "claude-sonnet-4-20250514"
-    llm_model_widget: str = "claude-haiku-4-5-20251001"
+    llm_model_screen: str = field(
+        default_factory=lambda: os.environ.get("LLM_MODEL_SCREEN", "claude-sonnet-4-5")
+    )
+    llm_model_widget: str = field(
+        default_factory=lambda: os.environ.get("LLM_MODEL_WIDGET", "claude-haiku-4-5")
+    )
     llm_temperature: float = 0.1
     llm_max_retries: int = 3
 

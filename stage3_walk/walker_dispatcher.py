@@ -17,6 +17,7 @@ def run_droidbot(
     policy: str = "dfs_greedy",
     is_emulator: bool = True,
     event_count: int = 500,
+    framework: str = "xml",
 ) -> None:
     """Launch app walk.
 
@@ -27,14 +28,14 @@ def run_droidbot(
     mode = os.environ.get("WALK_MODE", "tap").lower()
 
     if mode == "tap":
-        logger.info("Using TapWalker (unseen-driven)")
-        _run_smart(apk_path, device_serial, output_dir, timeout, event_count)
+        logger.info("Using TapWalker (unseen-driven, framework=%s)", framework)
+        _run_smart(apk_path, device_serial, output_dir, timeout, event_count, framework)
     else:
         logger.info("Using DroidBot (%s)", policy)
         _run_droidbot(apk_path, device_serial, output_dir, timeout, policy, is_emulator, event_count)
 
 
-def _run_smart(apk_path, device_serial, output_dir, timeout, event_count):
+def _run_smart(apk_path, device_serial, output_dir, timeout, event_count, framework="xml"):
     from .tap_walker import TapWalker
     walker = TapWalker(
         device_serial=device_serial,
@@ -42,13 +43,15 @@ def _run_smart(apk_path, device_serial, output_dir, timeout, event_count):
         output_dir=output_dir,
         timeout=timeout,
         max_events=event_count,
+        framework=framework,
     )
     result = walker.run()
     stats = result.get("stats", {})
-    logger.info("TapWalker done: %d events, %d screens, %.0fs",
+    logger.info("TapWalker done: %d events, %d screens, %.0fs (framework=%s)",
                 stats.get("total_events", 0),
                 stats.get("unique_structures", 0),
-                stats.get("elapsed_seconds", 0))
+                stats.get("elapsed_seconds", 0),
+                framework)
 
 
 def _run_droidbot(apk_path, device_serial, output_dir, timeout, policy, is_emulator, event_count):

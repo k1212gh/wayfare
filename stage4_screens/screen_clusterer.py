@@ -20,6 +20,7 @@ def cluster_screens_to_pages(
       - page_id: structure_str hash (SHA256[:12])
       - state_strs: list of DroidBot state_strs in this cluster
       - activity: foreground activity
+      - node_type / parent_activity_id: hierarchy metadata for stage 6
       - elements: interactive elements (union across all states in cluster)
     """
     # Coalescelicate states by state_str before clustering
@@ -63,12 +64,15 @@ def cluster_screens_to_pages(
             "structure_str": structure_str,
             "state_strs": [s.get("state_str", "") for s in group],
             "activity": representative.get("activity", ""),
+            "fragment_class": _select_fragment_class(group),
             "elements": elements,
             "screenshot_path": representative.get("processed_screenshot", "")
                 or representative.get("screenshot_path", ""),
             "screen_count": len(group),
         }
         pages.append(page)
+
+    _annotate_activity_hierarchy(pages)
 
     # Build page-level transitions
     screen_to_page = {}
@@ -109,6 +113,37 @@ def cluster_screens_to_pages(
         len(states), len(pages), len(page_transitions),
     )
     return pages
+
+
+def _annotate_activity_hierarchy(pages: list[dict]) -> None:
+    """Promote same-activity pages into fragment-like children of a host activity."""
+    by_activity: dict[str, list[dict]] = defaultdict(list)
+    for page in pages:
+        activity = page.get("activity", "")
+        if activity:
+            by_activity[activity].append(page)
+
+    for page in pages:
+        activity = page.get("activity", "")
+        has_explicit_fragment = bool(page.get("fragment_class"))
+        sibling_count = len(by_activity.get(activity, []))
+        parent_id = _make_activity_id(activity) if activity and (has_explicit_fragment or sibling_count > 1) else ""
+
+        page["node_type"] = "fragment" if parent_id else "activity"
+        page["parent_activity_id"] = parent_id
+        page["host_activity"] = activity
+
+
+def _select_fragment_class(group: list[dict]) -> str:
+    counts: dict[str, int] = {}
+    for state in group:
+        fragment = state.get("fragment_class", "").strip()
+        if fragment:
+            counts[fragment] = counts.get(fragment, 0) + 1
+
+    if not counts:
+        return ""
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
 
 
 def _extract_interactive_widgets_union(group: list[dict]) -> list[dict]:
@@ -176,6 +211,15 @@ def _get_action_types(view: dict) -> list[str]:
     if view.get("scrollable"):
         actions.append("scroll")
     return actions
+
+
+def _make_activity_id(activity: str) -> str:
+    if not activity:
+        return ""
+    short = activity.rsplit(".", 1)[-1]
+    slug = "".join(ch.lower() if ch.isalnum() else "_" for ch in short).strip("_") or "activity"
+    suffix = hashlib.sha256(activity.encode()).hexdigest()[:6]
+    return f"act_{slug}_{suffix}"
 
 
 def _fallback_structure_hash(state: dict) -> str:

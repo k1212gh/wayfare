@@ -36,19 +36,60 @@ def _parse_with_androguard(apk_path: str) -> dict:
     apk = APK(apk_path)
     package_name = apk.get_package() or ""
 
+    # Androguard 4.x exposes intent-filter lookup via two method signatures depending
+    # on version. Try both, silently ignore errors.
+    def _read_filters(act_name: str) -> list[dict]:
+        filters: list[dict] = []
+        try:
+            # Newer androguard: returns dict {category: {action: [categories]}}
+            raw = apk.get_intent_filters("activity", act_name)
+        except Exception:
+            raw = None
+        if isinstance(raw, dict) and raw:
+            # raw example: {"action": ["android.intent.action.MAIN"],
+            #                "category": ["android.intent.category.LAUNCHER"]}
+            actions = list(raw.get("action", []) or raw.get("actions", []))
+            categories = list(raw.get("category", []) or raw.get("categories", []))
+            data = raw.get("data", []) or []
+            if actions or categories or data:
+                filters.append({
+                    "actions": actions,
+                    "categories": categories,
+                    "data": data,
+                })
+        return filters
+
     # Activities
     activities = []
     main_activity = apk.get_main_activity() or ""
 
     for act_name in apk.get_activities():
         full_name = _resolve_name(act_name, package_name)
-        is_launcher = (full_name == _resolve_name(main_activity, package_name))
+        filters = _read_filters(act_name)
+        actions_flat = [a for f in filters for a in f.get("actions", [])]
+        categories_flat = [c for f in filters for c in f.get("categories", [])]
+        # Launcher detection: match by main_activity name, or by any of the
+        # known launcher categories (LAUNCHER, APP_*, LEANBACK_LAUNCHER).
+        launcher_cats = {
+            "android.intent.category.LAUNCHER",
+            "android.intent.category.LEANBACK_LAUNCHER",
+        }
+        has_main_action = "android.intent.action.MAIN" in actions_flat
+        has_launcher_cat = any(c in launcher_cats for c in categories_flat) or any(
+            c.startswith("android.intent.category.APP_") for c in categories_flat
+        )
+        is_launcher = (
+            (full_name == _resolve_name(main_activity, package_name))
+            or (has_main_action and has_launcher_cat)
+        )
 
         activities.append({
             "name": full_name,
             "short_name": act_name,
             "is_launcher": is_launcher,
-            "intent_filters": [],
+            "intent_filters": filters,
+            "intent_actions": actions_flat,
+            "intent_categories": categories_flat,
             "exported": "",
         })
 

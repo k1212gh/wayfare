@@ -164,7 +164,7 @@ class APIClient(LLMClient):
             raise RuntimeError("ANTHROPIC_API_KEY not set. Use LLM_MODE=cli or set the key.")
 
         self.client = anthropic.Anthropic(api_key=api_key)
-        self.model_screen = model_screen or os.environ.get("LLM_MODEL_SCREEN", "claude-sonnet-4-20250514")
+        self.model_screen = model_screen or os.environ.get("LLM_MODEL_SCREEN", "claude-sonnet-4-6")
         self.model_widget = model_widget or os.environ.get("LLM_MODEL_WIDGET", "claude-haiku-4-5-20251001")
         self.temperature = temperature
         self.max_retries = max_retries
@@ -186,7 +186,11 @@ class APIClient(LLMClient):
             except json.JSONDecodeError as e:
                 logger.warning("JSON parse failed (attempt %d): %s", attempt, e)
             except self._anthropic.AuthenticationError:
-                raise
+                # Mask SDK internals so the key/headers don't surface in tracebacks
+                # or downstream logs. `from None` severs the cause chain.
+                raise RuntimeError(
+                    "LLM authentication failed (check ANTHROPIC_API_KEY)"
+                ) from None
             except self._anthropic.RateLimitError as e:
                 retry_after = getattr(e, "retry_after", None)
                 wait = retry_after if retry_after else min(2 ** attempt, 30)
@@ -200,6 +204,57 @@ class APIClient(LLMClient):
 
     def query_text(self, system_prompt: str, user_prompt: str, model: str | None = None, max_tokens: int = 4096) -> str:
         return self._call_api(system_prompt, user_prompt, model or self.model_screen, max_tokens)
+
+    def query_with_image(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        image_bytes: bytes,
+        image_media_type: str = "image/jpeg",
+        model: str | None = None,
+        max_tokens: int = 2048,
+    ) -> str:
+        """Send a vision request (screenshot + text). Returns raw text response.
+
+        System prompt is cacheable (repeated across many nodes) but the image
+        bytes are NOT cached — each call pays full image input tokens.
+        """
+        import base64
+        model = model or self.model_screen
+        img_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                message = self.client.messages.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=self.temperature,
+                    system=[{"type": "text", "text": system_prompt,
+                             "cache_control": {"type": "ephemeral"}}],
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "image",
+                             "source": {"type": "base64",
+                                        "media_type": image_media_type,
+                                        "data": img_b64}},
+                            {"type": "text", "text": user_prompt},
+                        ],
+                    }],
+                )
+                return message.content[0].text
+            except self._anthropic.AuthenticationError:
+                # See H3 in query_json — same masking rationale.
+                raise RuntimeError(
+                    "LLM authentication failed (check ANTHROPIC_API_KEY)"
+                ) from None
+            except self._anthropic.RateLimitError as e:
+                wait = getattr(e, "retry_after", None) or min(2 ** attempt, 30)
+                logger.warning("Rate limited, waiting %ds", wait)
+                time.sleep(wait)
+            except Exception as e:
+                logger.warning("Vision API error (attempt %d): %s", attempt, e)
+                time.sleep(2 ** attempt)
+        raise RuntimeError("query_with_image failed after retries")
 
     def _call_api(self, system: str, user: str, model: str, max_tokens: int = 4096) -> str:
         message = self.client.messages.create(

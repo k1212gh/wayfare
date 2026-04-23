@@ -34,6 +34,15 @@ def process_screenshots(
 
         try:
             img = Image.open(src)
+            # JPEG does not support alpha. Flatten RGBA/LA/P onto white.
+            if img.mode in ("RGBA", "LA", "P"):
+                rgba = img.convert("RGBA")
+                bg = Image.new("RGB", rgba.size, (255, 255, 255))
+                bg.paste(rgba, mask=rgba.split()[-1])
+                img = bg
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
+
             img = img.resize(target_size, Image.LANCZOS)
 
             screen_id = state.get("state_str", "unknown")[:16]
