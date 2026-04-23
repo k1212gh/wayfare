@@ -1,12 +1,60 @@
-"""Unit tests for C (signature_stabilizer) + D (semantic_merge) coalesce approaches."""
+"""Unit tests for C (signature_stabilizer) + D (semantic_merge) coalesce approaches +
+fragment extraction (DeskClock-style R8-obfuscated tab apps)."""
+
+from pathlib import Path
 
 from stage3_walk.signature_stabilizer import (
     stabilize_resource_id, stabilize_content_desc, is_dynamic_class,
     compute_structure_str, compute_state_str,
 )
+from stage3_walk.view_tree_parser import extract_fragment
 from stage6_screenmap.semantic_merge import (
     _label_similarity, _normalize_label, semantic_merge,
 )
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+# ─── Fragment extraction (DeskClock R8-obfuscated multi-tab) ──────
+
+def test_fragment_extract_stopwatch_tab():
+    """Real dumpsys captured after tapping the Stopwatch bottom-nav tab —
+    must return 'STOPWATCH' (tag), not 'TaskFragment' (system noise) or
+    'ays' (obfuscated class of the first listed fragment)."""
+    out = (FIXTURES / "deskclock_dumpsys_stopwatch_tab.txt").read_text(encoding="utf-8", errors="replace")
+    assert extract_fragment(out) == "STOPWATCH"
+
+
+def test_fragment_extract_bedtime_tab():
+    out = (FIXTURES / "deskclock_dumpsys_bedtime_tab.txt").read_text(encoding="utf-8", errors="replace")
+    assert extract_fragment(out) == "BEDTIME"
+
+
+def test_fragment_extract_clocks_tab():
+    out = (FIXTURES / "deskclock_dumpsys_clocks_tab.txt").read_text(encoding="utf-8", errors="replace")
+    assert extract_fragment(out) == "CLOCKS"
+
+
+def test_fragment_extract_ignores_system_fragment_classes():
+    """Dumpsys containing only 'TaskFragment' noise must return '', not
+    TaskFragment (which is a WindowManager internal, not a real Fragment)."""
+    fake = (
+        "TASK null id=2 userId=0\n"
+        "  ACTIVITY com.foo/.Bar\n"
+        "    FragmentManager misc state:\n"
+        "      mLastReportedActivityWindowInfo=ActivityWindowInfo{"
+        "isEmbedded=false, taskBounds=Rect(0, 0 - 1080, 2400), "
+        "taskFragmentBounds=Rect(0, 0 - 1080, 2400)}\n"
+    )
+    assert extract_fragment(fake) == ""
+
+
+def test_fragment_extract_empty_input():
+    assert extract_fragment("") == ""
+    assert extract_fragment("no fragment info here") == ""
+
+
+# ─── C: signature_stabilizer ───────────────────────────────────
 
 
 # ─── C: signature_stabilizer ───────────────────────────────────

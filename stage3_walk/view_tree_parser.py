@@ -109,23 +109,113 @@ def extract_activity(dumpsys_output: str, target_pkg: str = "") -> str:
     return fallback or "unknown"
 
 
-def extract_fragment(dumpsys_output: str) -> str:
-    """Return short name of the currently-active Fragment, or ''.
+# Android framework Fragment classes that are NOT the user-facing tab/panel
+# we care about — they leak into dumpsys and must not be returned by
+# extract_fragment(). Most are internal WindowManager / ActivityRecord bookkeeping.
+_SYSTEM_FRAGMENT_CLASSES = frozenset({
+    "TaskFragment",                    # WM internal (leaked via taskFragmentBounds)
+    "WindowContainerTask",
+    "DialogFragment",                  # base class; the real subclass name is more informative
+    "NavHostFragment",                 # nav-compose wrapper
+    "PreferenceFragment",
+    "PreferenceFragmentCompat",        # Settings framework base; subclass is the real screen
+    "BottomSheetDialogFragment",       # base for ad-hoc sheets
+    "ListFragment",                    # generic AOSP base
+    "SupportMapFragment",              # maps wrapper
+})
 
-    Handles the modern "Added Fragments:" block first, then falls back to
-    `Fragment{class=...}` or any `*Fragment` token. Empty string when none.
+
+def extract_fragment(dumpsys_output: str) -> str:
+    """Return a short identifier for the currently-foreground Fragment, or ''.
+
+    Handles three dumpsys output formats, in order of preference:
+
+    1. **Active Fragments block** (modern AOSP, ViewPager/tab-based apps).
+       Each entry has a ``tag=TAG`` + ``mState=N`` where N=7 means RESUMED
+       (user-visible). Returns the tag of the RESUMED fragment — tags
+       survive R8 obfuscation where class names (``ays``, ``bdp``, ``bsc``)
+       don't. DeskClock is a prime example: three fragments share the same
+       class hash but tag=CLOCKS / BEDTIME / STOPWATCH identifies which tab.
+
+    2. **Added Fragments block** (older AOSP / single-fragment apps).
+       ``#0: HomeFragment{...}`` — return the class.
+
+    3. **Classic Fragment{class=...}** — return the class, filtered by
+       ``_SYSTEM_FRAGMENT_CLASSES`` so framework internals don't leak.
+
+    4. **Last-resort scan** for ``*Fragment`` token — also filtered.
     """
-    # Modern form: "Added Fragments:\n    #0: HomeFragment{...}"
-    m = re.search(r"Added Fragments:\s*\n\s*#\d+:\s*([A-Za-z0-9_$]+?Fragment)\{",
-                  dumpsys_output)
-    if m:
+    # 1. Active Fragments — new format used by FragmentActivity (most modern apps).
+    # Don't use a block regex: each fragment entry contains a "Back Stack Index"
+    # line inside its Child FragmentManager section, so naive block boundary
+    # detection cuts off at the first fragment. Instead, anchor on "Active
+    # Fragments:" occurring SOMEWHERE before the match, and match each entry
+    # independently. The per-entry pattern stops gobbling `[\s\S]*?` as soon
+    # as it sees the NEXT fragment entry (line starting with 4 spaces + an
+    # unindented class name followed by `{`) — guarding against cross-entry
+    # mState pickup.
+    if "Active Fragments:" in dumpsys_output:
+        # Slice everything from "Active Fragments:" to the end, then stop at
+        # ViewRoot or Local Activity (the next Activity's section).
+        start = dumpsys_output.index("Active Fragments:")
+        slice_ = dumpsys_output[start:]
+        # Find an explicit end-of-section marker (indent drops back to 4 spaces
+        # or fewer and a new "ViewRoot:" / "Local Activity" begins).
+        end_m = re.search(r"\n    (?:ViewRoot|Local Activity|Local FragmentActivity)",
+                          slice_[20:])
+        if end_m:
+            slice_ = slice_[: 20 + end_m.start()]
+
+        entries: list[tuple[str, str, int]] = []
+        # Each fragment entry: a line like "    <class>{<hash>} (<uuid> ... tag=<TAG>)"
+        # followed (within that entry) by "mState=<N>". The lazy ``[\s\S]*?``
+        # grabs text up to the first mState, which is the CORRECT one for
+        # this entry (mState comes very early in each entry, before any
+        # Child FragmentManager noise).
+        for m in re.finditer(
+            r"(?m)^    (\S+?)\{[0-9a-f]+\}\s*\([^)]*?tag=([A-Za-z0-9_\-]+)\)"
+            r"[\s\S]*?mState=(\d+)",
+            slice_,
+        ):
+            cls, tag, screen_s = m.groups()
+            entries.append((cls, tag, int(screen_s)))
+
+        if entries:
+            # Prefer RESUMED (state=7) or STARTED-visible (state=5 with
+            # visible hint). DeskClock in ViewPager lands on state=5 for
+            # the visible tab and state=4 for the off-screen preloaded ones.
+            for cls, tag, state in entries:
+                if state == 7:
+                    return tag if tag and tag.lower() not in ("tag", "null", "0") else cls
+            # Fallback: highest-state fragment wins (state=5 > 4 > 3 > 1).
+            entries.sort(key=lambda e: -e[2])
+            cls, tag, _ = entries[0]
+            return tag if tag and tag.lower() not in ("tag", "null", "0") else cls
+
+    # 2. Added Fragments — older format, single fragment
+    m = re.search(
+        r"Added Fragments:\s*\n\s*#\d+:\s*([A-Za-z0-9_$]+?Fragment)\{",
+        dumpsys_output,
+    )
+    if m and m.group(1) not in _SYSTEM_FRAGMENT_CLASSES:
         return m.group(1)
-    m = re.search(r"Fragment\{[^}]*\sclass\s*=\s*([A-Za-z0-9_.$]+)", dumpsys_output)
+
+    # 3. Classic "Fragment{class=...}"
+    m = re.search(
+        r"Fragment\{[^}]*\sclass\s*=\s*([A-Za-z0-9_.$]+)",
+        dumpsys_output,
+    )
     if m:
-        cls = m.group(1)
-        return cls.rsplit(".", 1)[-1]
-    m = re.search(r"\b([A-Za-z0-9_$]+Fragment)\b", dumpsys_output)
-    return m.group(1) if m else ""
+        cls = m.group(1).rsplit(".", 1)[-1]
+        if cls not in _SYSTEM_FRAGMENT_CLASSES:
+            return cls
+
+    # 4. Last resort: any *Fragment token — filtered against system classes
+    for m in re.finditer(r"\b([A-Za-z0-9_$]+Fragment)\b", dumpsys_output):
+        name = m.group(1)
+        if name not in _SYSTEM_FRAGMENT_CLASSES:
+            return name
+    return ""
 
 
 # ─── Dialog / popup menu detection ────────────────────────────────
