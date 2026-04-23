@@ -29,6 +29,11 @@ def main() -> int:
     ap.add_argument("--phash-threshold", type=int, default=4,
                     help="pHash hamming distance threshold (0=identical, ~10=similar). "
                          "Set to -1 to disable pHash tier entirely.")
+    ap.add_argument("--enable-llm", action="store_true",
+                    help="Run Claude Sonnet vision on borderline pairs (pHash 5~12) "
+                         "as final tiebreaker. Requires ANTHROPIC_API_KEY. ~$0.01/tour.")
+    ap.add_argument("--llm-phash-low", type=int, default=5)
+    ap.add_argument("--llm-phash-high", type=int, default=12)
     ap.add_argument("--out", help="Output path (default: overwrite in place with .bak)")
     ap.add_argument("--dry-run", action="store_true",
                     help="Only report what would be merged; don't write")
@@ -44,14 +49,34 @@ def main() -> int:
 
     phash_t = args.phash_threshold if args.phash_threshold >= 0 else 999
     semantic_merge(screenmap, threshold=args.threshold, phash_threshold=phash_t)
+
+    if args.enable_llm:
+        from stage6_screenmap.visual_merge_llm import merge_borderline_via_llm
+        print(f"\nRunning LLM Vision on borderline pairs (pHash {args.llm_phash_low}~{args.llm_phash_high})...")
+        merge_borderline_via_llm(
+            screenmap,
+            phash_low=args.llm_phash_low,
+            phash_high=args.llm_phash_high,
+        )
     meta = screenmap.get("screen_map", {}).get("metadata", {}).get("semantic_merge") \
         or screenmap.get("metadata", {}).get("semantic_merge", {})
     merges = meta.get("merges_applied", 0)
     nodes_after = meta.get("nodes_after", nodes_before)
 
+    # Re-read node count (B may have mutated nodes after semantic_merge reported)
+    nodes_final = len(screenmap.get("screen_map", {}).get("graph", {}).get("nodes", []))
+    llm_meta = (
+        screenmap.get("screen_map", {}).get("metadata", {}).get("llm_visual_merge")
+        or screenmap.get("metadata", {}).get("llm_visual_merge")
+        or {}
+    )
+    llm_merges = llm_meta.get("merges_applied", 0)
+
     print(f"Input:  {in_path}")
-    print(f"Nodes:  {nodes_before} → {nodes_after}  ({'-' if nodes_after < nodes_before else '+'}{abs(nodes_before - nodes_after)})")
-    print(f"Merges: {merges}  (threshold={args.threshold})")
+    print(f"Nodes:  {nodes_before} → {nodes_final}  ({'-' if nodes_final < nodes_before else '+'}{abs(nodes_before - nodes_final)})")
+    print(f"  A/D merges: {merges}  (threshold={args.threshold})")
+    if args.enable_llm:
+        print(f"  B (LLM) merges: {llm_merges}  (pairs considered: {llm_meta.get('pairs_considered', 0)})")
 
     if merges and not args.dry_run:
         print()

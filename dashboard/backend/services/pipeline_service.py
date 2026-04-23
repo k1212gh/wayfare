@@ -249,6 +249,21 @@ def run_pipeline_sync(tour_id: str, device_serial: str = "") -> None:
                                        phash_threshold=phash_thresh)
                         except Exception as e:
                             logger.warning("Semantic coalesce failed (non-fatal): %s", str(e)[:200])
+                    # B approach: LLM Vision tiebreaker for borderline pairs.
+                    # Opt-in via SEMANTIC_COALESCE_LLM=1. Gracefully skipped if
+                    # the key is missing.
+                    if os.environ.get("SEMANTIC_COALESCE_LLM", "0") == "1":
+                        try:
+                            from stage6_screenmap.visual_merge_llm import merge_borderline_via_llm
+                            screenmap_path = config.output_dir / config.screenmap_output_filename
+                            screenmap_data = json.loads(screenmap_path.read_text(encoding="utf-8"))
+                            merge_borderline_via_llm(screenmap_data)
+                            screenmap_path.write_text(
+                                json.dumps(screenmap_data, indent=2, ensure_ascii=False),
+                                encoding="utf-8",
+                            )
+                        except Exception as e:
+                            logger.warning("LLM visual coalesce failed (non-fatal): %s", str(e)[:200])
                     update_stage("ANNOTATED")
                 except Exception as e:
                     # Split auth vs runtime so the operator can tell them apart.
