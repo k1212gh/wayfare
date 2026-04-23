@@ -18,6 +18,8 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+from . import view_tree_parser
+
 logger = logging.getLogger(__name__)
 
 
@@ -887,15 +889,7 @@ class TapWalker:
 
     @staticmethod
     def _is_top_right(bounds) -> bool:
-        import re
-        if isinstance(bounds, str):
-            nums = re.findall(r"\d+", bounds)
-            if len(nums) < 4:
-                return False
-            x1, y1, x2, y2 = int(nums[0]), int(nums[1]), int(nums[2]), int(nums[3])
-            # Top 1/3 of screen, right 1/3
-            return y1 < 800 and x2 > 700
-        return False
+        return view_tree_parser.is_top_right(bounds)
 
     def _scroll_down(self, state: dict, distance: int = 800) -> None:
         """Swipe up to reveal more content below (scrolls the list down).
@@ -1310,185 +1304,29 @@ class TapWalker:
         except Exception:
             return None
 
+    # Pure UI-parsing helpers live in view_tree_parser.py; these 1-line wrappers
+    # preserve the `self._foo(...)` call sites inside the class (and any
+    # external caller that still uses them).
+
     def _parse_ui_xml(self, xml_path: Path) -> list[dict]:
-        """Parse uiautomator XML dump into view list (with parent_class)."""
-        if not xml_path.exists():
-            return []
-
-        try:
-            from xml.etree import ElementTree as ET
-            tree = ET.parse(str(xml_path))
-        except Exception:
-            return []
-
-        views: list[dict] = []
-
-        def walk(elem, parent_class_full: str):
-            if elem.tag == "node":
-                attrs = elem.attrib
-                full_cls = attrs.get("class", "")
-                short_cls = full_cls.rsplit(".", 1)[-1] if "." in full_cls else full_cls
-                rid_raw = attrs.get("resource-id", "")
-                views.append({
-                    "resource_id": rid_raw.split("/")[-1] if "/" in rid_raw else rid_raw,
-                    "class": short_cls,
-                    "parent_class": parent_class_full,
-                    "text": attrs.get("text", ""),
-                    "content_desc": attrs.get("content-desc", ""),
-                    "clickable": attrs.get("clickable") == "true",
-                    "long_clickable": attrs.get("long-clickable") == "true",
-                    "scrollable": attrs.get("scrollable") == "true",
-                    "enabled": attrs.get("enabled") == "true",
-                    "visible": True,
-                    "bounds": attrs.get("bounds", ""),
-                })
-                next_parent = full_cls
-            else:
-                next_parent = parent_class_full
-            for child in elem:
-                walk(child, next_parent)
-
-        walk(tree.getroot(), "")
-        return views
+        return view_tree_parser.parse_ui_xml(xml_path)
 
     def _extract_fragment(self, dumpsys_output: str) -> str:
-        """Extract the currently active Fragment from `dumpsys activity top`.
-
-        Returns short fragment class name (e.g. 'HomeFragment') or '' if none.
-        Uses the last 'Added Fragments:' section (most recently added) or
-        the first '  #0: {...Fragment}' pattern.
-        """
-        import re
-        # Modern form: "Added Fragments:\n    #0: HomeFragment{...}"
-        m = re.search(r"Added Fragments:\s*\n\s*#\d+:\s*([A-Za-z0-9_$]+?Fragment)\{",
-                      dumpsys_output)
-        if m:
-            return m.group(1)
-        # Alt form: just look for Fragment{classname=...}
-        m = re.search(r"Fragment\{[^}]*\sclass\s*=\s*([A-Za-z0-9_.$]+)", dumpsys_output)
-        if m:
-            cls = m.group(1)
-            return cls.rsplit(".", 1)[-1]
-        # Loose fallback: any "{SomethingFragment}"
-        m = re.search(r"\b([A-Za-z0-9_$]+Fragment)\b", dumpsys_output)
-        return m.group(1) if m else ""
+        return view_tree_parser.extract_fragment(dumpsys_output)
 
     def _detect_dialog(self, views: list[dict]) -> bool:
-        """Detect if an overlay Dialog/BottomSheet is on top of the activity.
-
-        Signals:
-          - Top-level class contains 'Dialog' or 'BottomSheet' or 'Popup'
-          - resource-id contains 'dialog'/'alert'
-          - Very small/centered bounds (typical of modal)
-        """
-        for v in views[:20]:  # check top-level only
-            cls = (v.get("class") or "").lower()
-            rid = (v.get("resource_id") or "").lower()
-            if any(kw in cls for kw in ("dialog", "bottomsheet", "popup", "alertdialog")):
-                return True
-            if any(kw in rid for kw in ("dialog", "alert", "popup")):
-                return True
-        return False
+        return view_tree_parser.detect_dialog(views)
 
     def _detect_popup_menu(self, views: list[dict]) -> bool:
-        """Is the overlay a user-intent popup menu (not a blocking dialog)?
-
-        Popup menu / dropdown / context menu classes — these contain tappable
-        list items that represent app functionality (Settings, Share, Delete)
-        rather than Allow/Deny prompts. We should WALK these, not dismiss.
-        """
-        popup_class_kw = (
-            "popupmenu", "listpopupwindow", "dropdownlistview",
-            "menupopupwindow", "menuitem", "cascadingmenupopup",
-            "overflowmenubutton",
-        )
-        alert_class_kw = ("alertdialog", "messagedialog", "confirmdialog")
-        has_popup_marker = False
-        has_alert_marker = False
-        for v in views[:30]:
-            cls = (v.get("class") or "").lower()
-            if any(kw in cls for kw in popup_class_kw):
-                has_popup_marker = True
-            if any(kw in cls for kw in alert_class_kw):
-                has_alert_marker = True
-        # Popup-menu class wins over alert if both present (rare).
-        return has_popup_marker and not has_alert_marker
+        return view_tree_parser.detect_popup_menu(views)
 
     def _popup_items(self, views: list[dict]) -> list[dict]:
-        """Return clickable views inside an active popup menu.
-
-        Popup menu items typically live under `PopupWindow$PopupDecorView` or
-        have resource_id like 'android:id/title'. We match clickable descendants
-        of a popup container.
-        """
-        items: list[dict] = []
-        for v in views:
-            cls = (v.get("class") or "").lower()
-            parent = (v.get("parent_class") or "").lower()
-            # Item classes or parents suggesting menu container
-            in_popup = (
-                "popupmenu" in parent or "popupmenu" in cls
-                or "listpopupwindow" in parent or "dropdownlist" in parent
-                or "menupopupwindow" in parent
-            )
-            if in_popup and v.get("clickable"):
-                items.append(v)
-            # Also menu items identified by text + being in a list-like parent
-            if not in_popup and v.get("clickable") and v.get("text"):
-                rid = (v.get("resource_id") or "").lower()
-                if "title" in rid or "menu" in rid:
-                    items.append(v)
-        return items
+        return view_tree_parser.popup_items(views)
 
     def _extract_activity(self, dumpsys_output: str) -> str:
-        """Extract current foreground activity from dumpsys output.
-
-        Supports multiple dumpsys formats:
-          - `mResumedActivity = ActivityRecord{... com.pkg/.Name ...}` (classic)
-          - `topResumedActivity = ...`, `mFocusedApp = ...`
-          - `ACTIVITY com.pkg/.Name <hash> pid=...` (dumpsys activity top, newer AOSP)
-          - Target app's package prefix filtering, to ignore system chrome/settings.
-        """
-        import re
-        act_re = re.compile(r'([a-zA-Z][a-zA-Z0-9_.]*)/(\.?[a-zA-Z0-9_.$]+)')
-        target_pkg = getattr(self, 'package', '') or ''
-
-        # 1. Classic keywords
-        patterns = ("ResumedActivity", "topResumedActivity", "mResumedActivity",
-                    "mFocusedApp", "mFocusedActivity")
-        for line in dumpsys_output.split("\n"):
-            if any(p in line for p in patterns):
-                m = act_re.search(line)
-                if m:
-                    pkg, act = m.group(1), m.group(2)
-                    if act.startswith("."):
-                        return pkg + act
-                    if "." not in act:
-                        return pkg + "." + act
-                    return act
-
-        # 2. Newer `dumpsys activity top` format — each TASK section begins with
-        #    `ACTIVITY com.pkg/.Name <hash> pid=... userId=...`
-        #    Prefer lines matching our target package; fall back to the first
-        #    ACTIVITY line.
-        fallback = ""
-        for line in dumpsys_output.split("\n"):
-            stripped = line.strip()
-            if not stripped.startswith("ACTIVITY "):
-                continue
-            m = act_re.search(stripped)
-            if not m:
-                continue
-            pkg, act = m.group(1), m.group(2)
-            full_act = pkg + act if act.startswith(".") else (
-                pkg + "." + act if "." not in act else act
-            )
-            # Prefer target package; remember first as fallback
-            if target_pkg and pkg == target_pkg:
-                return full_act
-            if not fallback:
-                fallback = full_act
-        return fallback or "unknown"
+        return view_tree_parser.extract_activity(
+            dumpsys_output, target_pkg=getattr(self, "package", "") or "",
+        )
 
     def _is_emulator_device(self) -> bool:
         """Detect emulator vs real device. Serial prefix is the first signal;
@@ -1694,44 +1532,7 @@ class TapWalker:
         return results
 
     def _build_deep_link_uris(self, filters: list) -> list[str]:
-        """Build candidate URIs from manifest intent_filter data specs."""
-        if not filters or not isinstance(filters, list):
-            return []
-        uris: list[str] = []
-        for f in filters:
-            if not isinstance(f, dict):
-                continue
-            if "android.intent.action.VIEW" not in (f.get("actions") or []):
-                continue
-            data = f.get("data") or []
-            schemes: list[str] = []
-            hosts: list[str] = []
-            paths: list[str] = []
-            for d in data:
-                if not isinstance(d, dict):
-                    continue
-                if d.get("scheme"): schemes.append(d["scheme"])
-                if d.get("host"): hosts.append(d["host"])
-                if d.get("path"): paths.append(d["path"])
-                elif d.get("pathPrefix"): paths.append(d["pathPrefix"])
-                elif d.get("pathPattern"):
-                    # Replace wildcards with a deterministic stub so the Activity
-                    # at least receives a well-formed URI.
-                    pp = d["pathPattern"].replace(".*", "stub").replace("........", "00000000") \
-                                         .replace("....", "0000").replace("..", "00")
-                    paths.append(pp)
-            # Prefer custom schemes (spotify://) over https://
-            custom = [s for s in schemes if s not in ("http", "https")]
-            use_schemes = custom or schemes
-            if not use_schemes:
-                continue
-            for sch in use_schemes[:2]:
-                for host in (hosts or [""])[:2]:
-                    path = paths[0] if paths else ""
-                    uri = f"{sch}://{host}{path}"
-                    if uri not in uris:
-                        uris.append(uri)
-        return uris
+        return view_tree_parser.build_deep_link_uris(filters)
 
     def _scan_capture(self, activity: str, idx: int) -> dict | None:
         """Lightweight UI capture for manifest-scan launched activities.
