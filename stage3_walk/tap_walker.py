@@ -818,8 +818,6 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                 )
                 time.sleep(0.3)
 
-        return acts
-
     def _bootstrap_navigation(self, package: str, main_activity: str) -> None:
         """One-time routine that fires BEFORE the main walk loop.
 
