@@ -54,10 +54,16 @@ def build_screen_cards(pages: list[dict], transitions: list[dict]) -> list[dict]
         reachable = list(set(outgoing.get(pid, [])))
         from_screens = list(set(incoming.get(pid, [])))
 
+        # screen_clusterer writes page["fragment_class"]; fall back to
+        # page["fragment"] for legacy cluster shapes. Emit BOTH so
+        # downstream consumers (screenmap_builder, dashboard) that expect either
+        # key keep working.
+        fragment_id = (page.get("fragment_class") or page.get("fragment") or "").strip()
         unit = {
             "screen_id": pid,
             "activity_name": page.get("activity", ""),
-            "fragment": page.get("fragment", ""),
+            "fragment": fragment_id,
+            "fragment_class": fragment_id,
             "node_type": page.get("node_type", "activity"),
             "screenshot": page.get("screenshot_path", ""),
             "cleaned_xml": cleaned_xml,

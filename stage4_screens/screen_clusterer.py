@@ -135,9 +135,16 @@ def _annotate_activity_hierarchy(pages: list[dict]) -> None:
 
 
 def _select_fragment_class(group: list[dict]) -> str:
+    """Pick the most-frequent fragment identifier across states in a cluster.
+
+    Accepts either ``fragment_class`` (older state writers) or ``fragment``
+    (current TapWalker — capture.py writes this key). Without this
+    fallback the field propagates as empty even though every state knows
+    its fragment, because the naming drifted between stages.
+    """
     counts: dict[str, int] = {}
     for state in group:
-        fragment = state.get("fragment_class", "").strip()
+        fragment = (state.get("fragment_class") or state.get("fragment") or "").strip()
         if fragment:
             counts[fragment] = counts.get(fragment, 0) + 1
 
