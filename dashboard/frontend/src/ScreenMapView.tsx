@@ -8,137 +8,17 @@ import {
   Controls,
   MiniMap,
   Panel,
-  Handle,
-  Position,
   useNodesState,
   useEdgesState,
-  useInternalNode,
   MarkerType,
   NodeMouseHandler,
-  getBezierPath,
-  EdgeProps,
-  EdgeLabelRenderer,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
-import { InstantTooltip } from './graph/InstantTooltip';
 import { Legend } from './graph/Legend';
-
-
-// ───────────────────────────────────────────────────────────
-//  InstantTooltip — custom tooltip that appears immediately on hover
-//  (browser's native `title` attribute has ~1s delay).
-// ───────────────────────────────────────────────────────────
-// ───────────────────────────────────────────────────────────
-//  FloatingEdge — computes the attachment point on each node's
-//  border based on the line from source center → target center,
-//  so edges follow nodes as they are dragged.
-// ───────────────────────────────────────────────────────────
-function getNodeIntersection(sourceNode: any, targetNode: any) {
-  // Source rect
-  const sw = sourceNode.measured?.width  || sourceNode.width  || 180;
-  const sh = sourceNode.measured?.height || sourceNode.height || 100;
-  const sx = sourceNode.internals.positionAbsolute.x + sw / 2;
-  const sy = sourceNode.internals.positionAbsolute.y + sh / 2;
-
-  const tw = targetNode.measured?.width  || targetNode.width  || 180;
-  const th = targetNode.measured?.height || targetNode.height || 100;
-  const tx = targetNode.internals.positionAbsolute.x + tw / 2;
-  const ty = targetNode.internals.positionAbsolute.y + th / 2;
-
-  // Ray from source center to target center, clipped to source rectangle border
-  const w = sw / 2, h = sh / 2;
-  const dx = tx - sx, dy = ty - sy;
-  if (dx === 0 && dy === 0) return { x: sx, y: sy };
-  const scaleX = Math.abs(dx) / w;
-  const scaleY = Math.abs(dy) / h;
-  const scale = Math.max(scaleX, scaleY);
-  return { x: sx + dx / scale, y: sy + dy / scale };
-}
-
-const EDGE_KIND_DESC: Record<string, string> = {
-  navigate: '확인된 Activity 간 직접 startActivity 호출 (DEX 분석 또는 탐색에서 관찰됨)',
-  two_hop: '난독화 helper class를 거쳐 startActivity 호출 (N-hop 역추적)',
-  contains: '같은 Activity 내 Fragment 교체 (탭/ViewPager)',
-  launcher: 'android.intent.action.MAIN + LAUNCHER/APP_* 카테고리',
-  intent_filter: 'Manifest의 intent-filter로 선언된 deep link 진입점',
-  pending_intent: '알림/위젯/AlarmManager에서 시스템 측이 실행',
-  overlay: 'Dialog/BottomSheet 레이어 (화면 전환 아님)',
-  static_ref: '난독화 helper에서 startActivity 참조 — 최종 호출 Activity 미확정',
-  global: '다수 화면에서 공유되는 컴포넌트 (하단탭/드로어 등)',
-  back: '시스템 뒤로가기 키 전환',
-};
-
-function FloatingEdge({ id, source, target, style, markerEnd, data }: EdgeProps) {
-  const sourceNode = useInternalNode(source);
-  const targetNode = useInternalNode(target);
-  if (!sourceNode || !targetNode) return null;
-  const s = getNodeIntersection(sourceNode, targetNode);
-  const t = getNodeIntersection(targetNode, sourceNode);
-  const [path, labelX, labelY] = getBezierPath({
-    sourceX: s.x, sourceY: s.y, targetX: t.x, targetY: t.y,
-    sourcePosition: Position.Bottom, targetPosition: Position.Top,
-  });
-  const d: any = data || {};
-  const label = d.label as string | undefined;
-  const tooltip = [
-    `Kind: ${d.kind || 'navigate'}`,
-    EDGE_KIND_DESC[d.kind] || '',
-    d.confidence ? `Confidence: ${d.confidence}` : '',
-    label ? `Trigger: ${label}` : '',
-  ].filter(Boolean).join('\n');
-  return (
-    <>
-      {/* Visible styled path (bottom) */}
-      <path id={id} d={path} style={{ ...(style || {}), pointerEvents: 'none' }} markerEnd={markerEnd} fill="none" />
-      {/* Wider transparent hit-test path on top of visible path */}
-      <g>
-        <path
-          d={path}
-          stroke="rgba(0,0,0,0.001)"
-          strokeWidth="18"
-          fill="none"
-          style={{ cursor: 'help' }}
-          onMouseEnter={(e) => {
-            const el = document.getElementById('sa-edge-tooltip');
-            if (el) {
-              el.style.display = 'block';
-              el.textContent = tooltip;
-              el.style.left = e.clientX + 14 + 'px';
-              el.style.top = e.clientY + 14 + 'px';
-            }
-          }}
-          onMouseMove={(e) => {
-            const el = document.getElementById('sa-edge-tooltip');
-            if (el) {
-              el.style.left = e.clientX + 14 + 'px';
-              el.style.top = e.clientY + 14 + 'px';
-            }
-          }}
-          onMouseLeave={() => {
-            const el = document.getElementById('sa-edge-tooltip');
-            if (el) el.style.display = 'none';
-          }}
-        />
-      </g>
-      {label && (
-        <EdgeLabelRenderer>
-          <div
-            style={{
-              position: 'absolute', transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-              background: '#fff', padding: '1px 4px', borderRadius: 3,
-              fontSize: 10, color: '#6b7280', fontFamily: "'JetBrains Mono', monospace",
-              pointerEvents: 'none', opacity: 0.9,
-            }}
-          >
-            {label}
-          </div>
-        </EdgeLabelRenderer>
-      )}
-    </>
-  );
-}
-// ───────────────────────────────────────────────────────────
+import { CATEGORY_COLOR } from './graph/colors';
+import { FloatingEdge } from './graph/FloatingEdge';
+import { ScreenshotNode } from './graph/ScreenshotNode';
 
 interface ScreenMapViewProps {
   graph: { entry_node: string; nodes: any[]; edges: any[] };
@@ -148,19 +28,6 @@ interface ScreenMapViewProps {
   tourId: string;
   appName?: string;
 }
-
-const CATEGORY_COLOR: Record<string, string> = {
-  home: '#2563eb',
-  login: '#dc2626',
-  settings: '#7c3aed',
-  search: '#059669',
-  list: '#0891b2',
-  content_detail: '#d97706',
-  form: '#e11d48',
-  profile: '#4f46e5',
-  navigation: '#6b7280',
-  other: '#9ca3af',
-};
 
 function buildLayout(nodes: any[], edges: any[], showScreenshots: boolean, tourId: string) {
   const g = new dagre.graphlib.Graph();
@@ -399,87 +266,6 @@ function buildLayout(nodes: any[], edges: any[], showScreenshots: boolean, tourI
 
   return { nodes: flowNodes, edges: flowEdges };
 }
-
-function ScreenshotNode({ data }: { data: any }) {
-  const color = data.color || '#9ca3af';
-  const screenshotUrl = `/api/tours/${data.tourId}/screenshot/${data.screen_id}`;
-  const [imgError, setImgError] = useState(false);
-  // Static-analysis completeness
-  const status: string = data.status || 'resolved';
-  const STATUS_DOT: Record<string, string> = {
-    resolved: '#22c55e',    // green — fully understood from static XML
-    partial:  '#f59e0b',    // amber — has Fragment/ViewPager
-    unknown:  '#ef4444',    // red — RecyclerView/WebView/ListView present
-    entry:    '#8b5cf6',    // violet — entry handler
-  };
-  const statusColor = STATUS_DOT[status] || '#9ca3af';
-  // Capture priority badge (A/B/C) — only render if set
-  const prio: string = data.capture_priority || '';
-  const PRIO_BG: Record<string, string> = { A: '#059669', B: '#94a3b8', C: '#8b5cf6' };
-  const prioBg = PRIO_BG[prio];
-  return (
-    <InstantTooltip text={data.tooltip || ''}>
-    <div
-      style={{
-        width: 180, background: '#fff', border: '1px solid #d4d4d4',
-        borderRadius: '10px', overflow: 'hidden', cursor: 'pointer',
-        borderTop: `3px solid ${color}`,
-        boxShadow: data.isEntry ? `0 0 0 2px ${STATUS_DOT.entry}` : undefined,
-      }}
-    >
-      {/* Single invisible target handle — floating edge computes attachment point */}
-      <Handle id="t" type="target" position={Position.Top} style={{ opacity: 0, pointerEvents: 'none' }} />
-      <div style={{ height: 200, background: '#f5f5f5', overflow: 'hidden', position: 'relative' }}>
-        {!imgError ? (
-          <img src={screenshotUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top' }}
-            onError={() => setImgError(true)} />
-        ) : (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#d4d4d4', fontSize: '11px' }}>
-            No screenshot
-          </div>
-        )}
-        {/* Status dot — top-left */}
-        <span title={`Static status: ${status}`} style={{
-          position: 'absolute', top: 6, left: 6, width: 10, height: 10,
-          borderRadius: '50%', background: statusColor,
-          border: '2px solid #fff', boxShadow: '0 0 2px rgba(0,0,0,0.3)',
-        }} />
-        {/* Capture-priority letter — next to status dot */}
-        {prioBg && (
-          <span
-            title={`Capture priority: ${prio}`}
-            style={{
-              position: 'absolute', top: 4, left: 22,
-              padding: '1px 5px', borderRadius: 3,
-              background: prioBg, color: '#fff',
-              fontSize: '9px', fontWeight: 700,
-              fontFamily: "'JetBrains Mono', monospace",
-              boxShadow: '0 0 2px rgba(0,0,0,0.3)',
-            }}
-          >
-            {prio}
-          </span>
-        )}
-        {/* Category tag — top-right */}
-        <span style={{
-          position: 'absolute', top: 4, right: 4, padding: '1px 6px',
-          fontSize: '9px', fontWeight: 600, borderRadius: '4px',
-          background: color, color: '#fff', fontFamily: "'JetBrains Mono', monospace",
-        }}>
-          {data.functional_category || 'other'}
-        </span>
-      </div>
-      <div style={{ padding: '6px 8px' }}>
-        <div style={{ fontSize: '10px', fontWeight: 600, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
-          {data.label || data.screen_id}
-        </div>
-      </div>
-      <Handle id="s" type="source" position={Position.Bottom} style={{ opacity: 0, pointerEvents: 'none' }} />
-    </div>
-    </InstantTooltip>
-  );
-}
-
 
 const nodeTypes = { screenshotNode: ScreenshotNode };
 const edgeTypes = { floating: FloatingEdge };
