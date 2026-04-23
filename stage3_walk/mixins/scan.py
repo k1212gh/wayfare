@@ -337,6 +337,14 @@ class ScanMixin:
         launched = 0
         scan_budget_s = 420  # 7 min hard cap
         scan_start = time.time()
+        # Track which activities we've already captured UI for — includes
+        # both the interactive-loop states and scan captures so far. Used by
+        # the focus_mismatch tolerance below to avoid re-capturing the same
+        # redirect landing page 15 times.
+        captured_activities: set[str] = {
+            s.get("activity", "") for s in self.states
+            if s.get("activity") and s.get("screenshot_path")
+        }
         for i, act in enumerate(declared):
             if self._cancel_flag.exists():
                 logger.info("[scan] cancel flag set, stopping at %d/%d", i, len(declared))
@@ -386,10 +394,30 @@ class ScanMixin:
                     or real_fg.endswith("." + act.rsplit(".", 1)[-1])
                 )
                 captured = None
+                redirect_captured = False
                 if act_matches:
                     captured = self._scan_capture(act, len(self.states))
                     if captured:
                         self.states.append(captured)
+                        captured_activities.add(act)
+                elif (
+                    real_fg
+                    and real_fg.startswith(package)
+                    and real_fg not in captured_activities
+                ):
+                    # focus_mismatch tolerance: the launch redirected us to ANOTHER
+                    # screen inside the target app that we haven't captured yet
+                    # (e.g. CitySelectionActivity → DeskClock, or SettingsActivity
+                    # → TitanViewAlarmsActivity). That landing is a legitimate
+                    # app screen; keep it, tagged with redirect metadata.
+                    redirect = self._scan_capture(real_fg, len(self.states))
+                    if redirect:
+                        redirect["source"] = "scan_redirect"
+                        redirect["attempted_target"] = act
+                        self.states.append(redirect)
+                        captured_activities.add(real_fg)
+                        captured = redirect
+                        redirect_captured = True
                 results[act] = {
                     "launched": True,
                     "foreground": fg,
@@ -397,6 +425,7 @@ class ScanMixin:
                     "soft_fail": soft_fail,
                     "captured": bool(captured),
                     "focus_mismatch": not act_matches,
+                    "redirect_captured": redirect_captured,
                 }
                 launched += 1
                 time.sleep(0.15)
@@ -429,15 +458,36 @@ class ScanMixin:
                         continue
                     time.sleep(2.5)  # longer settle for retry
                     real_fg = self._current_activity() or ""
-                    if not (real_fg == act or
-                            real_fg.endswith("." + act.rsplit(".", 1)[-1])):
-                        continue
-                    captured = self._scan_capture(act, len(self.states))
-                    if captured:
-                        self.states.append(captured)
-                        results[act]["captured"] = True
-                        results[act]["retry_ok"] = True
-                        retried += 1
+                    act_matches_retry = (
+                        real_fg == act
+                        or real_fg.endswith("." + act.rsplit(".", 1)[-1])
+                    )
+                    if act_matches_retry:
+                        captured = self._scan_capture(act, len(self.states))
+                        if captured:
+                            self.states.append(captured)
+                            captured_activities.add(act)
+                            results[act]["captured"] = True
+                            results[act]["retry_ok"] = True
+                            retried += 1
+                    elif (
+                        real_fg
+                        and real_fg.startswith(package)
+                        and real_fg not in captured_activities
+                    ):
+                        # Retry also benefits from focus_mismatch tolerance:
+                        # some redirects only settle after the longer 2.5s
+                        # sleep (Compose async init).
+                        redirect = self._scan_capture(real_fg, len(self.states))
+                        if redirect:
+                            redirect["source"] = "scan_redirect_retry"
+                            redirect["attempted_target"] = act
+                            self.states.append(redirect)
+                            captured_activities.add(real_fg)
+                            results[act]["captured"] = True
+                            results[act]["retry_ok"] = True
+                            results[act]["redirect_captured"] = True
+                            retried += 1
                 except subprocess.TimeoutExpired:
                     pass
                 except Exception as e:

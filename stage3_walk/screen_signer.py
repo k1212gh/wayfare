@@ -9,10 +9,20 @@ Combined: two states are "same" if ANY level says they match.
 
 import hashlib
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _env_float(name: str, default: float) -> float:
+    """Read a float env var, fall back to default on missing/invalid."""
+    try:
+        raw = os.environ.get(name)
+        return float(raw) if raw is not None else default
+    except (TypeError, ValueError):
+        return default
 
 
 @dataclass
@@ -26,11 +36,22 @@ class ScreenSignature:
 
 
 class ScreenSigner:
-    """3-level screen signature with configurable similarity thresholds."""
+    """3-level screen signature with configurable similarity thresholds.
 
-    def __init__(self, phash_threshold: int = 10, gnn_threshold: float = 0.95):
-        self.phash_threshold = phash_threshold   # hamming distance for pHash match
-        self.gnn_threshold = gnn_threshold       # cosine similarity for GNN match
+    L3 default was 0.95; empirically the count-based fallback vector for
+    DeskClock-style apps produced cos-sim > 0.95 across structurally-distinct
+    tabs (Clock/Alarms/Timer/Stopwatch), collapsing 364 of 367 events into 3
+    bogus "same screen" matches. Default lowered to 0.82; override with
+    env ``GNN_SIM_THRESHOLD``. Similarly, L3 is now gated on L1 — if both
+    fingerprints have a structural_hash and those differ, L3 cannot override
+    (L1 is authoritative when present).
+    """
+
+    def __init__(self, phash_threshold: int | None = None, gnn_threshold: float | None = None):
+        self.phash_threshold = phash_threshold if phash_threshold is not None \
+            else int(_env_float("PHASH_DIST_THRESHOLD", 10))
+        self.gnn_threshold = gnn_threshold if gnn_threshold is not None \
+            else _env_float("GNN_SIM_THRESHOLD", 0.82)
         self.known_fingerprints: dict[str, ScreenSignature] = {}  # canonical_id → fingerprint
         self._gnn_model = None
 
@@ -87,19 +108,26 @@ class ScreenSigner:
         return max(scores) if scores else 0.0
 
     def _is_match(self, fp: ScreenSignature, known: ScreenSignature) -> bool:
-        """Check if two fingerprints represent the same logical screen."""
-        # Level 1: Structural match (fastest, most reliable)
-        if fp.structural_hash and known.structural_hash:
-            if fp.structural_hash == known.structural_hash:
-                return True
+        """Check if two fingerprints represent the same logical screen.
 
-        # Level 2: pHash match (catches WebView/dynamic content)
+        L1 is authoritative when BOTH fingerprints have a structural_hash —
+        matching hashes = same screen, differing hashes = different screen
+        and L2/L3 cannot override. L2/L3 only act as a tiebreaker when L1
+        is missing (e.g. empty UI dumps, Canvas-rendered apps).
+        """
+        have_l1 = bool(fp.structural_hash and known.structural_hash)
+        if have_l1:
+            # L1 is decisive — same hash wins, different hash stops here.
+            # L2/L3 are NOT consulted; they were overriding L1 for apps whose
+            # fallback GNN features happen to align across distinct screens.
+            return fp.structural_hash == known.structural_hash
+
+        # L1 missing on at least one side — fall through to visual/semantic.
         if fp.perceptual_hash and known.perceptual_hash:
             dist = self._hamming_distance(fp.perceptual_hash, known.perceptual_hash)
             if dist <= self.phash_threshold:
                 return True
 
-        # Level 3: GNN embedding match (semantic similarity)
         if fp.gnn_embedding and known.gnn_embedding:
             sim = self._cosine_similarity(fp.gnn_embedding, known.gnn_embedding)
             if sim >= self.gnn_threshold:

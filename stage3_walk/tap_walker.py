@@ -50,9 +50,11 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         logger.info("Using %s extractor for framework=%s",
                     type(self.extractor).__name__, framework)
 
-        # 3-Level State Hasher
+        # 3-Level State Hasher — defaults now come from env (see ScreenSigner
+        # docstring). L3 threshold lowered to 0.82 and L1 is authoritative when
+        # present, so DeskClock-style Fragment tabs stop collapsing into one node.
         from .screen_signer import ScreenSigner
-        self.hasher = ScreenSigner(phash_threshold=10, gnn_threshold=0.95)
+        self.hasher = ScreenSigner()
 
         # Walk state
         self.visited_structures: dict[str, int] = defaultdict(int)  # canonical_id → visit count
