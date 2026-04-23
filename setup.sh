@@ -40,8 +40,8 @@ if [ ! -f .env ]; then
 # LLM
 LLM_MODE=api
 ANTHROPIC_API_KEY=sk-ant-PLACEHOLDER-replace-with-real-key
-LLM_MODEL_SCREEN=claude-sonnet-4-20250514
-LLM_MODEL_WIDGET=claude-haiku-4-5-20251001
+LLM_MODEL_SCREEN=claude-sonnet-4-5
+LLM_MODEL_WIDGET=claude-haiku-4-5
 
 # Walk
 WALK_MODE=tap

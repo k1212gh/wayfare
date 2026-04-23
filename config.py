@@ -6,14 +6,20 @@ from typing import Optional
 import os
 import uuid
 
-# Load .env file if present
+# Load .env file if present.
+# **Override** rather than setdefault: previously a bad shell-env export
+# (e.g. LLM_MODEL_SCREEN=claude-sonnet-4-20250514 left by an older setup
+# script run) would shadow the corrected value in .env, and LLM calls
+# silently 404'd for hours. .env is the edit-and-expect-to-take-effect
+# surface, so treat it as authoritative here. Shell exports are
+# still honored when the key is NOT present in .env.
 _env_path = Path(__file__).parent / ".env"
 if _env_path.exists():
     for line in _env_path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             key, _, value = line.partition("=")
-            os.environ.setdefault(key.strip(), value.strip())
+            os.environ[key.strip()] = value.strip()
 
 
 @dataclass

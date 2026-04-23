@@ -23,7 +23,8 @@ echo [4/5] Environment...
 if not exist .env (
     echo LLM_MODE=api > .env
     echo ANTHROPIC_API_KEY=sk-ant-PLACEHOLDER-replace-with-real-key >> .env
-    echo LLM_MODEL_SCREEN=claude-sonnet-4-20250514 >> .env
+    echo LLM_MODEL_SCREEN=claude-sonnet-4-5 >> .env
+    echo LLM_MODEL_WIDGET=claude-haiku-4-5 >> .env
     echo WALK_MODE=tap >> .env
     echo CACHE_ENABLED=true >> .env
     echo   .env created
