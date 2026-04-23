@@ -33,6 +33,51 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+# ─── A approach: pHash cache + visual merge ─────────────────
+# Computed lazily per-process, so multiple merges on the same ScreenMap share cache.
+_phash_cache: dict[str, str] = {}
+
+
+def _compute_phash(screenshot_path: str) -> str | None:
+    """Return 8x8 pHash hex of a screenshot, or None if unavailable.
+
+    Crops status/nav bars (top 5%, bottom 8%) so time-of-day in the status
+    bar doesn't perturb the hash. Cached by path.
+    """
+    if not screenshot_path:
+        return None
+    if screenshot_path in _phash_cache:
+        return _phash_cache[screenshot_path]
+    try:
+        import imagehash
+        from PIL import Image
+        p = Path(screenshot_path)
+        if not p.exists():
+            _phash_cache[screenshot_path] = ""
+            return None
+        img = Image.open(p)
+        w, h = img.size
+        img = img.crop((0, int(h * 0.05), w, int(h * 0.92)))
+        ph = str(imagehash.phash(img, hash_size=8))
+        _phash_cache[screenshot_path] = ph
+        return ph
+    except Exception as e:
+        logger.debug("pHash failed for %s: %s", screenshot_path, e)
+        _phash_cache[screenshot_path] = ""
+        return None
+
+
+def _phash_distance(h1: str | None, h2: str | None) -> int:
+    """Hamming distance between two pHash hex strings. Returns 999 if either is empty."""
+    if not h1 or not h2:
+        return 999
+    try:
+        import imagehash
+        return imagehash.hex_to_hash(h1) - imagehash.hex_to_hash(h2)
+    except Exception:
+        return 999
+
+
 _LABEL_NOISE = re.compile(r"[\s\-_/(),.·—:]+")
 
 
@@ -87,25 +132,41 @@ def _is_mergeable(
     b: dict,
     edges: list[dict],
     threshold: float,
+    phash_threshold: int = 4,
 ) -> bool:
     """Return True if `a` and `b` are near-duplicates.
 
-    Two-tier rule set:
+    Three-tier rule set (priority: A > 1 > 2):
+      Tier A — **visually identical** (pHash distance ≤ phash_threshold):
+               merge regardless of labels. Safest signal — the screenshots
+               are pixel-near-identical, so whatever the LLM labeled them
+               as, they're the same screen. Catches the LLM-label-drift
+               case that Tiers 1/2 miss.
       Tier 1 — **identical normalized labels**: merge regardless of edge
                kinds. High confidence the LLM saw the same screen twice.
       Tier 2 — **similar labels** (ratio ≥ threshold): require outgoing edge
-               kinds to overlap (Jaccard > 0). This prevents merging
-               "Home with full content" against "Home (empty state)" which
-               have similar labels but different transition sets.
+               kinds to overlap (Jaccard > 0). Prevents merging
+               "Home with full content" against "Home (empty state)".
     """
     # Never merge system / entry stubs with other nodes
     if a.get("screen_id", "").startswith("system:") or b.get("screen_id", "").startswith("system:"):
         return False
 
+    # Tier A: pHash visual merge (strongest evidence)
+    ss_a = a.get("screenshot_ref")
+    ss_b = b.get("screenshot_ref")
+    if ss_a and ss_b and ss_a != ss_b:
+        ph_a = _compute_phash(ss_a)
+        ph_b = _compute_phash(ss_b)
+        if ph_a and ph_b:
+            dist = _phash_distance(ph_a, ph_b)
+            if dist <= phash_threshold:
+                return True
+
     la = _normalize_label(a.get("label", ""))
     lb = _normalize_label(b.get("label", ""))
 
-    # Tier 1: identical normalized labels → strongest signal, merge unconditionally
+    # Tier 1: identical normalized labels → strongest label signal
     if la and lb and la == lb:
         return True
 
@@ -114,13 +175,12 @@ def _is_mergeable(
         return False
 
     # Tier 2: similar labels → require overlap in outgoing edge kinds.
-    # Empty set on one side is OK (not-yet-walked node absorbed by walked one).
     kinds_a = _edge_kind_set(edges, a.get("screen_id", ""))
     kinds_b = _edge_kind_set(edges, b.get("screen_id", ""))
     if not kinds_a or not kinds_b:
-        return True   # one side has no outgoing edges — can't disprove merge
+        return True
     if kinds_a & kinds_b:
-        return True   # any overlap is enough for Tier-2 merge
+        return True
     return False
 
 
@@ -181,7 +241,8 @@ def _prefer_primary(a: dict, b: dict) -> tuple[dict, dict]:
     return b, a
 
 
-def semantic_merge(screenmap: dict, threshold: float = 0.85) -> dict:
+def semantic_merge(screenmap: dict, threshold: float = 0.85,
+                   phash_threshold: int = 4) -> dict:
     """Merge near-duplicate nodes in the supplied ScreenMap dict. In-place.
 
     Returns the same dict with ``nodes``/``edges`` mutated and a
@@ -214,11 +275,18 @@ def semantic_merge(screenmap: dict, threshold: float = 0.85) -> dict:
                 b = group[j]
                 if b.get("screen_id") in absorbed:
                     continue
-                if not _is_mergeable(a, b, edges, threshold):
+                if not _is_mergeable(a, b, edges, threshold, phash_threshold):
                     continue
                 keeper, goner = _prefer_primary(a, b)
                 keeper_id = keeper.get("screen_id", "")
                 goner_id = goner.get("screen_id", "")
+                # Compute pHash distance for traceability — shows WHY the
+                # merge fired (visual vs label).
+                ph_dist = None
+                ss_k = keeper.get("screenshot_ref")
+                ss_g = goner.get("screenshot_ref")
+                if ss_k and ss_g and ss_k != ss_g:
+                    ph_dist = _phash_distance(_compute_phash(ss_k), _compute_phash(ss_g))
                 merges.append({
                     "kept": keeper_id,
                     "removed": goner_id,
@@ -228,6 +296,7 @@ def semantic_merge(screenmap: dict, threshold: float = 0.85) -> dict:
                     "similarity": _label_similarity(
                         keeper.get("label", ""), goner.get("label", ""),
                     ),
+                    "phash_distance": ph_dist,
                 })
                 absorbed.add(goner_id)
                 # Track provenance on the survivor
@@ -249,6 +318,60 @@ def semantic_merge(screenmap: dict, threshold: float = 0.85) -> dict:
                 # this bucket (e.g. "Stopwatch Screen" × 5 all collapse in
                 # one pass when inner loop keeps going).
 
+    # ─── Cross-bucket A+ pass — pHash-identical merge across buckets ───
+    # Fragment detection can lag the UI transition: tapping a new tab
+    # generates a screenshot of the new screen but dumpsys may still
+    # report the old Fragment tag. Those nodes land in different buckets
+    # above but reference visually-identical screenshots. Allow merging
+    # them across buckets when pHash distance == 0 (byte-level identical)
+    # AND same activity — safer than a general cross-bucket merge.
+    remaining = [n for n in nodes if n.get("screen_id") not in absorbed]
+    if phash_threshold >= 0:
+        for i, a in enumerate(remaining):
+            if a.get("screen_id") in absorbed:
+                continue
+            ss_a = a.get("screenshot_ref")
+            if not ss_a:
+                continue
+            ph_a = _compute_phash(ss_a)
+            if not ph_a:
+                continue
+            for j in range(i + 1, len(remaining)):
+                b = remaining[j]
+                if b.get("screen_id") in absorbed:
+                    continue
+                if (a.get("activity", "") or "") != (b.get("activity", "") or ""):
+                    continue
+                ss_b = b.get("screenshot_ref")
+                if not ss_b or ss_a == ss_b:
+                    continue
+                ph_b = _compute_phash(ss_b)
+                if not ph_b:
+                    continue
+                if _phash_distance(ph_a, ph_b) != 0:
+                    continue
+                # Cross-bucket pixel-identical merge
+                keeper, goner = _prefer_primary(a, b)
+                keeper_id = keeper.get("screen_id", "")
+                goner_id = goner.get("screen_id", "")
+                merges.append({
+                    "kept": keeper_id,
+                    "removed": goner_id,
+                    "activity": a.get("activity", ""),
+                    "label_kept": keeper.get("label", ""),
+                    "label_removed": goner.get("label", ""),
+                    "similarity": _label_similarity(
+                        keeper.get("label", ""), goner.get("label", ""),
+                    ),
+                    "phash_distance": 0,
+                    "cross_bucket": True,   # traceability tag
+                })
+                absorbed.add(goner_id)
+                keeper.setdefault("merged_from", []).append(goner_id)
+                if (not keeper.get("screenshot_ref")) and goner.get("screenshot_ref"):
+                    keeper["screenshot_ref"] = goner["screenshot_ref"]
+                edges = _rewrite_edges(edges, goner_id, keeper_id)
+
     # Drop absorbed nodes
     new_nodes = [n for n in nodes if n.get("screen_id") not in absorbed]
 
@@ -261,6 +384,7 @@ def semantic_merge(screenmap: dict, threshold: float = 0.85) -> dict:
     md = meta_host.setdefault("metadata", {})
     md["semantic_merge"] = {
         "threshold": threshold,
+        "phash_threshold": phash_threshold,
         "merges_applied": len(merges),
         "nodes_before": len(nodes),
         "nodes_after": len(new_nodes),
@@ -276,13 +400,13 @@ def semantic_merge(screenmap: dict, threshold: float = 0.85) -> dict:
 
 
 def coalesce_file(in_path: str | Path, out_path: str | Path | None = None,
-               threshold: float = 0.85) -> dict:
+               threshold: float = 0.85, phash_threshold: int = 4) -> dict:
     """File-level convenience wrapper. Reads JSON, runs semantic_merge,
     writes output (defaulting to in-place)."""
     in_p = Path(in_path)
     out_p = Path(out_path) if out_path else in_p
 
     screenmap = json.loads(in_p.read_text(encoding="utf-8"))
-    semantic_merge(screenmap, threshold=threshold)
+    semantic_merge(screenmap, threshold=threshold, phash_threshold=phash_threshold)
     out_p.write_text(json.dumps(screenmap, indent=2, ensure_ascii=False), encoding="utf-8")
     return screenmap

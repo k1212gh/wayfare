@@ -244,7 +244,9 @@ def run_pipeline_sync(tour_id: str, device_serial: str = "") -> None:
                             from stage6_screenmap.semantic_merge import coalesce_file
                             screenmap_path = config.output_dir / config.screenmap_output_filename
                             threshold = float(os.environ.get("SEMANTIC_COALESCE_THRESHOLD", "0.85"))
-                            coalesce_file(screenmap_path, threshold=threshold)
+                            phash_thresh = int(os.environ.get("SEMANTIC_COALESCE_PHASH", "4"))
+                            coalesce_file(screenmap_path, threshold=threshold,
+                                       phash_threshold=phash_thresh)
                         except Exception as e:
                             logger.warning("Semantic coalesce failed (non-fatal): %s", str(e)[:200])
                     update_stage("ANNOTATED")

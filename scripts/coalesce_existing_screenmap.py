@@ -26,6 +26,9 @@ def main() -> int:
     ap.add_argument("screenmap_path", help="Path to screen_map.json")
     ap.add_argument("--threshold", type=float, default=0.85,
                     help="Label similarity threshold (SequenceMatcher ratio), 0-1")
+    ap.add_argument("--phash-threshold", type=int, default=4,
+                    help="pHash hamming distance threshold (0=identical, ~10=similar). "
+                         "Set to -1 to disable pHash tier entirely.")
     ap.add_argument("--out", help="Output path (default: overwrite in place with .bak)")
     ap.add_argument("--dry-run", action="store_true",
                     help="Only report what would be merged; don't write")
@@ -39,7 +42,8 @@ def main() -> int:
     screenmap = json.loads(in_path.read_text(encoding="utf-8"))
     nodes_before = len(screenmap.get("screen_map", {}).get("graph", {}).get("nodes", []))
 
-    semantic_merge(screenmap, threshold=args.threshold)
+    phash_t = args.phash_threshold if args.phash_threshold >= 0 else 999
+    semantic_merge(screenmap, threshold=args.threshold, phash_threshold=phash_t)
     meta = screenmap.get("screen_map", {}).get("metadata", {}).get("semantic_merge") \
         or screenmap.get("metadata", {}).get("semantic_merge", {})
     merges = meta.get("merges_applied", 0)
