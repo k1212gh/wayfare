@@ -85,7 +85,7 @@ screenatlas/
 │       └── output/                    #   최종 ScreenMap + 리포트
 │
 ├── CONTEXT.md                         #   세션 맥락 (이어서 작업용)
-├── requirements.txt                   #   Python 의존성
+├── pyproject.toml                     #   Python 의존성 + 빌드 설정
 └── .gitignore
 ```
 
@@ -93,7 +93,7 @@ screenatlas/
 
 ```bash
 # 의존성
-pip install -r requirements.txt
+pip install -e .[dev]
 cd dashboard/frontend && npm install
 
 # 서버

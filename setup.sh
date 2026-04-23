@@ -12,11 +12,11 @@ echo "========================================="
 
 # 1. Python 의존성
 echo "[1/5] Python dependencies..."
-pip install -r requirements.txt 2>/dev/null || pip install fastapi uvicorn androguard networkx Pillow lxml imagehash
+pip install -e .[dev] 2>/dev/null || pip install fastapi uvicorn androguard networkx Pillow lxml imagehash
 
 # 2. DroidBot (optional)
 echo "[2/5] DroidBot..."
-pip install git+https://github.com/honeynet/droidbot.git 2>/dev/null || echo "  DroidBot skipped (optional)"
+pip install -e .[droidbot] 2>/dev/null || echo "  DroidBot skipped (optional)"
 
 # androguard 4.x 호환 shim
 python -c "

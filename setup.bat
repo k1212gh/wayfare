@@ -7,10 +7,10 @@ echo  ScreenAtlas Setup (Windows)
 echo =========================================
 
 echo [1/5] Python dependencies...
-pip install -r requirements.txt 2>nul || pip install fastapi uvicorn androguard networkx Pillow lxml imagehash
+pip install -e .[dev] 2>nul || pip install fastapi uvicorn androguard networkx Pillow lxml imagehash
 
-echo [2/5] DroidBot...
-pip install git+https://github.com/honeynet/droidbot.git 2>nul || echo   DroidBot skipped
+echo [2/5] DroidBot (optional)...
+pip install -e .[droidbot] 2>nul || echo   DroidBot skipped
 
 python -c "import androguard.core, os; d=os.path.join(os.path.dirname(androguard.core.__file__),'bytecodes'); os.makedirs(d,exist_ok=True); open(os.path.join(d,'__init__.py'),'w').close(); f=open(os.path.join(d,'apk.py'),'w'); f.write('from androguard.core.apk import APK\n'); f.close(); print('  shim OK')" 2>nul
 

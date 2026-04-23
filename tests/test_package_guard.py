@@ -6,11 +6,7 @@ Verifies: the guard presses BACK when the foreground package drifts away
 from the target, and falls back to `monkey -p` if BACK doesn't recover.
 """
 
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 def _make_walker():

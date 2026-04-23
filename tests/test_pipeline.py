@@ -1,10 +1,6 @@
 """Integration tests for ScreenAtlas pipeline components."""
 
 import json
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from stage4_screens.view_tree_cleaner import clean_views, views_to_cleaned_xml
 from stage4_screens.screen_clusterer import cluster_screens_to_pages

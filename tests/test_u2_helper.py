@@ -4,10 +4,7 @@ Runnable as: `python tests/test_u2_helper.py` from repo root.
 """
 
 import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 def test_dump_hierarchy_returns_u2_xml_when_connected():

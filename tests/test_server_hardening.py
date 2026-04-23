@@ -7,12 +7,9 @@ Each test prints [PASS] on success and raises on failure.
 import json
 import os
 import shutil
-import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 # ─── M7: _safe_rmtree must not escape the tree ────────────────────

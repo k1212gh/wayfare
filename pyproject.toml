@@ -9,8 +9,7 @@ authors = [
     {name = "YOUR_NAME"},
 ]
 
-# Runtime deps — kept in sync with requirements.txt. When changing, edit both
-# places or delete requirements.txt in a follow-up once we rely on pyproject.
+# Runtime deps — single source of truth (requirements.txt has been retired).
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn>=0.30.0",
@@ -66,6 +65,7 @@ packages = [
     "stage2_manifest",
     "stage3_walk",
     "stage3_walk.view_tree_readers",
+    "stage3_walk.mixins",
     "stage4_screens",
     "stage5_annotate",
     "stage6_screenmap",
@@ -82,11 +82,11 @@ py-modules = ["config", "main", "pipeline"]
 # ─── Tooling config ──────────────────────────────────────────────────
 
 [tool.pytest.ini_options]
-# Tests import from repo root (they do `sys.path.insert(0, ...)` each).
-# No need for rootdir override; just filter out the temp junk that accumulates
-# under the Windows %TEMP% pytest cache.
+# Make repo-root packages (stage*_*, pipeline, config, dashboard.*) importable
+# without per-test sys.path.insert shims.
 minversion = "8.0"
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-ra -q"
 
 [tool.ruff]
