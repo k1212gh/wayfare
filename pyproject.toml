@@ -1,0 +1,105 @@
+[project]
+name = "screenatlas"
+version = "0.3.0"
+description = "APK → Screen Map pipeline (static analysis + dynamic walk + LLM annotation)."
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [
+    {name = "YOUR_NAME"},
+]
+
+# Runtime deps — kept in sync with requirements.txt. When changing, edit both
+# places or delete requirements.txt in a follow-up once we rely on pyproject.
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "python-multipart>=0.0.9",
+    "aiofiles>=24.0",
+    "pydantic>=2.0",
+
+    "anthropic>=0.40.0",
+
+    "networkx>=3.0",
+    "lxml>=5.0",
+    "Pillow>=10.0",
+    "androguard>=4.0",
+
+    # UI automation — replaces `adb shell uiautomator dump` CLI which requires
+    # UI idle state. u2 runs an on-device HTTP agent that returns hierarchy
+    # instantly even during animations.
+    "uiautomator2>=3.5.0",
+]
+
+[project.optional-dependencies]
+# DroidBot has been replaced by TapWalker for walk; keeping as an
+# opt-in extra so people who want to compare with the legacy DroidBot policy
+# can install it explicitly.
+droidbot = ["droidbot>=1.0.0"]
+
+# Frida-based intent capture (see docs/frida_intent_capture.md).
+# Not installed by default — activate only when you need to replay gated
+# onboarding activities.
+frida = ["frida>=16.0", "frida-tools>=12.0"]
+
+# Dev tooling.
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+# ─── Build system ────────────────────────────────────────────────────
+# We're a plain source tree, not a wheel target — the repo is consumed as a
+# git checkout run via `uvicorn dashboard.backend.server:app`. Using the minimal
+# "empty" backend keeps pip install -e . working for dev without forcing a
+# package layout refactor (Step 2 already gave us dashboard/backend/ as a
+# package; stage*_*/ still import from repo-root sys.path).
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Repository uses flat layout; list top-level import packages explicitly so
+# setuptools doesn't complain about multi-package detection.
+packages = [
+    "stage1_install",
+    "stage2_manifest",
+    "stage3_walk",
+    "stage3_walk.view_tree_readers",
+    "stage4_screens",
+    "stage5_annotate",
+    "stage6_screenmap",
+    "navigator",
+    "cache",
+    "tracing",
+    "dashboard",
+    "dashboard.backend",
+    "dashboard.backend.api",
+    "dashboard.backend.services",
+]
+py-modules = ["config", "main", "pipeline"]
+
+# ─── Tooling config ──────────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+# Tests import from repo root (they do `sys.path.insert(0, ...)` each).
+# No need for rootdir override; just filter out the temp junk that accumulates
+# under the Windows %TEMP% pytest cache.
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra -q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [
+    "workspace/",
+    "logs/",
+    ".pytest_cache/",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E501",  # line length is enforced separately by line-length
+]
