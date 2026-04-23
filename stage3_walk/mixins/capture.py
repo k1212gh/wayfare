@@ -13,7 +13,7 @@ import logging
 import subprocess
 from pathlib import Path
 
-from .. import view_tree_parser
+from .. import signature_stabilizer, view_tree_parser
 
 logger = logging.getLogger(__name__)
 
@@ -86,18 +86,17 @@ class CaptureMixin:
 
             is_dialog = self._detect_dialog(views)
 
-            # structure_str now includes fragment — same activity different fragment = different screen
-            # e.g. Spotify MainActivity + HomeFragment vs MainActivity + SearchFragment
-            clickable_ids = sorted(
-                v.get("resource_id", "") for v in views if v.get("clickable")
+            # structure_str / state_str via signature_stabilizer — drops ticking
+            # clock text, numeric RecyclerView suffixes, and animated View
+            # classes so the same logical screen produces the same hash even
+            # when a clock ticks or a list item count drifts. See
+            # stage3_walk/signature_stabilizer.py for the stabilization rules.
+            structure_str = signature_stabilizer.compute_structure_str(
+                activity=activity, fragment=fragment, views=views,
             )
-            structure_str = hashlib.sha256(
-                f"{activity}|{fragment}|{'|'.join(clickable_ids)}".encode()
-            ).hexdigest()
-
-            state_str = hashlib.sha256(
-                f"{activity}|{fragment}|{json.dumps([v.get('text','') for v in views[:20]])}".encode()
-            ).hexdigest()
+            state_str = signature_stabilizer.compute_state_str(
+                activity=activity, fragment=fragment, views=views,
+            )
 
             screen_name = f"screen_{hashlib.sha256(structure_str.encode()).hexdigest()[:8]}"
 

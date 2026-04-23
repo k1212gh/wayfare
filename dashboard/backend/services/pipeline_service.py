@@ -237,6 +237,16 @@ def run_pipeline_sync(tour_id: str, device_serial: str = "") -> None:
                     )
                     from stage5_annotate import run_stage5
                     run_stage5(config, mode=stage5_mode)
+                    # Approach D: merge near-duplicate nodes after LLM labels
+                    # are in. Env flag SEMANTIC_COALESCE=0 disables.
+                    if os.environ.get("SEMANTIC_COALESCE", "1") != "0":
+                        try:
+                            from stage6_screenmap.semantic_merge import coalesce_file
+                            screenmap_path = config.output_dir / config.screenmap_output_filename
+                            threshold = float(os.environ.get("SEMANTIC_COALESCE_THRESHOLD", "0.85"))
+                            coalesce_file(screenmap_path, threshold=threshold)
+                        except Exception as e:
+                            logger.warning("Semantic coalesce failed (non-fatal): %s", str(e)[:200])
                     update_stage("ANNOTATED")
                 except Exception as e:
                     # Split auth vs runtime so the operator can tell them apart.
