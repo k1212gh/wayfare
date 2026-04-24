@@ -151,18 +151,52 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         if is_emulator and not already_installed:
             # Emulator: install fresh only if the package isn't already there.
             sibling_apks = list(apk_path.parent.glob("*.apk"))
-            if len(sibling_apks) > 1:
-                logger.info("Emulator — installing %d split APKs: %s",
-                             len(sibling_apks), [a.name for a in sibling_apks])
-                install_result = subprocess.run(
-                    ["adb", "-s", self.device_serial, "install-multiple", "-r"]
-                    + [str(a) for a in sibling_apks],
-                    capture_output=True, timeout=120)
-            else:
-                logger.info("Emulator — installing single APK: %s", apk_path.name)
-                install_result = subprocess.run(
-                    ["adb", "-s", self.device_serial, "install", "-r", str(apk_path)],
-                    capture_output=True, timeout=60)
+
+            # adb 36.x on Windows has a split-name derivation bug for
+            # install-multiple when the APK path contains non-ASCII
+            # characters: PackageInstaller receives "." as the session-write
+            # name and rejects it with `Invalid name: .`. Our workspace path
+            # is `.\...`, so every split-APK
+            # install hit this. Workaround: stage APKs in an ASCII-only
+            # tempdir before calling adb.
+            needs_ascii_staging = any(not str(p).isascii() for p in sibling_apks)
+
+            import shutil as _shutil
+            import tempfile as _tempfile
+            staging_dir: Path | None = None
+            try:
+                if needs_ascii_staging:
+                    staging_dir = Path(_tempfile.mkdtemp(prefix="sa_install_"))
+                    staged: list[Path] = []
+                    for a in sibling_apks:
+                        dst = staging_dir / a.name
+                        _shutil.copy2(a, dst)
+                        staged.append(dst)
+                    install_sources = staged
+                    staged_apk_path = staging_dir / apk_path.name
+                else:
+                    install_sources = sibling_apks
+                    staged_apk_path = apk_path
+
+                if len(install_sources) > 1:
+                    logger.info("Emulator — installing %d split APKs: %s%s",
+                                 len(install_sources),
+                                 [a.name for a in install_sources],
+                                 " (via ASCII staging)" if needs_ascii_staging else "")
+                    install_result = subprocess.run(
+                        ["adb", "-s", self.device_serial, "install-multiple", "-r"]
+                        + [str(a) for a in install_sources],
+                        capture_output=True, timeout=240)
+                else:
+                    logger.info("Emulator — installing single APK: %s%s",
+                                staged_apk_path.name,
+                                " (via ASCII staging)" if needs_ascii_staging else "")
+                    install_result = subprocess.run(
+                        ["adb", "-s", self.device_serial, "install", "-r", str(staged_apk_path)],
+                        capture_output=True, timeout=180)
+            finally:
+                if staging_dir is not None:
+                    _shutil.rmtree(staging_dir, ignore_errors=True)
             install_stdout = (install_result.stdout or b"").decode("utf-8", errors="replace")
             install_stderr = (install_result.stderr or b"").decode("utf-8", errors="replace")
             if install_result.returncode != 0 or "Success" not in install_stdout:
