@@ -16,12 +16,39 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
 from config import PipelineConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _push_progress(config: PipelineConfig, detail: str) -> None:
+    """Stage 5 진행 상황을 pipeline_state.json 에 기록.
+    Frontend 가 polling 해서 실시간으로 보여줄 수 있도록 한다.
+    실패하면 silent — LLM 진행 방해 금지."""
+    try:
+        state_path = Path(config.workspace_root) / config.tour_id / "pipeline_state.json"
+        d = json.loads(state_path.read_text(encoding="utf-8"))
+        d.setdefault("stages", {}).setdefault("stage5", {})["detail"] = detail
+        d["updated_at"] = time.time()
+        state_path.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _raise_if_cancelled(config: PipelineConfig) -> None:
+    """Stage 5 내부에서 cancel.flag 감지 시 InterruptedError 발생.
+
+    pipeline_service 의 outer except 가 InterruptedError → cancel.flag 체크 →
+    CANCELLED 상태로 마킹. LLM batch / 노드 단위 사이마다 호출하면 사용자가
+    Stop 누른 즉시 (LLM API 응답 한 번 분량 안에) 종료됨.
+    """
+    flag = Path(config.workspace_root) / config.tour_id / "cancel.flag"
+    if flag.exists():
+        raise InterruptedError("Stage 5 cancelled by user")
 
 CATEGORY_ENUM = [
     "home", "list", "detail", "form", "auth", "settings",
@@ -70,6 +97,12 @@ def label_screens_with_vision(config: PipelineConfig) -> None:
     system_prompt = _system_prompt()
     labeled = 0
     for i, n in enumerate(candidates):
+        # 2026-04-29: 매 노드마다 progress push + cancel check (이전엔 5장마다).
+        # vision API 가 hang 또는 timeout 시에도 어느 노드인지 frontend 가
+        # 즉시 봄. cancel 도 더 빠르게 반응.
+        _push_progress(config, f"Vision labeling {i + 1}/{len(candidates)}")
+        _raise_if_cancelled(config)
+
         ss_path = _resolve_screenshot(n.get("screenshot_ref", ""))
         if not ss_path or not ss_path.exists():
             continue
@@ -82,14 +115,26 @@ def label_screens_with_vision(config: PipelineConfig) -> None:
         media = "image/jpeg" if ss_path.suffix.lower() in (".jpg", ".jpeg") else "image/png"
         user_prompt = _build_user_prompt(n)
 
+        import time as _time
+        t_start = _time.time()
         try:
             resp = client.query_with_image(
                 system_prompt, user_prompt, img_bytes,
                 image_media_type=media, max_tokens=1024,
             )
         except Exception as e:
-            logger.warning("Vision call failed for %s: %s", n.get("screen_id"), e)
+            elapsed = _time.time() - t_start
+            logger.warning(
+                "Vision call failed for %s after %.1fs: %s",
+                n.get("screen_id"), elapsed, e,
+            )
             continue
+        elapsed = _time.time() - t_start
+        if elapsed > 30:
+            logger.warning(
+                "Vision call SLOW for %s: %.1fs (>30s) — node %d/%d",
+                n.get("screen_id"), elapsed, i + 1, len(candidates),
+            )
 
         ann = _parse_vision_response(resp)
         if ann:
@@ -136,17 +181,23 @@ def _system_prompt() -> str:
     return (
         "You are an Android-UI labeler for a knowledge-graph pipeline consumed by "
         "a MobileGPT-style agent. Given a single screen screenshot and its "
-        "activity metadata, produce a compact JSON describing the screen.\n\n"
+        "activity metadata, produce structured JSON describing the screen so "
+        "downstream tools (graph dashboard, navigator, agent) can reason about it.\n\n"
         "Required fields:\n"
         f"  - functional_category: one of {CATEGORY_ENUM}\n"
-        "  - label: short Korean OR English phrase (<=40 chars) — what this screen is\n"
-        "  - screen_purpose: one sentence, what the user does here\n"
-        "  - primary_affordances: up to 5 clickable elements the user is likely to hit "
-        "(each as short phrase)\n"
-        "  - confidence: 'high' | 'medium' | 'low'\n\n"
+        "  - label: 짧고 명확한 한국어 화면 이름 (≤30 chars) — '로그인', '채널 목록', "
+        "'알림 설정' 같이 사용자가 부를 만한 이름. raw FQN/ID 금지.\n"
+        "  - screen_purpose: 한 문장 (≤80 chars), 한국어. '사용자가 여기서 무엇을 하나'.\n"
+        "  - description: 2-3문장 (≤200 chars), 한국어. 화면이 무엇을 보여주고, "
+        "어떤 데이터 (목록/폼/미디어) 가 표시되며, 사용자에게 노출되는 핵심 정보.\n"
+        "  - primary_affordances: ≤5 클릭 가능 요소. 각 항목은 짧은 한국어 동사구 "
+        "('로그인 버튼', '메뉴 열기', '뒤로가기'). icon-only 면 추정 라벨 사용.\n"
+        "  - data_displayed: ≤4 항목. 화면에 표시되는 데이터 종류 ('알람 시간', '채널 이름', "
+        "'프로필 사진'). 없으면 빈 배열.\n"
+        "  - entry_hint: 사용자가 어떻게 이 화면에 도달하는지 한 문장 추정 (≤60 chars).\n"
+        "  - confidence: 'high' (선명한 화면) | 'medium' | 'low' (로딩/스캐폴드/애매).\n\n"
         "Respond ONLY with valid JSON, no markdown fences, no preamble.\n"
-        "If the screen looks like a loading spinner / empty scaffold / ambiguous "
-        "redirect, set confidence='low' and mark screen_purpose accordingly."
+        "Loading/redirect/empty scaffold → confidence='low' + 그 사실을 description 에 명시."
     )
 
 
@@ -211,3 +262,13 @@ def _apply_vision_annotation(node: dict, ann: dict) -> None:
     aff = ann.get("primary_affordances") or []
     if isinstance(aff, list) and aff:
         node["primary_affordances"] = [str(x)[:60] for x in aff[:5]]
+    # 새 필드 (2026-04-27, 노드 설명 강화):
+    desc = (ann.get("description") or "").strip()
+    if desc:
+        node["description"] = desc[:240]
+    data_disp = ann.get("data_displayed") or []
+    if isinstance(data_disp, list) and data_disp:
+        node["data_displayed"] = [str(x)[:40] for x in data_disp[:4]]
+    entry_hint = (ann.get("entry_hint") or "").strip()
+    if entry_hint:
+        node["entry_hint"] = entry_hint[:80]

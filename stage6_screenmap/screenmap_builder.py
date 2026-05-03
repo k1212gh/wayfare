@@ -81,6 +81,29 @@ def build_graph(
     _inject_activity_hosts(nodes, edges, edge_set)
     _annotate_edge_kinds(edges, nodes)
 
+    # 2026-04-30: screen_id 매칭 누락 노드도 structure_str 으로 cross-check.
+    # Stage 4 의 screen_cards 가 needs_vision_in_revisit 마킹을 unit 에 propagation
+    # 했지만 build_graph 의 unit_map (screen_id 기준) lookup 이 실패하면 ScreenMap 노드의
+    # is_provisional 이 0 이 됨. structure_str 은 hash 라 stable — 두 번째 매칭 pass.
+    unit_by_struct: dict[str, dict] = {
+        u.get("structure_str", ""): u
+        for u in screen_cards
+        if u.get("needs_vision_in_revisit") and u.get("structure_str")
+    }
+    if unit_by_struct:
+        marked_count = 0
+        for n in nodes.values():
+            s = n.get("structure_str", "")
+            if s and s in unit_by_struct and not n.get("is_provisional"):
+                n["is_provisional"] = True
+                marked_count += 1
+        if marked_count:
+            import logging as _log
+            _log.getLogger(__name__).info(
+                "[provisional] %d nodes marked is_provisional via structure_str fallback",
+                marked_count,
+            )
+
     entry_node = _find_entry_node(nodes, screen_cards, entry_activity)
 
     return {
@@ -145,10 +168,49 @@ def _build_node(sg_node: dict, analysis: dict, unit: dict) -> dict:
             }
             for e in analysis.get("key_widgets", unit.get("available_actions", []))
         ],
+        # ScreenMap expressivity extensions (sprint 2026-04-27). All optional, default
+        # to empty so legacy consumers ignoring these fields keep working.
+        # Filled by Stage 5 chip_group_detector + Stage 6 transformations.
+        "chip_groups": unit.get("chip_groups", []),
+        "state_variables": unit.get("state_variables", []),
+        "infinite_scroll": False,           # set by _mark_infinite_scroll_nodes (Stage 6)
+        "scroll_metadata": {},              # populated alongside infinite_scroll
         "screenshot_ref": unit.get("screenshot", ""),
         # Kept so the dashboard can resolve screenshots by structure hash.
         "structure_str": unit.get("structure_str", ""),
         "confidence": analysis.get("confidence", "medium"),
+        # 2026-04-30 (Pass 1 → Pass 2 흐름):
+        # Stage 3 의 quality fail 화면 (Compose wrapper / dominant WebView /
+        # Flutter Canvas-only 등) — primary extractor 가 actionable 추출 못 함.
+        # Stage 3 안에서 vision 호출 안 하고 flag 만 남김 — Pass 2 (Stage 5
+        # LLM 후 재탐색) 가 ScreenMap 풍부해진 상태에서 batch 호출.
+        # 기본 False — 안 마킹된 정상 노드는 영향 없음 (additive).
+        "is_provisional": bool(
+            unit.get("needs_vision_in_revisit")
+            or analysis.get("needs_vision_in_revisit")
+            or sg_node.get("needs_vision_in_revisit"),
+        ),
+        # 2026-04-30 (Bug 1 fix — PLANNABLE 0 의 진짜 원인):
+        # walk 의 dynamic capture 노드 (page_* prefix) 는 sg_node 가 비어있고
+        # unit/analysis 가 채워짐. 그런데 status 미설정으로 screenmap_serializer 가 default
+        # 'declared' 부여 → PLANNABLE (status ∈ {enriched, probed} 요구) 에서 제외.
+        # 메가커피 35cbb9a4: 14 page_* 노드 모두 declared → PLANNABLE 0.
+        # 분기:
+        #   sg_node 만 (wireframe 만 — 미방문 declared activity)        → "declared"
+        #   unit/analysis 있음 (walk capture)                   → "probed"
+        #   sg_node + unit/analysis (wireframe_merge.py:79 가 enriched 승격) → 그대로
+        "status": (
+            "probed" if (analysis or unit) and not sg_node else "declared"
+        ),
+        # 2026-05-01 (C+D 결합 — 캡쳐 보존):
+        # title_text = page_id 분리 시 사용된 신호. 같은 structure_str 라도 title
+        # 다른 화면은 별 노드 → C 분리 효과 추적용.
+        # aliases = 같은 page_id (structure+title) cluster 의 다른 PNG 들. 보통 비어있고,
+        # screen_clusterer 가 같은 cluster 안 다른 PNG 변종 보존 시 채워짐 → D 보존.
+        "title_text": unit.get("title_text", ""),
+        "aliases": [
+            {"screenshot_ref": s} for s in (unit.get("variant_screenshots") or [])
+        ],
     }
 
 
@@ -185,6 +247,13 @@ def _merge_node(existing: dict, new: dict) -> None:
             existing[key] = new[key]
     if new.get("screen_params"):
         existing.setdefault("params", {}).update(new["screen_params"])
+    # 2026-05-01: 머지 시 다른 노드의 screenshot_ref 도 aliases 에 흡수 (D 보존).
+    # 같은 page_id 인데 PNG 다르면 둘 다 추적 가능. 중복은 제거.
+    new_shot = new.get("screenshot_ref") or ""
+    if new_shot and new_shot != existing.get("screenshot_ref"):
+        existing.setdefault("aliases", [])
+        if not any(a.get("screenshot_ref") == new_shot for a in existing["aliases"]):
+            existing["aliases"].append({"screenshot_ref": new_shot})
 
 
 def _find_entry_node(

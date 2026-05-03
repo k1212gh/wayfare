@@ -146,8 +146,15 @@ class ScreenSigner:
         Without these signals, Home/Search/Library would all hash to the same
         structural_hash and collapse into one node.
 
+        Infinite-scroll-aware: collapses scrollable containers' children via
+        `signature_stabilizer.collapse_scroll_children` so Instagram-like feeds
+        where every swipe loads new items don't generate per-scroll canonical
+        IDs.
+
         Still ignores: free-form `text` (changes with data/language), `bounds`.
         """
+        from . import signature_stabilizer
+        views = signature_stabilizer.collapse_scroll_children(views)
         structure_parts = []
         accessibility_parts = []
         for v in views:

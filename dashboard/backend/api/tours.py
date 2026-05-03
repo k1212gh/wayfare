@@ -27,6 +27,7 @@ from dashboard.backend.paths import (
     _safe_rmtree,
 )
 from dashboard.backend.services import tour_store
+from dashboard.backend.services.adb_service import _get_first_device
 from dashboard.backend.services.pipeline_service import run_pipeline_sync
 
 router = APIRouter()
@@ -58,6 +59,35 @@ async def list_tours():
                 pass
 
         pause_info = _read_pause_info(tour_dir.name)
+        # P1.3 (2026-04-29): ScreenMap quality 요약 — ANNOTATED 잡에만 의미 있음.
+        # 매번 validate_graph 돌리면 N 잡 × 매 폴링 → CPU 낭비. 따라서
+        # screen_map.json.metadata 에 이미 저장된 값(P0.1 refresh 결과)을 읽음.
+        quality = None
+        screenmap_path = tour_dir / "output" / "screen_map.json"
+        if screenmap_path.exists():
+            try:
+                screenmap = json.loads(screenmap_path.read_text(encoding="utf-8"))
+                md = screenmap.get("screen_map", {}).get("metadata", {}) or {}
+                quality = {
+                    "total_nodes": md.get("total_nodes", 0),
+                    "total_edges": md.get("total_edges", 0),
+                    "actionable_nodes": md.get("actionable_nodes", 0),
+                    "plannable_nodes": md.get("plannable_nodes", 0),
+                    "reachable_count": md.get("reachable_count", 0),
+                    "validation_issues": md.get("validation_issues", 0),
+                    "high_issues": (md.get("issue_severity") or {}).get("high", 0),
+                    "activity_coverage": md.get("activity_coverage"),
+                    "completeness": md.get("completeness"),
+                }
+            except Exception:
+                pass
+
+        # Device the tour is bound to — prefer the in-memory slot (definitely
+        # alive right now) and fall back to whatever was last persisted in
+        # state.json (idle / completed tours).
+        active_serial = tour_store.find_device_for_tour(tour_dir.name)
+        device_serial = active_serial or state.get("device_serial", "")
+
         tours.append({
             "tour_id": tour_dir.name,
             "stage": state.get("stage", "UNKNOWN"),
@@ -73,6 +103,9 @@ async def list_tours():
             "pause_auto": (pause_info or {}).get("auto", False),
             "pause_since": (pause_info or {}).get("since", 0),
             "app_label": app_label,
+            "device_serial": device_serial,
+            "device_active": active_serial is not None,
+            "quality": quality,  # null 또는 8 필드 객체 (additive)
         })
     return {"tours": tours}
 
@@ -80,51 +113,97 @@ async def list_tours():
 # ─── Lifecycle ─────────────────────────────────────────────────────
 
 @router.post("/api/tours/{tour_id}/run")
-async def run_pipeline(tour_id: str, device_serial: str = ""):
-    """Start pipeline execution for a tour. Enforces a single active tour globally.
+async def run_pipeline(tour_id: str, device_serial: str = "", from_stage: int = 0):
+    """Start pipeline execution. One tour per ADB device serial.
 
-    `device_serial` pins the pipeline to a specific ADB device (e.g.
-    `emulator-5554` or a real phone serial). When omitted, the first device
-    listed by `adb devices` is used — OK if only one device is attached,
-    but ambiguous otherwise (real phone + emulator), so the UI should always
-    pass this param when it sees multiple devices.
+    Two tours targeting different devices may run in parallel; two tours
+    targeting the same serial are rejected with HTTP 409.
+
+    Args:
+        device_serial: ADB serial. 비우면 첫 번째 attached 디바이스로 즉시
+            resolve — 그래야 두 클라이언트가 동시에 빈 값으로 들어와도
+            같은 디바이스 두 번 점유 시도가 잡힘.
+        from_stage: 0=처음부터(default), 1=stage1, 2=stage2, 3=stage3, 4=stage4,
+            5=stage5(LLM only — 자동 .bak 백업), 6=stage6(ScreenMap 빌드만).
+            ANNOTATED 인 tour 도 from_stage 지정하면 재실행 가능.
     """
     tour_dir = _safe_tour_dir(tour_id)
     state_path = tour_dir / "pipeline_state.json"
     if not state_path.exists():
         raise HTTPException(404, "Tour state not found")
 
-    # Defense: serial format sanity check. Emulator: `emulator-NNNN`, real
-    # device: alphanumeric + optional . and -.  Reject anything else so the
-    # string can't smuggle into `adb -s <serial>` as an extra flag.
     if device_serial and not re.match(r"^[A-Za-z0-9._\-]{1,64}$", device_serial):
         raise HTTPException(400, "Invalid device_serial format")
 
+    if from_stage < 0 or from_stage > 6:
+        raise HTTPException(400, "from_stage must be 0..6")
+
     state = json.loads(state_path.read_text(encoding="utf-8"))
-    if state["stage"] not in ("UPLOADED", "FAILED", "SCREENMAP_GENERATED", "CANCELLED"):
+    # ANNOTATED 라도 from_stage 지정하면 재실행 허용 (resume from specific stage)
+    allowed_screens = ("UPLOADED", "FAILED", "SCREENMAP_GENERATED", "CANCELLED")
+    if state["stage"] not in allowed_screens and from_stage == 0:
         raise HTTPException(409, f"Tour already running (stage: {state['stage']})")
+    if from_stage > 0 and state["stage"] not in allowed_screens + ("ANNOTATED",):
+        raise HTTPException(409, f"Cannot resume — tour currently {state['stage']}")
+
+    # from_stage validation: prerequisite stage outputs 존재해야
+    if from_stage >= 2 and not (tour_dir / "apk" / "metadata.json").exists():
+        raise HTTPException(400, "from_stage>=2 requires Stage 1 output (apk/metadata.json)")
+    if from_stage >= 3 and not (tour_dir / "static" / "analysis.json").exists():
+        raise HTTPException(400, "from_stage>=3 requires Stage 2 output (static/analysis.json)")
+    if from_stage >= 4 and not (tour_dir / "dynamic" / "walk.json").exists():
+        raise HTTPException(400, "from_stage>=4 requires Stage 3 output (dynamic/walk.json)")
+    if from_stage >= 5 and not (tour_dir / "output" / "screen_map.json").exists():
+        raise HTTPException(400, "from_stage=5 requires existing ScreenMap (Stage 6 output)")
+
+    # Resolve "auto" → real serial BEFORE locking, otherwise two concurrent
+    # /run calls with empty serial would each lock the empty-string bucket
+    # and both proceed against the same first-attached device.
+    resolved_serial = device_serial
+    if not resolved_serial:
+        resolved_serial = _get_first_device()
+        if not resolved_serial:
+            raise HTTPException(503, "No ADB device attached")
 
     with tour_store.get_lock():
-        current = tour_store.get_active_tour()
-        if current is not None and current != tour_id:
+        current_on_device = tour_store.get_active_tour_on(resolved_serial)
+        if current_on_device is not None and current_on_device != tour_id:
             raise HTTPException(
                 409,
-                f"Another tour is already running (tour_id={current}). "
-                "Stop it first or wait for completion.",
+                f"Device {resolved_serial} is busy with tour {current_on_device}. "
+                "Stop it first, or pick a different device.",
             )
-        tour_store.set_active_tour(tour_id)
+        # Same tour_id can also be running on a *different* device — refuse.
+        existing_serial = tour_store.find_device_for_tour(tour_id)
+        if existing_serial is not None and existing_serial != resolved_serial:
+            raise HTTPException(
+                409,
+                f"Tour {tour_id} is already running on device {existing_serial}.",
+            )
+        tour_store.set_active_tour_on(resolved_serial, tour_id)
 
-    # Run in a real thread so we can track + allow cancellation.
+    # Persist resolved serial to pipeline_state.json so the dashboard can
+    # show "which device" even after the tour is no longer in the in-memory
+    # slot map (idle / completed tours).
+    try:
+        state["device_serial"] = resolved_serial
+        state_path.write_text(
+            json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8",
+        )
+    except Exception:
+        pass
+
     t = threading.Thread(
         target=run_pipeline_sync,
-        args=(tour_id, device_serial),
+        args=(tour_id, resolved_serial, from_stage),
         daemon=True,
     )
     t.start()
     return {
         "status": "started",
         "tour_id": tour_id,
-        "device_serial": device_serial or "(auto)",
+        "device_serial": resolved_serial,
+        "from_stage": from_stage,
     }
 
 
@@ -194,9 +273,9 @@ async def stop_pipeline(tour_id: str):
 async def delete_tour(tour_id: str):
     """Delete a tour and its workspace."""
     tour_dir = _safe_tour_dir(tour_id)
-    # Do not delete while tour is active
+    # Refuse delete while tour is active on ANY device.
     with tour_store.get_lock():
-        if tour_store.get_active_tour() == tour_id:
+        if tour_store.find_device_for_tour(tour_id) is not None:
             raise HTTPException(409, "Tour is running; stop it first")
     _safe_rmtree(tour_dir, must_be_under=WORKSPACE_ROOT)
     return {"status": "deleted", "tour_id": tour_id}

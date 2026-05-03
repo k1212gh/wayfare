@@ -152,7 +152,18 @@ def _is_mergeable(
     if a.get("screen_id", "").startswith("system:") or b.get("screen_id", "").startswith("system:"):
         return False
 
-    # Tier A: pHash visual merge (strongest evidence)
+    # Tier A: pHash visual merge (strongest evidence).
+    # Lenient threshold for infinite-scroll feed pairs: Instagram-like screens
+    # show different items per scroll position, so identical screens still
+    # diverge in pHash. Bump threshold to ~2× when both nodes are flagged as
+    # infinite_scroll (Stage 6 _mark_infinite_scroll_nodes).
+    #
+    # 2026-04-30 (Bug 2 fix — screenatlas_phash_coalesce_caveats 메모리 적용):
+    # pHash 단독 coalesce 은 form/list/counter screens 의 false positive 위험.
+    # 메가커피 35cbb9a4: 24 unique structure_str → 14 ScreenMap 노드 (10 손실).
+    # 이벤트/공지/콘서트 화면이 pHash 거리 4 이내인데 structure 가 다름.
+    # → structure_str 다르면 dist > 0 일 때 merge 거부. byte-identical (dist=0)
+    # 경우만 라벨 안 보고도 merge.
     ss_a = a.get("screenshot_ref")
     ss_b = b.get("screenshot_ref")
     if ss_a and ss_b and ss_a != ss_b:
@@ -160,8 +171,17 @@ def _is_mergeable(
         ph_b = _compute_phash(ss_b)
         if ph_a and ph_b:
             dist = _phash_distance(ph_a, ph_b)
-            if dist <= phash_threshold:
-                return True
+            effective_threshold = phash_threshold
+            if a.get("infinite_scroll") and b.get("infinite_scroll"):
+                effective_threshold = max(phash_threshold, 8)
+            if dist <= effective_threshold:
+                # structure_str 가드 — 다른 structure 면 phash 가까워도 다른 화면
+                sa = a.get("structure_str", "") or ""
+                sb = b.get("structure_str", "") or ""
+                if dist > 0 and sa and sb and sa != sb:
+                    pass  # 라벨 / 엣지 검사로 진행 (Tier 1 / 2)
+                else:
+                    return True
 
     la = _normalize_label(a.get("label", ""))
     lb = _normalize_label(b.get("label", ""))
@@ -390,6 +410,14 @@ def semantic_merge(screenmap: dict, threshold: float = 0.85,
         "nodes_after": len(new_nodes),
         "merges": merges,
     }
+
+    # P0.1 (2026-04-29): nodes/edges 가 줄었으니 metadata.total_* 도 재계산.
+    # 이전 버그: metadata.total_nodes 가 coalesce 전 값(예: 100) 그대로 남아 actual 46 과 불일치.
+    try:
+        from .metadata_refresh import refresh_metadata
+        refresh_metadata(screenmap)
+    except Exception as e:
+        logger.warning("metadata_refresh after semantic_merge failed: %s", e)
 
     logger.info(
         "[semantic_merge] %d → %d nodes (%d merges, threshold=%.2f)",

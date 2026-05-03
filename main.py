@@ -68,7 +68,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="screenatlas",
-        description="APK → Screen Map pipeline with DroidBot walk",
+        description="ScreenAtlas — APK → Screen Map pipeline (static + TapWalker + LLM)",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)

@@ -215,8 +215,10 @@ function buildLayout(nodes: any[], edges: any[], showScreenshots: boolean, tourI
   const STYLE_BY_KIND: Record<string, { stroke: string; dash?: string; width: number; showLabel?: boolean }> = {
     // Group A: confirmed transitions (solid blue family)
     navigate:       { stroke: '#2563eb', width: 2, showLabel: true },
-    two_hop:        { stroke: '#6d28d9', width: 1.8, showLabel: true },   // purple-ish blue
-    contains:       { stroke: '#0ea5e9', width: 1.5, dash: '4,4', showLabel: true },
+    two_hop:        { stroke: '#6d28d9', width: 1.8, showLabel: true },
+    // contains 는 구조관계 (Activity ↔ Fragment) — 라벨 끄고 점선만으로 표현
+    // (이전: 81/113 엣지가 contains 라 fragment_transaction 라벨 도배되던 문제 해소)
+    contains:       { stroke: '#0ea5e9', width: 1.0, dash: '3,5', showLabel: false },
     // Group B: entry/external (green family)
     launcher:       { stroke: '#16a34a', width: 2.2, showLabel: true },
     intent_filter:  { stroke: '#16a34a', width: 1.3, dash: '4,2', showLabel: true },
@@ -229,17 +231,43 @@ function buildLayout(nodes: any[], edges: any[], showScreenshots: boolean, tourI
     back:           { stroke: '#d4d4d4', width: 1.0, dash: '6,4', showLabel: false },
   };
 
+  // raw trigger 식별자를 사람이 읽기 좋게 매핑.
+  // 예: "intent reflection/setClassName" → "정적 추론"
+  //      "intent two_hop_/HelperFoo"     → "Helper 경유"
+  //      "click btn_login"                → "btn_login" (그대로)
+  function friendlyLabel(e: any, kind: string, targetLabel?: string): string {
+    const action: string = e.trigger_action || '';
+    const elem: string = e.trigger_widget || '';
+    if (kind === 'contains') return '';
+    if (kind === 'back' || action === 'press_back') return '뒤로';
+    if (kind === 'launcher') return '런처';
+    if (kind === 'intent_filter') return elem ? `딥링크: ${elem.split('/').pop()?.slice(0, 14) || ''}` : '딥링크';
+    if (kind === 'overlay') return '오버레이';
+    if (kind === 'global') return '';
+    if (elem.startsWith('reflection/')) return '정적 추론';
+    if (elem.startsWith('two_hop_')) return 'Helper 경유';
+    if (elem === 'fragment_transaction') return '';
+    if (action === 'intent' && !elem) return targetLabel ? `→ ${targetLabel}` : '인텐트';
+    if (action === 'intent' && elem) {
+      // FQN 같은 경우 마지막 segment 만
+      const tail = elem.split('.').pop() || elem;
+      return tail.length > 18 ? tail.slice(0, 18) + '…' : tail;
+    }
+    // click + 짧은 element text (button label 류) — 그대로
+    if (elem) return elem.length > 18 ? elem.slice(0, 18) + '…' : elem;
+    return action || '';
+  }
+
+  // 노드 → label 빠른 lookup (target label 사용을 위해)
+  const nodeLabelMap: Record<string, string> = {};
+  for (const n of nodes) nodeLabelMap[n.screen_id] = n.label || '';
+
   for (const e of edges) {
     const kind: string = e.kind || (e.trigger_action === 'press_back' ? 'back' : 'navigate');
     const confidence: string = e.confidence || (e.source === 'walk' ? 'observed' : 'static_intent');
     const s = STYLE_BY_KIND[kind] || STYLE_BY_KIND.navigate;
 
-    const rawLabel = e.trigger_widget
-      ? `${e.trigger_action} ${e.trigger_widget}`
-      : e.trigger_action || '';
-    const label = s.showLabel && rawLabel
-      ? (rawLabel.length > 22 ? rawLabel.slice(0, 22) + '…' : rawLabel)
-      : '';
+    const label = s.showLabel ? friendlyLabel(e, kind, nodeLabelMap[e.to]) : '';
 
     const opacity = confidence === 'static_intent' && kind !== 'two_hop' && kind !== 'navigate' ? 0.6 : 1;
     const boost = (e.frequency || 0) >= 3 ? 0.8 : 0;
@@ -355,10 +383,27 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
   }, [graph.nodes, filterCategory, searchQuery]);
 
   const filteredNodeIds = useMemo(() => new Set(filteredNodes.map((n: any) => n.screen_id)), [filteredNodes]);
+  // Edge kind filter — 사용자가 toolbar 에서 toggle 한 kind 들만 표시
+  const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set());
   const filteredEdges = useMemo(
-    () => graph.edges.filter((e: any) => filteredNodeIds.has(e.from) && filteredNodeIds.has(e.to)),
-    [graph.edges, filteredNodeIds]
+    () => graph.edges.filter((e: any) => {
+      if (!filteredNodeIds.has(e.from) || !filteredNodeIds.has(e.to)) return false;
+      const kind = e.kind || (e.trigger_action === 'press_back' ? 'back' : 'navigate');
+      return !hiddenKinds.has(kind);
+    }),
+    [graph.edges, filteredNodeIds, hiddenKinds]
   );
+
+  // 그래프에 실제 등장하는 kind 별 카운트 (toggle UI 에 표시)
+  const edgeKindCounts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const e of graph.edges) {
+      if (!filteredNodeIds.has(e.from) || !filteredNodeIds.has(e.to)) continue;
+      const k = e.kind || (e.trigger_action === 'press_back' ? 'back' : 'navigate');
+      c[k] = (c[k] || 0) + 1;
+    }
+    return c;
+  }, [graph.edges, filteredNodeIds]);
 
   const layout = useMemo(() => {
     // Tag the nodes array with entry_node_id so buildLayout can highlight it
@@ -519,7 +564,7 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
       />
 
       <Panel position="top-right">
-        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', maxWidth: '70vw', justifyContent: 'flex-end' }}>
           <PanelBtn active={showScreenshots} onClick={() => setShowScreenshots(!showScreenshots)}>
             {showScreenshots ? 'Hide Screenshots' : 'Show Screenshots'}
           </PanelBtn>
@@ -533,6 +578,45 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
             <span style={{ fontSize: '10px', color: '#dc2626', fontFamily: 'var(--font-mono)', padding: '0 6px' }}>
               {pathInfo}
             </span>
+          )}
+          {/* Edge kind filter chips — 클릭으로 해당 kind 엣지 숨김 */}
+          {Object.keys(edgeKindCounts).length > 0 && (
+            <div style={{
+              display: 'flex', gap: '3px', alignItems: 'center',
+              padding: '4px 8px', background: 'rgba(255,255,255,0.95)',
+              border: '1px solid #e5e5e5', borderRadius: '6px',
+            }}>
+              <span style={{ fontSize: '10px', color: '#6b7280', marginRight: '2px',
+                             fontFamily: 'var(--font-mono)' }}>edges:</span>
+              {Object.entries(edgeKindCounts)
+                .sort((a, b) => b[1] - a[1])
+                .map(([kind, count]) => {
+                  const hidden = hiddenKinds.has(kind);
+                  return (
+                    <span
+                      key={kind}
+                      onClick={() => {
+                        const next = new Set(hiddenKinds);
+                        if (hidden) next.delete(kind); else next.add(kind);
+                        setHiddenKinds(next);
+                      }}
+                      title={hidden ? `${kind} 보이기` : `${kind} 숨기기`}
+                      style={{
+                        cursor: 'pointer', fontSize: '10px',
+                        padding: '2px 7px', borderRadius: '10px',
+                        fontFamily: 'var(--font-mono)',
+                        background: hidden ? 'transparent' : '#1a1a1a',
+                        color: hidden ? '#9ca3af' : '#fff',
+                        border: hidden ? '1px solid #d4d4d4' : '1px solid #1a1a1a',
+                        textDecoration: hidden ? 'line-through' : 'none',
+                        userSelect: 'none' as const,
+                      }}
+                    >
+                      {kind} {count}
+                    </span>
+                  );
+                })}
+            </div>
           )}
         </div>
       </Panel>

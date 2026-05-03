@@ -83,15 +83,70 @@ def _stable_view_sig(view: dict) -> tuple[str, str] | None:
     return (cls, f"{rid}@{desc}")
 
 
+def collapse_scroll_children(views: list[dict]) -> list[dict]:
+    """Drop direct children of scrollable containers from the hash input.
+
+    Why: in feed/list screens the same logical screen emits a different child
+    count every time the user scrolls (RecyclerView/LazyColumn lazily inflate
+    items). If those children land in the structural hash, every scroll
+    position becomes a fresh canonical_id and the ScreenMap explodes with duplicates.
+
+    Strategy: keep the scrollable parent itself (so the hash still records
+    "this screen has a list region"), but drop its direct children. Children's
+    own children are kept intact only if they had a non-scrollable ancestor;
+    in practice list items are leaves so this collapses cleanly.
+
+    Requires `parent_index` on each view (added by view_tree_parser walk()). Falls
+    back to a no-op if parent_index is missing on every view (legacy dumps).
+
+    A debug breadcrumb `_scroll_child_bucket` is attached to each surviving
+    scrollable parent — NOT included in the hash to keep stability across
+    item-count drift; useful for inspection / Stage 6 marking.
+    """
+    if not views or "parent_index" not in views[0]:
+        return views   # legacy view dicts without parent_index — no-op
+
+    scroll_parents: set[int] = {
+        i for i, v in enumerate(views) if v.get("scrollable")
+    }
+    if not scroll_parents:
+        return views
+
+    child_counts: dict[int, int] = {}
+    for v in views:
+        p = v.get("parent_index")
+        if p in scroll_parents:
+            child_counts[p] = child_counts.get(p, 0) + 1
+
+    def _bucket(n: int) -> str:
+        if n == 0: return "empty"
+        if n < 5:  return "few"
+        if n < 20: return "some"
+        return "many"
+
+    out: list[dict] = []
+    for i, v in enumerate(views):
+        if v.get("parent_index") in scroll_parents:
+            continue   # drop direct children of scrollable parents
+        if i in scroll_parents:
+            v = {**v, "_scroll_child_bucket": _bucket(child_counts.get(i, 0))}
+        out.append(v)
+    return out
+
+
 def compute_structure_str(activity: str, fragment: str, views: list[dict]) -> str:
     """Stabilized structure hash — stable across ticking clocks, RecyclerView
-    item count drift, and animated Views. See module docstring for the rules.
+    item count drift, animated Views, AND scroll position in feed-like screens.
+    See module docstring for the rules.
 
     Preserves the legacy composition (activity | fragment | sorted clickable
     resource-ids) but pipes each resource-id through `stabilize_resource_id`,
-    drops ticking/animated classes, and strips time-patterns from
-    content_desc when the view is clickable.
+    drops ticking/animated classes, strips time-patterns from content_desc
+    when the view is clickable, and collapses scrollable containers' children
+    via `collapse_scroll_children` (so infinite-scroll feeds don't explode
+    into N canonical_ids).
     """
+    views = collapse_scroll_children(views)
     stable_ids: set[str] = set()   # set, not list — collapses N repeats of
                                     # the same stabilized id (RecyclerView
                                     # with drifting item count) to a single entry.
@@ -112,8 +167,11 @@ def compute_structure_str(activity: str, fragment: str, views: list[dict]) -> st
 def compute_state_str(activity: str, fragment: str, views: list[dict]) -> str:
     """Stabilized per-instance hash — excludes dynamic views' text so a live
     clock ticking doesn't produce N different state_strs. Keeps text from
-    other views so truly-different instances remain distinguishable.
+    other views so truly-different instances remain distinguishable. Also
+    collapses scrollable containers' children to keep infinite-scroll feeds
+    from generating per-scroll-position state_strs.
     """
+    views = collapse_scroll_children(views)
     sanitized_texts: list[str] = []
     for v in views[:20]:
         if is_dynamic_class(v.get("class", "") or ""):

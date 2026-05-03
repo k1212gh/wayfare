@@ -3,7 +3,7 @@
 Extracted from server.py (refactor Step 2.5). `run_pipeline_sync` is the
 background-thread entry point called by `/api/tours/{id}/run`. It drives
 every stage, writes per-stage status into `pipeline_state.json`, and — on
-abnormal exit — reconciles the shared `_active_tour` slot in tour_store.
+abnormal exit — releases the per-device slot in tour_store.
 
 `build_static_screenmap` is the fallback path used when no device is connected;
 it emits a nodes-only ScreenMap directly from Stage 2 output so the dashboard has
@@ -34,13 +34,33 @@ from dashboard.backend.services.adb_service import (
 logger = logging.getLogger(__name__)
 
 
-def run_pipeline_sync(tour_id: str, device_serial: str = "") -> None:
+class _PipelineCancelled(Exception):
+    """Raised when /stop signal received between stages.
+    Caught by the outer except → state set to CANCELLED.
+    Sentinel exception type so cancel doesn't get logged as FAILED."""
+
+
+def _raise_if_cancelled(tour_id: str) -> None:
+    """Stage 사이마다 호출해서 즉시 종료 가능하도록.
+
+    /stop API 가 두 가지 시그널을 세팅:
+      1) tour_store 의 in-memory threading.Event
+      2) workspace/{tour_id}/cancel.flag 파일
+
+    둘 중 하나라도 있으면 _PipelineCancelled 발생 → 외부 except 가 CANCELLED 마킹.
+    """
+    if tour_store.is_cancelled(tour_id) or _cancel_path(tour_id).exists():
+        raise _PipelineCancelled(f"Cancel signal received for tour {tour_id}")
+
+
+def run_pipeline_sync(tour_id: str, device_serial: str = "", from_stage: int = 0) -> None:
     """Run the 6-stage pipeline in the current (background) thread.
 
-    `device_serial` (optional) pins walk to a specific ADB device.
-    When empty, falls back to `_get_first_device()` which picks whichever ADB
-    lists first — problematic when multiple devices are attached (e.g. real
-    phone + emulator). Callers should prefer passing an explicit serial.
+    Args:
+        tour_id: 잡 ID
+        device_serial: ADB serial. 빈 문자열이면 first attached device.
+        from_stage: 0 = 처음부터(default). 1..6 = 해당 stage 부터 실행.
+            5 진입 직전 자동 .bak 백업 (ScreenMap in-place mutation 보호).
     """
     project_root = Path(__file__).parent.parent.parent.parent
     state_path = WORKSPACE_ROOT / tour_id / "pipeline_state.json"
@@ -85,6 +105,10 @@ def run_pipeline_sync(tour_id: str, device_serial: str = "") -> None:
             if current not in stage_timers:
                 stage_timers[current] = time.time()
             stages[current]["status"] = "running"
+            # 2026-04-29: running stage 의 시작 시각을 frontend 가 elapsed
+            # 계산할 수 있게 노출. duration_ms 는 done 일 때만 set 되므로
+            # 동적 탐색 같은 long-running stage 의 진행 시간이 안 보였음.
+            stages[current]["started_at"] = stage_timers[current]
             stages[current]["detail"] = extra.get("detail", stages[current].get("detail", ""))
 
         # Mark completed stages
@@ -157,8 +181,9 @@ def run_pipeline_sync(tour_id: str, device_serial: str = "") -> None:
         force_rerun = os.environ.get("PIPELINE_FORCE_RERUN", "").lower() in ("1", "true", "yes")
 
         meta_path = config.apk_dir / "metadata.json"
-        if not force_rerun and meta_path.exists():
-            logger.info("Stage1 output exists — skipping (resume)")
+        # from_stage > 1 이면 Stage 1 명시적 skip (output 존재 여부와 무관)
+        if from_stage > 1 or (not force_rerun and meta_path.exists()):
+            logger.info("Stage1 skipped (from_stage=%d, output exists=%s)", from_stage, meta_path.exists())
         else:
             from stage1_install import run_stage1
             run_stage1(config)
@@ -168,11 +193,12 @@ def run_pipeline_sync(tour_id: str, device_serial: str = "") -> None:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             pkg = meta.get("package_name", "")
         update_stage("STATIC_ANALYZING", package_name=pkg, detail=f"Package: {pkg}")
+        _raise_if_cancelled(tour_id)
 
         # Stage 2: Static analysis
         static_path = config.static_dir / "analysis.json"
-        if not force_rerun and static_path.exists():
-            logger.info("Stage2 output exists — skipping (resume)")
+        if from_stage > 2 or (not force_rerun and static_path.exists()):
+            logger.info("Stage2 skipped (from_stage=%d, output exists=%s)", from_stage, static_path.exists())
         else:
             from stage2_manifest import run_stage2
             run_stage2(config)
@@ -182,6 +208,7 @@ def run_pipeline_sync(tour_id: str, device_serial: str = "") -> None:
             static_info = json.loads(static_path.read_text(encoding="utf-8"))
             act_count = len(static_info.get("activities", []))
         update_stage("STATIC_DONE", detail=f"{act_count} activities")
+        _raise_if_cancelled(tour_id)
 
         # Stage 2.5: Build static wireframe ScreenMap immediately so the dashboard has
         # *something* to render before dynamic walk is done.
@@ -196,11 +223,20 @@ def run_pipeline_sync(tour_id: str, device_serial: str = "") -> None:
         has_walk = False
         has_device = _check_adb_device()
 
-        if has_device:
+        if has_device and from_stage <= 3:
             update_stage("WALKING", detail="TapWalker running...")
             from stage3_walk import run_stage3
             run_stage3(config)
+            # Stage 3 가 cancel.flag 봐서 break out 했어도 여기로 돌아옴 → 즉시 종료
+            _raise_if_cancelled(tour_id)
             has_walk = (config.dynamic_dir / "walk.json").exists()
+        elif from_stage > 3:
+            # Stage 3 skip — 이전 walk.json 사용
+            has_walk = (config.dynamic_dir / "walk.json").exists()
+            if has_walk:
+                logger.info("Stage3 skipped (from_stage=%d) — using existing walk.json", from_stage)
+                exp = json.loads((config.dynamic_dir / "walk.json").read_text(encoding="utf-8"))
+                update_stage("WALK_DONE", detail=f"{len(exp.get('states', []))} states (skipped)")
             if has_walk:
                 exp = json.loads((config.dynamic_dir / "walk.json").read_text(encoding="utf-8"))
                 n_screens = len(exp.get("states", []))
@@ -212,18 +248,38 @@ def run_pipeline_sync(tour_id: str, device_serial: str = "") -> None:
             update_stage("STATIC_DONE", error="No device connected — walk skipped")
 
         if has_walk:
-            # ScreenMap-first: walk → preprocessing → wireframe ScreenMap → (optional) LLM enrichment
-            update_stage("PREPROCESSING_DATA")
-            from stage4_screens import run_stage4
-            run_stage4(config)
-            update_stage("CARDS_READY")
+            _raise_if_cancelled(tour_id)
 
-            update_stage("BUILDING_SCREENMAP")
-            from stage6_screenmap import run_stage6
-            run_stage6(config)
-            update_stage("SCREENMAP_GENERATED")
+            # Stage 4: 전처리
+            if from_stage <= 4:
+                update_stage("PREPROCESSING_DATA")
+                from stage4_screens import run_stage4
+                run_stage4(config)
+                update_stage("CARDS_READY")
+                _raise_if_cancelled(tour_id)
+            else:
+                logger.info("Stage4 skipped (from_stage=%d)", from_stage)
+
+            # Stage 6: ScreenMap 빌드
+            if from_stage <= 6:
+                update_stage("BUILDING_SCREENMAP")
+                from stage6_screenmap import run_stage6
+                run_stage6(config)
+                update_stage("SCREENMAP_GENERATED")
+                _raise_if_cancelled(tour_id)
+            else:
+                logger.info("Stage6 skipped (from_stage=%d)", from_stage)
 
             # Stage 5: LLM enrichment (reads wireframe ScreenMap, annotates in place)
+            # in-place mutation 이라 진입 직전 자동 .bak 백업 → from_stage=5 안전 재실행
+            screenmap_path = config.output_dir / config.screenmap_output_filename
+            if screenmap_path.exists():
+                bak_path = screenmap_path.with_suffix(".before_stage5.bak.json")
+                try:
+                    bak_path.write_text(screenmap_path.read_text(encoding="utf-8"), encoding="utf-8")
+                    logger.info("Backed up ScreenMap to %s before Stage 5", bak_path.name)
+                except Exception as e:
+                    logger.warning("ScreenMap backup failed (proceeding anyway): %s", e)
             llm_mode = os.environ.get("LLM_MODE", "api")
             stage5_mode = os.environ.get("LLM_STAGE5_MODE", "screenmap_annotate")
             api_key = config.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
@@ -264,7 +320,37 @@ def run_pipeline_sync(tour_id: str, device_serial: str = "") -> None:
                             )
                         except Exception as e:
                             logger.warning("LLM visual coalesce failed (non-fatal): %s", str(e)[:200])
+                    # P0.1 + Phase 2 P2.1 (2026-04-29): Stage 5 + coalesce 후
+                    # 1) primitive_detector — 9 universal primitives 추출 (Phase 2)
+                    # 2) metadata_refresh — total_nodes/edges + actionable/plannable 갱신 (Phase 1)
+                    try:
+                        from stage6_screenmap.primitive_detector import detect_primitives_for_screenmap
+                        from stage6_screenmap.metadata_refresh import refresh_metadata
+                        screenmap_path = config.output_dir / config.screenmap_output_filename
+                        if screenmap_path.exists():
+                            screenmap_data = json.loads(screenmap_path.read_text(encoding="utf-8"))
+                            # primitive 먼저 — primitives 는 actionable 신호 후보
+                            try:
+                                summary = detect_primitives_for_screenmap(
+                                    screenmap_data,
+                                    tour_dir=WORKSPACE_ROOT / tour_id,
+                                )
+                                logger.info("[primitives] %s", summary)
+                            except Exception as pe:
+                                logger.warning("primitive_detector failed: %s", pe)
+                            # static_info 도 같이 넘겨 activity_coverage 계산
+                            refresh_metadata(screenmap_data, static_info=static_info)
+                            screenmap_path.write_text(
+                                json.dumps(screenmap_data, indent=2, ensure_ascii=False),
+                                encoding="utf-8",
+                            )
+                    except Exception as e:
+                        logger.warning("metadata_refresh after Stage 5 failed: %s", e)
                     update_stage("ANNOTATED")
+                except InterruptedError:
+                    # Stage 5 가 cancel.flag 보고 멈춘 경우 — 외부 except 로 던져
+                    # CANCELLED 로 기록 (FAILED 아님).
+                    raise
                 except Exception as e:
                     # Split auth vs runtime so the operator can tell them apart.
                     msg = str(e)
@@ -292,17 +378,24 @@ def run_pipeline_sync(tour_id: str, device_serial: str = "") -> None:
             build_static_screenmap(config)
             update_stage("SCREENMAP_GENERATED")
 
+    except (_PipelineCancelled, InterruptedError):
+        # 정상 cancel — stack trace 안 찍고 깔끔히 종료
+        # InterruptedError = stage 내부 (vision_labeler / screenmap_annotator batch) 에서
+        # cancel.flag 감지 시 raise. _PipelineCancelled = stage 사이 check.
+        logger.info("Pipeline cancelled for tour %s", tour_id)
+        update_stage("CANCELLED", error="Cancelled by user")
     except Exception as e:
         logger.exception("Pipeline failed for tour %s", tour_id)
-        if tour_store.is_cancelled(tour_id):
+        if tour_store.is_cancelled(tour_id) or _cancel_path(tour_id).exists():
             update_stage("CANCELLED", error="Cancelled by user")
         else:
             update_stage("FAILED", error=str(e)[:500])
     finally:
-        # Release global lock + cleanup cancel state
+        # Release per-device slot + cleanup cancel state
         with tour_store.get_lock():
-            if tour_store.get_active_tour() == tour_id:
-                tour_store.set_active_tour(None)
+            serial = tour_store.find_device_for_tour(tour_id)
+            if serial is not None:
+                tour_store.set_active_tour_on(serial, None)
         tour_store.discard_cancel_event(tour_id)
         for p in (_cancel_path(tour_id), _pause_path(tour_id)):
             try:

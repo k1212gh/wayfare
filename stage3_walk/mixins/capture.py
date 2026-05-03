@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import subprocess
+import time
 from pathlib import Path
 
 from .. import signature_stabilizer, view_tree_parser
@@ -20,6 +21,66 @@ logger = logging.getLogger(__name__)
 
 class CaptureMixin:
     """UI/screenshot capture for the walk main loop."""
+
+    def wait_for_stable(
+        self,
+        timeout: float = 3.0,
+        stable_window: float = 0.3,
+        poll_interval: float = 0.15,
+    ) -> bool:
+        """Poll device's stabilized structure hash. Return when it stays the same
+        for ``stable_window`` seconds, or False on timeout.
+
+        대체 대상: 메인 walk 루프의 fixed ``time.sleep(0.5~3.0)`` 들. 빠른 화면은
+        즉시 종료, 느린 화면은 timeout 까지 대기 — 평균 30-50% 시간 단축.
+
+        ``stabilize`` 가 ticking clock / scroll position / RecyclerView item count
+        drift 를 noise 로 처리하니 시계 화면 같은 곳에서도 false unstable 안 됨.
+
+        Returns:
+            True 가 stable 도달, False 가 timeout (호출자는 보통 그래도 진행).
+        """
+        from .. import u2_helper
+        start = time.time()
+        last_hash: str | None = None
+        last_change = start
+        tmp_xml = self.output_dir / ".wait_stable_tmp.xml"
+
+        # 첫 dump 까지 기다리는 짧은 grace — 액션 직후 디바이스 응답 안 시작했을 수 있음
+        time.sleep(min(poll_interval, 0.1))
+
+        polls = 0
+        while True:
+            elapsed = time.time() - start
+            if elapsed >= timeout:
+                logger.debug("wait_for_stable timeout after %.1fs (%d polls)", elapsed, polls)
+                return False
+            try:
+                xml = u2_helper.dump_hierarchy(self.device_serial, timeout=2.0)
+                if not xml or "<hierarchy" not in xml:
+                    time.sleep(poll_interval)
+                    polls += 1
+                    continue
+                tmp_xml.write_text(xml, encoding="utf-8")
+                views = view_tree_parser.parse_ui_xml(tmp_xml)
+                # activity 갱신 cost 회피 — wait_for_stable 안에선 structure 만 필요
+                structure = signature_stabilizer.compute_structure_str("", "", views)
+                cur_hash = hashlib.sha256(structure.encode()).hexdigest()[:16]
+            except Exception as e:
+                logger.debug("wait_for_stable poll error: %s", e)
+                time.sleep(poll_interval)
+                polls += 1
+                continue
+
+            now = time.time()
+            if cur_hash != last_hash:
+                last_hash = cur_hash
+                last_change = now
+            elif now - last_change >= stable_window:
+                logger.debug("wait_for_stable stable after %.2fs (%d polls)", now - start, polls + 1)
+                return True
+            time.sleep(poll_interval)
+            polls += 1
 
     def _capture_screen(self, idx: int) -> dict | None:
         """Dump UI hierarchy and screenshot from device.

@@ -55,14 +55,36 @@ def validate_graph(graph: dict) -> dict:
     transition_issues = _check_transition_consistency(edges)
     issues.extend(transition_issues)
 
+    # P1.1 (2026-04-29): 새 quality 필드 추가 — actionable / plannable / reachable / severity.
+    # `node.primitives` 같은 Phase 2 schema 가 들어와도 동일 필드 그대로 — additive.
+    actionable = sum(
+        1 for n in nodes.values()
+        if n.get("widgets") or n.get("primary_affordances") or n.get("chip_groups")
+    )
+    plannable = sum(
+        1 for n in nodes.values()
+        if (n.get("widgets") or n.get("primary_affordances") or n.get("chip_groups"))
+        and n.get("status") in ("enriched", "probed")
+        and (n.get("label") or n.get("screen_purpose"))
+    )
+    sev_counts = {"high": 0, "medium": 0, "low": 0}
+    for issue in issues:
+        sev = issue.get("severity", "medium")
+        if sev in sev_counts:
+            sev_counts[sev] += 1
+
     summary = {
         "total_nodes": len(nodes),
         "total_edges": len(edges),
         "unreachable_count": len(unreachable),
+        "reachable_count": len(nodes) - len(unreachable),
         "dead_end_count": len(dead_ends),
         "cycle_count": len(cycles),
         "issue_count": len(issues),
-        "is_valid": len([i for i in issues if i["severity"] == "high"]) == 0,
+        "issue_severity": sev_counts,
+        "actionable_nodes": actionable,
+        "plannable_nodes": plannable,
+        "is_valid": sev_counts["high"] == 0,
     }
 
     return {"issues": issues, "summary": summary}

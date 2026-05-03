@@ -58,6 +58,11 @@ def _link_fragment_hierarchy(graph: dict) -> None:
                 "screen_purpose": "",
                 "params": {"inputs": [], "outputs": [], "displays": []},
                 "widgets": [],
+                # ScreenMap expressivity extensions (sprint 2026-04-27)
+                "chip_groups": [],
+                "state_variables": [],
+                "infinite_scroll": False,
+                "scroll_metadata": {},
                 "screenshot_ref": "",
                 "structure_str": "",
                 "confidence": "low",

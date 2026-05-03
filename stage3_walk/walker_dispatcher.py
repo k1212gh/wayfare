@@ -16,7 +16,7 @@ def run_droidbot(
     timeout: int = 600,
     policy: str = "dfs_greedy",
     is_emulator: bool = True,
-    event_count: int = 500,
+    event_count: int = 800,  # F3 (2026-05-02): 500 → 800. timeout 30분 매칭
     framework: str = "xml",
 ) -> None:
     """Launch app walk.

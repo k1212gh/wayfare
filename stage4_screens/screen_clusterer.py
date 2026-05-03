@@ -2,9 +2,64 @@
 
 import hashlib
 import logging
+import re
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)
+
+
+# 2026-05-01 (C+D 결합): title text 까지 page_id 에 포함시켜 같은 structure 라도
+# 카테고리 다른 화면 (커피 vs 디카페인 메뉴) 을 별 노드로 분리. webview 앱에서
+# 같은 RecyclerView 레이아웃이지만 화면 의미는 다른 케이스 보존.
+#
+# 시스템 bar (시간 / 통신사 / 배터리) 와 의미 없는 짧은 text 는 제외.
+_SYSTEM_BAR_KEYWORDS = (
+    "T-Mobile", "Battery", "Wi-Fi", "Wifi", "signal", "percent",
+    "AT&T", "Verizon", "Sprint", "bars", "bar",
+)
+_TIME_RE = re.compile(r"^\d{1,2}:\d{2}(\s*[AP]M)?$")
+
+
+def _parse_y1(bounds) -> int:
+    """bounds 의 y1 좌표를 list 또는 '[x1,y1][x2,y2]' string 둘 다에서 추출."""
+    if isinstance(bounds, list) and len(bounds) >= 2:
+        try:
+            return int(bounds[1])
+        except (TypeError, ValueError):
+            return 9999
+    if isinstance(bounds, str):
+        m = re.match(r"\[(\d+),(\d+)\]", bounds)
+        if m:
+            return int(m.group(2))
+    return 9999
+
+
+def _extract_title(state: dict, max_y: int = 250) -> str:
+    """state 의 상단 (y < max_y) 에서 의미있는 text 1개 추출.
+
+    필터:
+      - 시스템 bar (시간 HH:MM, T-Mobile, Battery, Wifi 등) 제외
+      - 길이 2~40 자
+      - text 또는 content_desc
+
+    제목 같은 화면 → 같은 page_id, 제목 다른 화면 → 별 page_id (C 분리).
+    """
+    views = state.get("cleaned_views") or state.get("views") or []
+    candidates: list[tuple[int, str]] = []
+    for v in views:
+        y1 = _parse_y1(v.get("bounds"))
+        if y1 > max_y:
+            continue
+        text = (v.get("text") or "").strip() or (v.get("content_desc") or "").strip()
+        if not text or len(text) < 2 or len(text) > 40:
+            continue
+        if _TIME_RE.match(text):
+            continue
+        if any(kw in text for kw in _SYSTEM_BAR_KEYWORDS):
+            continue
+        candidates.append((y1, text))
+    candidates.sort()
+    return candidates[0][1] if candidates else ""
 
 
 def cluster_screens_to_pages(
@@ -37,37 +92,63 @@ def cluster_screens_to_pages(
     if len(unique_screens) < len(states):
         logger.info("Coalesceed %d → %d unique states before clustering", len(states), len(unique_screens))
 
-    # Group by structure_str
+    # Group by canonical_id (Stage 3's 3-level hash result), falling back to
+    # structure_str when canonical_id is absent (older runs / synthesized states).
+    # Without this, Stage 4 throws away pHash/GNN merges done in Stage 3 and
+    # re-splits clusters using only the L1 structural hash.
     groups: dict[str, list[dict]] = defaultdict(list)
     for state in unique_screens:
-        key = state.get("structure_str", "")
+        key = state.get("canonical_id") or state.get("structure_str", "")
         if not key:
             key = _fallback_structure_hash(state)
             logger.warning(
-                "Missing structure_str for state %s, using fallback hash",
+                "Missing canonical_id and structure_str for state %s, using fallback hash",
                 state.get("state_str", "?")[:16],
             )
         groups[key].append(state)
 
     pages = []
-    for structure_str, group in groups.items():
-        representative = group[0]
+    for cluster_key, group in groups.items():
+        # Deterministic representative — min by structure_str so page_id stays
+        # stable across runs even when group[0] order shifts.
+        representative = min(
+            group,
+            key=lambda s: (s.get("structure_str") or "", s.get("state_str") or ""),
+        )
+        structure_str = representative.get("structure_str", "") or cluster_key
 
-        # FIX #1: SHA256[:12] instead of MD5[:8] — reduces collision probability
-        page_id = f"page_{hashlib.sha256(structure_str.encode()).hexdigest()[:12]}"
+        # 2026-05-01 (C+D 결합):
+        # page_id seed = structure_str + title — 같은 레이아웃이지만 다른 카테고리/
+        # 의미 화면을 별 노드로. title 빈 문자열이면 fallback 으로 structure_str
+        # 만 사용 (기존 동작 유지).
+        title = _extract_title(representative)
+        seed = structure_str + ("|" + title if title else "")
+        page_id = f"page_{hashlib.sha256(seed.encode()).hexdigest()[:12]}"
 
         # FIX #2: Union elements across ALL states in cluster, not just group[0]
         elements = _extract_interactive_widgets_union(group)
 
+        # variant_screenshots — 같은 page_id 이지만 다른 PNG 들 보존 (D 부분).
+        # screenmap_builder 가 노드 머지 시 aliases 로 흡수. semantic_merge 와 별개.
+        rep_shot = representative.get("processed_screenshot", "") or representative.get("screenshot_path", "")
+        variant_shots = []
+        seen_shots = {rep_shot} if rep_shot else set()
+        for s in group:
+            shot = s.get("processed_screenshot", "") or s.get("screenshot_path", "")
+            if shot and shot not in seen_shots:
+                seen_shots.add(shot)
+                variant_shots.append(shot)
+
         page = {
             "page_id": page_id,
             "structure_str": structure_str,
+            "title_text": title,
             "state_strs": [s.get("state_str", "") for s in group],
             "activity": representative.get("activity", ""),
             "fragment_class": _select_fragment_class(group),
             "elements": elements,
-            "screenshot_path": representative.get("processed_screenshot", "")
-                or representative.get("screenshot_path", ""),
+            "screenshot_path": rep_shot,
+            "variant_screenshots": variant_shots,
             "screen_count": len(group),
         }
         pages.append(page)

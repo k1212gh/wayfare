@@ -1,5 +1,8 @@
 # ScreenAtlas — Claude Code 프로젝트 설정
 
+> **이름 변경 (2026-04-27)**: 이전 명칭 ScreenAtlas → ScreenAtlas. 디렉토리 이름 `screenatlas/`는 옵션 B 정책상 유지. 이름 충돌 회피 사유: 동명 ScreenAtlas 논문(arxiv:2601.17418)과 별개 프로젝트임을 명시.
+
+
 ## 프로젝트 개요
 APK를 입력받아 앱 화면 흐름을 Screen Map로 자동 추출하는 파이프라인.
 GitLab: https://github.com/YOUR_GITHUB_ID/screenatlas (branch: feature/ScreenMap-POC)

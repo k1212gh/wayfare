@@ -1,0 +1,121 @@
+_doc: |
+  Phase B (2026-04-29) — DeskClock 5 task fixture.
+
+  원칙 (screenatlas_completeness_principle 메모리):
+    "모든 화면 발견" = unbounded 라 평가 불가.
+    "이 task 5개가 ScreenMap 노드만으로 step path 만들어지냐" = binary, decidable.
+
+  매칭 룰 — match_any 안의 시그널 중 하나라도 맞으면 그 expected_screen 은 found.
+    activity_substr:       activity 문자열 부분일치 (any-of)
+    functional_category:   stage5 LLM 이 단 카테고리 정확일치 (any-of)
+
+  Task 가 feasible = 모든 expected_screens 가 ScreenMap 에서 찾힘.
+
+app: deskclock
+description: "Google DeskClock — 알람 / 스톱워치 / 타이머 / 화면보호기"
+
+tasks:
+  - id: add_alarm
+    goal: "알람 추가 — 리스트에서 + 버튼 → 시간 picker → 저장"
+    expected_screens:
+      - description: "알람 리스트 화면"
+        match_any:
+          activity_substr: ["AlarmsActivity"]
+          functional_category: ["list"]
+      - description: "알람 편집/디테일 화면"
+        match_any:
+          activity_substr: ["TitanViewAlarmActivity", "AlarmEditActivity"]
+          functional_category: ["form", "detail"]
+
+  - id: toggle_alarm
+    goal: "기존 알람 켜기/끄기 — 리스트 토글"
+    expected_screens:
+      - description: "알람 리스트 화면"
+        match_any:
+          activity_substr: ["AlarmsActivity"]
+          functional_category: ["list"]
+
+  - id: start_stopwatch
+    goal: "스톱워치 시작 → lap → 정지"
+    expected_screens:
+      - description: "DeskClock 메인 (스톱워치 탭 포함)"
+        match_any:
+          activity_substr: ["DeskClock"]
+          functional_category: ["home"]
+
+  - id: set_timer
+    goal: "타이머 시간 입력 → 시작"
+    expected_screens:
+      - description: "타이머 진입점 (메인 또는 타이머 리스트)"
+        match_any:
+          activity_substr: ["TimersActivity", "DeskClock"]
+          functional_category: ["list", "home"]
+      - description: "타이머 시간 입력 폼"
+        match_any:
+          activity_substr: ["CreateTimerActivity", "TimerEditActivity"]
+          functional_category: ["form"]
+
+  - id: open_screensaver_settings
+    goal: "옵션 메뉴 → 화면보호기 설정 화면 진입"
+    expected_screens:
+      - description: "화면보호기 설정 화면"
+        match_any:
+          activity_substr: ["ScreensaverSettingsActivity"]
+          functional_category: ["settings"]
+
+  # ─── 까다로운 task — 일부는 honest miss 가 나와야 fixture 가 ground truth 역할 ───
+
+  - id: dismiss_ringing_alarm
+    goal: "알람 울릴 때 → snooze/dismiss 화면"
+    expected_screens:
+      - description: "알람 울림 화면 (foreground)"
+        match_any:
+          activity_substr: ["AlarmActivity"]
+    # 풀림 예상 — AlarmActivity 가 ScreenMap 에 존재
+
+  - id: change_alarm_ringtone
+    goal: "알람 편집 → 벨소리 선택 picker"
+    expected_screens:
+      - description: "알람 편집 화면"
+        match_any:
+          activity_substr: ["TitanViewAlarmActivity"]
+      - description: "벨소리 picker (목록)"
+        match_any:
+          activity_substr: ["RingtonePickerActivity"]
+          functional_category: ["search", "list"]
+    # 풀림 예상 — 두 activity 다 ScreenMap 에 있음
+
+  - id: add_world_city
+    goal: "세계 시계에 도시 추가 → 검색/선택"
+    expected_screens:
+      - description: "도시 선택 화면 (검색 가능)"
+        match_any:
+          activity_substr: ["CitySelectionActivity"]
+          functional_category: ["search"]
+    # 풀림 예상 — CitySelectionActivity 존재 + functional_category=search 2 노드
+
+  - id: set_bedtime_schedule
+    goal: "베드타임 잠자리/기상 시간 schedule 설정"
+    expected_screens:
+      - description: "베드타임 진입점 (onboarding 또는 schedule)"
+        match_any:
+          activity_substr: ["Bedtime"]
+      - description: "베드타임 시간 schedule 폼"
+        match_any:
+          # 의도적으로 specific — ScreenMap 의 BedtimeXOnboarding 만 있고
+          # 진짜 schedule 폼 (BedtimeScheduleActivity 등) 은 없음 → MISS 기대
+          activity_substr: ["BedtimeScheduleActivity", "BedtimeSettingsActivity"]
+    # MISS 예상 — onboarding 화면만 캡처되고 실제 schedule 폼은 ScreenMap 에 없음
+
+  - id: delete_world_city
+    goal: "도시 길게 눌러 → 삭제 confirm dialog"
+    expected_screens:
+      - description: "도시 리스트 (선택 모드 진입)"
+        match_any:
+          activity_substr: ["CitySelectionActivity"]
+      - description: "삭제 확인 dialog (specific class)"
+        match_any:
+          # functional_category: ["dialog"] 만 쓰면 false positive (다른 dialog 6개 있음).
+          # specific activity 요구 — 현재 ScreenMap 에 DeleteCityDialog 같은 게 없음 → MISS 기대
+          activity_substr: ["DeleteCityDialog", "ConfirmDeleteDialog", "RemoveCityDialog"]
+    # MISS 예상 — long-press context menu / specific delete dialog 미발견

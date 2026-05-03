@@ -120,6 +120,12 @@ def build_wireframe_screenmap(static_info: dict, metadata: dict, transition_info
             "screen_purpose": "",
             "params": {"inputs": [], "outputs": [], "displays": []},
             "widgets": [],
+            # ScreenMap expressivity extensions (sprint 2026-04-27) — empty for wireframe
+            # nodes; populated later if/when the activity gets dynamic content.
+            "chip_groups": [],
+            "state_variables": [],
+            "infinite_scroll": False,
+            "scroll_metadata": {},
             "screenshot_ref": "",
             "structure_str": "",
             "confidence": "low",

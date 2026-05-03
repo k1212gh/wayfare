@@ -207,6 +207,83 @@ async def get_report(tour_id: str):
     return JSONResponse(json.loads(report_path.read_text(encoding="utf-8")))
 
 
+@router.get("/api/tours/{tour_id}/quality")
+async def get_quality(tour_id: str):
+    """ScreenMap quality 지표 — 모든 framework 동일 schema. (P1.2, 2026-04-29)
+
+    Returns:
+        {
+          "total_nodes": int, "total_edges": int,
+          "actionable_nodes": int,   # 사용자가 탭/입력 가능한 노드
+          "plannable_nodes": int,    # actionable + 라벨링 완료
+          "reachable_count": int,    # entry 에서 BFS 도달 가능
+          "orphan_nodes": int,       # 도달 불가
+          "dead_end_nodes": int,
+          "validation_issues": int,
+          "issue_severity": {"high": N, "medium": N, "low": N},
+          "activity_coverage": float | null,
+          "is_valid": bool
+        }
+    """
+    tour_dir = _safe_tour_dir(tour_id)
+    screenmap_path = tour_dir / "output" / "screen_map.json"
+    if not screenmap_path.exists():
+        raise HTTPException(404, "ScreenMap not found")
+    static_path = tour_dir / "static" / "analysis.json"
+
+    screenmap = json.loads(screenmap_path.read_text(encoding="utf-8"))
+    static_info = (json.loads(static_path.read_text(encoding="utf-8"))
+                   if static_path.exists() else None)
+
+    _ensure_project_on_path()
+    from stage6_screenmap.metadata_refresh import refresh_metadata
+    md = refresh_metadata(screenmap, static_info=static_info)
+
+    # is_valid 는 screenmap_validator 의 high 0 정의 그대로
+    is_valid = (md.get("issue_severity") or {}).get("high", 0) == 0
+
+    # Phase A 1번 (2026-04-29): completeness 분리 후 expose. 기존 alias 도 유지.
+    return JSONResponse({
+        "total_nodes": md.get("total_nodes", 0),
+        "total_edges": md.get("total_edges", 0),
+        "actionable_nodes": md.get("actionable_nodes", 0),
+        "plannable_nodes": md.get("plannable_nodes", 0),
+        "reachable_count": md.get("reachable_count", 0),
+        "orphan_nodes": md.get("orphan_nodes", 0),
+        "dead_end_nodes": md.get("dead_end_nodes", 0),
+        "validation_issues": md.get("validation_issues", 0),
+        "issue_severity": md.get("issue_severity", {"high": 0, "medium": 0, "low": 0}),
+        "activity_coverage": md.get("activity_coverage"),  # alias — manifest_reachability.launched_ratio
+        "completeness": md.get("completeness"),
+        "is_valid": is_valid,
+    })
+
+
+@router.get("/api/tours/{tour_id}/diagnostics")
+async def get_diagnostics(tour_id: str):
+    """Walk diagnostics — '왜 더 깊이 안 갔는지' evidence-based 답.
+
+    8 항목: action_distribution / fragment_distribution / entry_coverage /
+    missed_entry_candidates / visit_concentration / stall_events /
+    activity_coverage + root_cause_hints (auto-generated).
+
+    파일이 있으면 (Stage 3 가 자동 생성) 읽고, 없으면 즉시 계산.
+    """
+    tour_dir = _safe_tour_dir(tour_id)
+    cached = tour_dir / "dynamic" / "diagnostics.json"
+    if cached.exists():
+        try:
+            return JSONResponse(json.loads(cached.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    _ensure_project_on_path()
+    try:
+        from stage3_walk.walk_analyzer import analyze_walk
+        return JSONResponse(analyze_walk(tour_dir))
+    except Exception as e:
+        raise HTTPException(500, f"diagnostics failed: {e}")
+
+
 @router.get("/api/tours/{tour_id}/traces")
 async def get_traces(tour_id: str):
     """Get JSONL execution traces for a tour."""

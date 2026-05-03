@@ -41,7 +41,10 @@ class PipelineConfig:
     apktool_path: str = "apktool"
 
     # Stage 3: DroidBot walk
-    droidbot_timeout: int = 1200  # seconds (20 min — large apps like Spotify need this for decent UI coverage)
+    # 2026-05-02 (F3): 1200 → 1800 (30분). 메가커피 e8951fef 분석 결과 timeout
+    # 도달 (1203/1200s) 로 종료 — walking 더 길게 가면 부수 영역 (Naver maps,
+    # Settings 깊이) 도달 가능. env var WALK_TIMEOUT 으로 override.
+    droidbot_timeout: int = 1800  # seconds (30 min — large apps like Spotify, megacoffee)
     droidbot_policy: str = "dfs_greedy"
     coverage_target: float = 0.8  # 80%
 

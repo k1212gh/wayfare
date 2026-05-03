@@ -304,7 +304,17 @@ export default function App() {
                 background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: 'var(--color-gray)',
               }}>&times;</button>
             </div>
-            <ScreenPanel node={selectedNode} tourId={activeTourId} />
+            <ScreenPanel
+              node={selectedNode}
+              tourId={activeTourId}
+              allNodes={graphData?.screen_map?.graph?.nodes || []}
+              allEdges={graphData?.screen_map?.graph?.edges || []}
+              onSelectNode={(nid: string) => {
+                const found = (graphData?.screen_map?.graph?.nodes || [])
+                  .find((n: any) => n.screen_id === nid);
+                if (found) setSelectedNode(found);
+              }}
+            />
           </aside>
         )}
       </div>

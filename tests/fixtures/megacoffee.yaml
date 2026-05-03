@@ -1,0 +1,92 @@
+_doc: |
+  Phase B (2026-04-29) — 메가커피(MEGA Coffee) 앱 task fixture.
+
+  매칭 룰: match_any (any-of OR 매칭) — activity_substr 또는 functional_category
+  중 하나만 맞으면 그 expected_screen 은 found.
+
+app: megacoffee
+description: "MEGA MGC Coffee — 음료 주문 / 매장 / 멤버십 / 충전 / 기프티콘"
+
+tasks:
+
+  # ─── 핵심 주문 플로우 ─────
+
+  - id: browse_menu
+    goal: "메뉴 카테고리 보기 — 홈 → 메뉴 → 음료 리스트"
+    expected_screens:
+      - description: "홈 또는 메인 화면"
+        match_any:
+          activity_substr: ["MainActivity", "HomeActivity"]
+          functional_category: ["home"]
+      - description: "메뉴 카테고리 / 음료 목록"
+        match_any:
+          activity_substr: ["MenuActivity", "ProductListActivity",
+                            "BeverageListActivity", "CategoryActivity"]
+          functional_category: ["list"]
+
+  - id: add_drink_to_cart
+    goal: "음료 선택 → 사이즈/샷/시럽 옵션 → 장바구니 담기"
+    expected_screens:
+      - description: "음료 상세 / 옵션 선택"
+        match_any:
+          activity_substr: ["ProductDetailActivity", "MenuDetailActivity",
+                            "BeverageDetailActivity", "OptionActivity"]
+          functional_category: ["detail", "form"]
+      - description: "장바구니"
+        match_any:
+          activity_substr: ["CartActivity", "BasketActivity"]
+          functional_category: ["list", "form"]
+
+  - id: checkout_payment
+    goal: "장바구니 → 주문 확인 → 결제 진입"
+    expected_screens:
+      - description: "장바구니"
+        match_any:
+          activity_substr: ["CartActivity", "BasketActivity"]
+      - description: "결제 / 주문 확인 화면"
+        match_any:
+          activity_substr: ["PaymentActivity", "CheckoutActivity",
+                            "OrderConfirmActivity"]
+          functional_category: ["form"]
+
+  # ─── 부가 기능 ─────
+
+  - id: find_store
+    goal: "매장 찾기 — 위치 기반 또는 매장 검색"
+    expected_screens:
+      - description: "매장 리스트 / 매장 검색"
+        match_any:
+          activity_substr: ["StoreActivity", "StoreListActivity",
+                            "ShopActivity", "FindStoreActivity",
+                            "MapActivity", "BranchActivity"]
+
+  - id: view_membership
+    goal: "멤버십 / 적립 / 쿠폰 화면 진입"
+    expected_screens:
+      - description: "멤버십 / 마이페이지"
+        match_any:
+          activity_substr: ["MembershipActivity", "MyPageActivity",
+                            "ProfileActivity", "PointActivity",
+                            "RewardActivity"]
+
+  - id: login_or_signup
+    goal: "로그인 또는 회원가입 진입"
+    expected_screens:
+      - description: "로그인 / 인증 화면"
+        match_any:
+          activity_substr: ["LoginActivity", "AuthActivity", "SignInActivity",
+                            "SignUpActivity"]
+          functional_category: ["auth"]
+
+  - id: use_gift_voucher
+    goal: "기프티콘 / 쿠폰 코드 입력해서 사용"
+    expected_screens:
+      - description: "쿠폰함 / 기프티콘 리스트"
+        match_any:
+          activity_substr: ["CouponActivity", "VoucherActivity", "GiftActivity"]
+          functional_category: ["list"]
+      - description: "쿠폰 코드 입력 폼"
+        match_any:
+          activity_substr: ["CouponInputActivity", "RegisterCouponActivity",
+                            "GiftRegisterActivity"]
+          functional_category: ["form"]

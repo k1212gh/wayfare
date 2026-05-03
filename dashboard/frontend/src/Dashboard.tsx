@@ -182,6 +182,38 @@ export function Dashboard({ onOpenGraph, onRunStart }: DashboardProps) {
     await fetchTours();
   };
 
+  // 임의 stage 부터 재실행. 백엔드가 prerequisite output 검증 + Stage 5 진입 직전
+  // .before_stage5.bak.json 자동 백업.  Stage 3 (Walk) 같은 case 는 디바이스 필요.
+  const retryFromStage = async (tourId: string, stage: number) => {
+    const labels: Record<number, string> = {
+      1: 'Preprocess (메타·프레임워크 감지)',
+      2: 'Static (manifest + DEX)',
+      3: 'Walk (동적 탐색 — 오래 걸림)',
+      4: 'Clean (데이터 전처리)',
+      5: 'LLM (라벨링, ~5분, 자동 백업)',
+      6: 'ScreenMap 빌드',
+    };
+    if (!confirm(
+      `Stage ${stage} 부터 다시 실행합니다.\n→ ${labels[stage]}\n\n계속할까요?`
+    )) return;
+    const needsDevice = stage <= 3;
+    let serial = selectedSerial;
+    if (needsDevice && device.devices.length > 1 && !serial) {
+      alert('디바이스가 여러 개입니다. 상단에서 먼저 선택해주세요.');
+      return;
+    }
+    const params = new URLSearchParams({ from_stage: String(stage) });
+    if (serial) params.set('device_serial', serial);
+    const res = await fetch(`/api/tours/${tourId}/run?${params}`, { method: 'POST' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      alert(body.detail || `Retry failed (${res.status})`);
+      return;
+    }
+    onRunStart?.(tourId);
+    await fetchTours();
+  };
+
   const deleteTour = async (tourId: string) => {
     const res = await fetch(`/api/tours/${tourId}`, { method: 'DELETE' });
     if (!res.ok) {
@@ -352,6 +384,7 @@ export function Dashboard({ onOpenGraph, onRunStart }: DashboardProps) {
                     onResume={() => resumeTour(tour.tour_id)}
                     onOpen={() => onOpenGraph(tour.tour_id)}
                     onDelete={() => deleteTour(tour.tour_id)}
+                    onRetryFromStage={(n: number) => retryFromStage(tour.tour_id, n)}
                   />
                 ))}
               </div>

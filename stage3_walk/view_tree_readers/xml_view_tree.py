@@ -32,25 +32,117 @@ NAV_DESC_STRONG = [
     "more options", "options menu",
 ]
 
+# Cycle 3 Fix A (2026-04-30) — Picker / Onboarding entry rid 보너스.
+# Evidence (workspace/8b72067f):
+# - state_006/007 가 Material TimePicker (is_dialog=False — Compose inline)
+#   인데 bottom_tab tap 70회, OK 0회. score 가 outside tab 에 밀림.
+# - BEDTIME fragment 26 state, 'Get Started' button 0회 누름.
+# - Overflow popup 28회 tap, popup item (Screen saver/Settings) 0회.
+#
+# Specific rid prefix 만 매치 — false positive 최소화.
+PICKER_BONUS_PATTERNS = (
+    "material_timepicker_",     # TimePicker mode/OK
+    "material_clock_period_",   # AM/PM toggle
+    "material_clock_face",      # 시계 face (시간 선택)
+    "material_minute_tv",       # 분 input
+    "material_hour_tv",         # 시간 input
+    "datepicker_",
+    "numberpicker_",
+    "_onboarding_start",
+)
+# F1 (2026-05-02): submit 의도 키워드 — 메가커피 e8951fef 옵션 화면에서
+# "닫기" 12회 vs "담기" 0회. submit element 가 score 낮아 click 안 됨.
+# NAV_KEYWORDS 와 동일 +2.0 강도. task path 진입 (옵션→담기→주문) 보장.
+SUBMIT_KEYWORDS = (
+    # 한국어
+    "담기", "주문", "저장", "추가", "확인", "결제",
+    "보내", "전송", "완료", "신청", "구매", "예약",
+    # 영문
+    "submit", "save", "add to", "confirm",
+    "checkout", "payment", "send", "buy", "place order",
+)
+# Cancel 류는 task path 를 깨므로 페널티 — picker 떠있을 때 cancel 누르면
+# task fixture 의 add_alarm 같은 sequence 실패.
+PICKER_CANCEL_PATTERNS = (
+    "_cancel_button", "cancel_button",
+)
+
 
 class XMLViewTreeReader(ViewTreeReader):
     name = "xml"
 
     def is_actionable(self, view: dict) -> bool:
-        """clickable / scrollable / long_clickable 모두 인정."""
+        """clickable / scrollable / long_clickable 모두 인정.
+
+        2026-05-02 (W6 — webview text actionable):
+          메가커피 e2a2c46f 분석 결과 webview 의 메뉴/메가오더/주문/매장 같은
+          핵심 텍스트가 clickable=False TextView 로만 노출 (a11y 한계). 그래서
+          이런 view 도 webview 안 + 텍스트 + 적당한 height 면 actionable 후보.
+
+        2026-05-03 (R2 — SUBMIT bypass):
+          메가커피 581e8cc8 분석 결과 옵션 상세 화면 (state_0168) 의 "담기" /
+          "주문하기" / "옵션 선택" 텍스트가 clickable=False + parent="View"
+          (webview 도 nav container 도 아님) — W6/F2 가드 모두 통과 X.
+          SUBMIT_KEYWORDS hit + 짧은 텍스트 (≤20 char) 는 parent 무관 actionable.
+        """
         if not view.get("visible", True):
             return False
-        return bool(view.get("clickable") or view.get("scrollable")
-                    or view.get("long_clickable"))
+        if view.get("clickable") or view.get("scrollable") or view.get("long_clickable"):
+            return True
+
+        text = (view.get("text") or "").strip()
+        desc = (view.get("content_desc") or "").strip()
+
+        # R2 (2026-05-03): SUBMIT 키워드 hit + 짧은 텍스트 (라벨로 추정) → parent 무관 actionable.
+        # license/FAQ 본문 텍스트 (긴 문장) 의 false positive 차단 위해 길이 가드.
+        combined = f"{text} {desc}"
+        if (text or desc) and len(combined.strip()) <= 20:
+            combined_lower = combined.lower()
+            if any(kw.lower() in combined_lower for kw in SUBMIT_KEYWORDS):
+                return True
+        # W6: webview 안 텍스트 view — clickable=False 라도 actionable 후보
+        parent_cls = view.get("parent_class") or ""
+        inside_webview = any(
+            kw in parent_cls for kw in
+            ("WebView", "ChromeWebView", "RNCWebView", "RCTWebView", "X5WebView")
+        )
+        if inside_webview:
+            text = (view.get("text") or "").strip()
+            desc = (view.get("content_desc") or "").strip()
+            if text or desc:
+                from ..list_view_detector import _bounds_height
+                h = _bounds_height(view.get("bounds"))
+                # 20-200 px row — 너무 큰 wrapper 또는 빈 줄 제외
+                if 20 <= h <= 200:
+                    return True
+        # F2 (2026-05-02): native 하단 탭 / nav row — list_view_detector 가 sibling
+        # group 으로 마킹한 view 들. parent_class 가 webview 가 아니어도
+        # text/desc 있는 sibling group 멤버는 actionable. 메가커피 홈/메뉴/매장/
+        # MY/쿠폰 탭 같은 non-clickable 텍스트 row 직격.
+        if view.get("_list_view_group"):
+            text = (view.get("text") or "").strip()
+            desc = (view.get("content_desc") or "").strip()
+            if text or desc:
+                return True
+        return False
 
     def get_action_desc(self, view: dict) -> str:
-        """액션 설명 문자열. long-press 전용이면 'longclick' 접두."""
+        """액션 설명 문자열. long-press 전용이면 'longclick' 접두.
+
+        Canonical key 는 (label, bounds) — 같은 desc 인 두 다른 view 가 같은
+        action 으로 collapse 되는 문제 방지 (RN 의 경우 resource_id 거의 없고
+        desc 가 같은 EditText 여러 개 있을 수 있음). 같은 화면 내 bounds 는
+        stable (state hash 가 매칭됐으니 위치도 같음).
+        """
         rid = view.get("resource_id", "")
         text = view.get("text", "")
         desc = view.get("content_desc", "")
         cls = view.get("class", "")
         bounds = view.get("bounds", "")
-        label = rid or desc or text or cls or str(bounds)
+        label = rid or desc or text or cls or "?"
+        # 위치까지 키에 포함: 같은 desc 라도 다른 위치 = 다른 액션
+        position = bounds or "noBounds"
+        key = f"{label}@{position}"
         # Prefer click if clickable; longpress-only if view is long_clickable
         # but not clickable — avoids conflating a clickable item's longclick
         # variant with its click (handled separately if we expose both later).
@@ -62,7 +154,7 @@ class XMLViewTreeReader(ViewTreeReader):
             action = "scroll"
         else:
             action = "click"
-        return f"{action} {label}"
+        return f"{action} {key}"
 
     def score_action(self, view: dict, context: dict[str, Any]) -> float:
         rid = view.get("resource_id", "")
@@ -82,13 +174,47 @@ class XMLViewTreeReader(ViewTreeReader):
         if action_desc not in tried_actions:
             score += 4.0
 
+        # 2026-05-02 (W6): webview 안 clickable=False 텍스트 view 는 추정 actionable.
+        # 진짜 clickable view 보다 신호 약하니 -0.5 페널티 (그래도 양수 score 가능).
+        # 메가커피 같은 webview 메뉴 버튼들 actionable list 에 들어오게 하기 위함.
+        if not view.get("clickable") and not view.get("scrollable") and not view.get("long_clickable"):
+            score -= 0.5
+
         # 네비게이션 요소 보너스
         if any(k in combined for k in NAV_KEYWORDS):
             score += 2.0
-        # 드로어/프로필/설정 강한 시그널 — content-desc 기반
+        # F1 (2026-05-02): Submit 의도 키워드 보너스. 메가커피 e8951fef 데이터:
+        # 옵션 화면 진입은 됐는데 "닫기" 12회 vs "담기" 0회 — submit 의도 element
+        # score 가 낮아 click 안 됨. NAV 와 동일 강도 +2.0.
+        if any(k in combined for k in SUBMIT_KEYWORDS):
+            score += 2.0
+        # 2026-04-29: NAV_DESC_STRONG 보너스 +3.0 → +1.5 강등.
+        # Evidence (workspace/9409ae50): overflow 가 NAV_KEYWORDS "overflow" +
+        # NAV_DESC_STRONG "more options" 둘 다 매치 → score=10.0 매번. 다른
+        # entry (FAB 의 "Add alarm" 등) 묻힘. settings 키워드도 같은 이유로
+        # prefs_fragment 56% 발산. 균등화.
         desc_lower = desc.lower()
         if any(s in desc_lower for s in NAV_DESC_STRONG):
-            score += 3.0
+            score += 1.5
+
+        # FAB 명시 보너스 — 보통 새 entity 생성 (알람 추가 / 메모 작성 등)
+        # 의 entry. NAV_KEYWORDS 의 'add'/'create'/'compose' 와 별도로
+        # FAB 자체 클래스/rid 가지면 +2.0. evidence: 9409ae50 의 + FAB
+        # tap=0 — score 가중치 부재로 매번 묻혔음.
+        fab_signal = ("floatingaction" in cls.lower() or "fab" in rid.lower()
+                      or "floatingaction" in (view.get("parent_class") or "").lower())
+        if fab_signal:
+            score += 2.0
+
+        # Cycle 3 Fix A — Picker / Onboarding entry 보너스.
+        # rid_lower 가 specific prefix 매치 시 +2 (보수적 — OK 가 시간 view
+        # 보다 너무 압도하지 않게). cancel 은 picker 보너스 받지 않고 -1
+        # 페널티만 — task path (예: 8:30 알람 추가) 깨지 않게.
+        rid_lower = rid.lower()
+        if any(p in rid_lower for p in PICKER_CANCEL_PATTERNS):
+            score -= 1.0  # picker bonus 안 받음
+        elif any(p in rid_lower for p in PICKER_BONUS_PATTERNS):
+            score += 2.0
 
         # 클래스 보너스
         if "Button" in cls:
@@ -103,13 +229,35 @@ class XMLViewTreeReader(ViewTreeReader):
             score += 0.5
 
         # === 패널티 ===
-        score -= visit_count * 1.5  # 방문 횟수
+        # 2026-04-29: visit_count penalty 1.5 → 2.5 강화.
+        # Evidence (workspace/9409ae50): score max=min — 같은 view 8번 click
+        # 해도 visit_count 누적 안 돼 매번 fresh 10점. canonical_id reset
+        # 버그가 별개 원인이지만, 일단 페널티 강화로 같은 entry 다시 안 누르게.
+        score -= visit_count * 2.5
 
         if action_desc in tried_actions:
             score -= 8.0  # 이미 시도한 액션
 
         if "RecyclerView" in str(view.get("parent_class", "")):
             score -= 2.0  # 리스트 아이템
+
+        # 2026-04-30: per-list_view N번째 클릭 차등 페널티 — 사용자 제안
+        # "리스트뷰 1개만 선택해서 일반화". context 에 list_views + visit_count
+        # 들어와야 동작. 없으면 0 (기존 동작 유지).
+        list_views = context.get("list_views") or []
+        if list_views:
+            from ..list_view_detector import list_view_redundancy_penalty
+            view_idx = context.get("view_index")
+            if view_idx is not None:
+                visits = context.get("list_view_visit_count") or {}
+                score += list_view_redundancy_penalty(view_idx, list_views, visits)
+
+        # 2026-05-01: external page blacklist — 이 trigger 는 외부 페이지로
+        # 흘러간 적이 있어 영구 강 페널티. 같은 메뉴 재클릭 방지.
+        ext_blacklist = context.get("external_blacklist") or set()
+        if ext_blacklist:
+            from ..outbound_intent_guard import get_blacklist_penalty
+            score += get_blacklist_penalty(action_desc, ext_blacklist)
 
         if view.get("scrollable") and not view.get("clickable"):
             score -= 1.0  # scroll-only

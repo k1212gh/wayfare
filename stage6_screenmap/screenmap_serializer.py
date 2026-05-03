@@ -71,6 +71,12 @@ def _serialize_node(node: dict) -> dict:
         "screen_purpose": node.get("screen_purpose", ""),
         "params": node.get("params", {"inputs": [], "outputs": [], "displays": []}),
         "widgets": node.get("widgets", []),
+        # ScreenMap expressivity extensions (sprint 2026-04-27). Optional/empty by
+        # default — clients ignoring these keep working unchanged.
+        "chip_groups": node.get("chip_groups", []),
+        "state_variables": node.get("state_variables", []),
+        "infinite_scroll": node.get("infinite_scroll", False),
+        "scroll_metadata": node.get("scroll_metadata", {}),
         "screenshot_ref": node.get("screenshot_ref", ""),
         "structure_str": node.get("structure_str", ""),
         "confidence": node.get("confidence", "medium"),

@@ -9,3 +9,4 @@ from .scan_merge import _apply_manifest_scan
 from .fragment_hierarchy import _link_fragment_hierarchy
 from .global_transitions import _mark_global_transitions
 from .transition_weights import _compute_transition_weights
+from .infinite_scroll import _mark_infinite_scroll_nodes

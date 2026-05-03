@@ -7,6 +7,7 @@ from .view_tree_cleaner import clean_views
 from .screenshot_processor import process_screenshots
 from .screen_clusterer import cluster_screens_to_pages
 from .screen_card_builder import build_screen_cards
+from .widget_classifier import annotate_roles
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,18 @@ def run_stage4(config: PipelineConfig) -> None:
     for state in states:
         state["cleaned_views"] = clean_views(state.get("views", []))
 
+    # 1b. Role annotation (sprint 2026-04-27) — widget_classifier tags every
+    # view with a UX role (button/radio/checkbox/stepper/dropdown/...). Used
+    # by Stage 5 chip_group_detector for sibling-pattern grouping.
+    role_count = 0
+    for state in states:
+        for views_key in ("cleaned_views", "views"):
+            vs = state.get(views_key) or []
+            if vs:
+                role_count += annotate_roles(vs)
+    if role_count:
+        logger.info("Annotated roles on %d views", role_count)
+
     # 2. Process screenshots
     process_screenshots(states, config.analysis_dir / "screens", config.screenshot_size)
 
@@ -76,6 +89,49 @@ def run_stage4(config: PipelineConfig) -> None:
 
     # 4. Build context units for LLM
     screen_cards = build_screen_cards(pages, transitions)
+
+    # 4b. Option-group detection (sprint 2026-04-27). Heuristic by default;
+    # LLM Vision naming opt-in via OPTION_DETECT_LLM=1. Attaches chip_groups
+    # list to each context unit so screenmap_builder picks it up onto ScreenMap nodes.
+    try:
+        from stage5_annotate.chip_group_detector import detect_chip_groups
+        # Index states by structure_str so we can find the views per unit.
+        state_by_struct: dict[str, dict] = {}
+        for s in states:
+            sk = s.get("structure_str") or ""
+            if sk and sk not in state_by_struct:
+                state_by_struct[sk] = s
+        attached_units = 0
+        attached_groups = 0
+        provisional_marked = 0
+        for unit in screen_cards:
+            page_state = state_by_struct.get(unit.get("structure_str") or "")
+            if not page_state:
+                continue
+            views = page_state.get("cleaned_views") or page_state.get("views") or []
+            screenshot = (unit.get("screenshot")
+                          or page_state.get("screenshot_path") or "")
+            groups = detect_chip_groups(views, screenshot_path=screenshot or None)
+            if groups:
+                unit["chip_groups"] = groups
+                attached_units += 1
+                attached_groups += len(groups)
+            # 2026-04-30: Stage 3 의 provisional 마킹 (state.needs_vision_in_revisit)
+            # 을 unit 으로 전파. screenmap_builder 가 node.is_provisional 로 매핑.
+            # Pass 2 walker 가 이 노드 들 entry 로 재탐색.
+            if page_state.get("needs_vision_in_revisit"):
+                unit["needs_vision_in_revisit"] = True
+                provisional_marked += 1
+        if provisional_marked:
+            logger.info(
+                "[provisional] %d units marked for Pass 2 vision fallback",
+                provisional_marked,
+            )
+        if attached_groups:
+            logger.info("Detected %d option groups across %d pages",
+                        attached_groups, attached_units)
+    except Exception as e:
+        logger.warning("Option group detection failed: %s", e)
 
     # Save results
     output_path = config.analysis_dir / "screen_cards.json"

@@ -18,9 +18,14 @@ from xml.etree import ElementTree as ET
 def parse_ui_xml(xml_path: Path) -> list[dict]:
     """Parse uiautomator XML dump into a flat list of view dicts.
 
-    Each entry carries `class` (short name), `parent_class` (fully-qualified
-    name of the nearest enclosing <node>), and the usual attrs (resource_id,
-    text, content_desc, clickable, bounds, …).
+    Each entry carries:
+      - ``class`` (short name) and ``parent_class`` (FQN of nearest enclosing <node>)
+      - ``parent_index`` (index into this list, -1 for root) and ``sibling_index``
+        (0-based position among siblings under the same parent) — needed for
+        sibling-group detection (radio/checkbox/stepper) and for collapsing
+        list-container children when computing structural hashes
+      - ``depth`` (0 for root, +1 per nesting level)
+      - The usual attrs (resource_id, text, content_desc, clickable, bounds, …)
     """
     if not xml_path.exists():
         return []
@@ -31,16 +36,20 @@ def parse_ui_xml(xml_path: Path) -> list[dict]:
 
     views: list[dict] = []
 
-    def walk(elem, parent_class_full: str):
+    def walk(elem, parent_class_full: str, parent_idx: int, depth: int):
         if elem.tag == "node":
             attrs = elem.attrib
             full_cls = attrs.get("class", "")
             short_cls = full_cls.rsplit(".", 1)[-1] if "." in full_cls else full_cls
             rid_raw = attrs.get("resource-id", "")
+            my_idx = len(views)
             views.append({
                 "resource_id": rid_raw.split("/")[-1] if "/" in rid_raw else rid_raw,
                 "class": short_cls,
                 "parent_class": parent_class_full,
+                "parent_index": parent_idx,
+                "sibling_index": 0,  # filled in the post-pass below
+                "depth": depth,
                 "text": attrs.get("text", ""),
                 "content_desc": attrs.get("content-desc", ""),
                 "clickable": attrs.get("clickable") == "true",
@@ -50,13 +59,28 @@ def parse_ui_xml(xml_path: Path) -> list[dict]:
                 "visible": True,
                 "bounds": attrs.get("bounds", ""),
             })
-            next_parent = full_cls
+            next_parent_class = full_cls
+            next_parent_idx = my_idx
+            next_depth = depth + 1
         else:
-            next_parent = parent_class_full
+            next_parent_class = parent_class_full
+            next_parent_idx = parent_idx
+            next_depth = depth
         for child in elem:
-            walk(child, next_parent)
+            walk(child, next_parent_class, next_parent_idx, next_depth)
 
-    walk(tree.getroot(), "")
+    walk(tree.getroot(), "", -1, 0)
+
+    # Post-pass: assign sibling_index by parent. DFS pre-order means children
+    # of the same parent are visited in document order; we just enumerate them
+    # in that order. Done as a separate pass to keep walk() recursion-light.
+    children_by_parent: dict[int, list[int]] = {}
+    for i, v in enumerate(views):
+        children_by_parent.setdefault(v["parent_index"], []).append(i)
+    for indices in children_by_parent.values():
+        for sib_idx, view_idx in enumerate(indices):
+            views[view_idx]["sibling_index"] = sib_idx
+
     return views
 
 
@@ -122,6 +146,15 @@ _SYSTEM_FRAGMENT_CLASSES = frozenset({
     "BottomSheetDialogFragment",       # base for ad-hoc sheets
     "ListFragment",                    # generic AOSP base
     "SupportMapFragment",              # maps wrapper
+    # 2026-04-30: lifecycle / library invisible fragments — UI 가 아니라
+    # observer/manager 용. 메가커피 등에서 ReportFragment 가 100% 점유 노이즈.
+    "ReportFragment",                  # androidx.lifecycle.ReportFragment
+    "SupportRequestManagerFragment",   # Glide
+    "RequestManagerFragment",          # Glide
+    "LifecycleCallback",               # AOSP lifecycle bookkeeping
+    "ProcessLifecycleOwner",
+    "FragmentManagerImpl",             # FM bookkeeping leaked
+    "BackStackRecord",
 })
 
 
@@ -181,16 +214,24 @@ def extract_fragment(dumpsys_output: str) -> str:
             entries.append((cls, tag, int(screen_s)))
 
         if entries:
+            # Filter out invisible lifecycle/library fragments — they are
+            # always RESUMED and would dominate the result.
+            ui_entries = [
+                (cls, tag, state) for cls, tag, state in entries
+                if cls not in _SYSTEM_FRAGMENT_CLASSES
+            ]
+            entries = ui_entries or entries  # all-system fallback: keep originals
             # Prefer RESUMED (state=7) or STARTED-visible (state=5 with
             # visible hint). DeskClock in ViewPager lands on state=5 for
             # the visible tab and state=4 for the off-screen preloaded ones.
             for cls, tag, state in entries:
-                if state == 7:
+                if state == 7 and cls not in _SYSTEM_FRAGMENT_CLASSES:
                     return tag if tag and tag.lower() not in ("tag", "null", "0") else cls
             # Fallback: highest-state fragment wins (state=5 > 4 > 3 > 1).
             entries.sort(key=lambda e: -e[2])
-            cls, tag, _ = entries[0]
-            return tag if tag and tag.lower() not in ("tag", "null", "0") else cls
+            for cls, tag, _ in entries:
+                if cls not in _SYSTEM_FRAGMENT_CLASSES:
+                    return tag if tag and tag.lower() not in ("tag", "null", "0") else cls
 
     # 2. Added Fragments — older format, single fragment
     m = re.search(
@@ -221,19 +262,103 @@ def extract_fragment(dumpsys_output: str) -> str:
 # ─── Dialog / popup menu detection ────────────────────────────────
 
 def detect_dialog(views: list[dict]) -> bool:
-    """True if an overlay Dialog / BottomSheet / AlertDialog is present.
+    """True if an overlay Dialog / BottomSheet / AlertDialog / Picker overlay 가 있음.
 
-    Only the first 20 top-level nodes are scanned — dialogs are always at
-    the top of the hierarchy, and full traversal is wasteful on large trees.
+    검색 범위: 상위 30 view (이전 20 → Material 3 picker 가 좀 더 깊게 있을 수 있음).
+
+    포함 패턴:
+      - 일반: dialog, bottomsheet, popup, alertdialog
+      - 입력 picker (2026-04-29 추가, DeskClock + 버튼 → TimePicker 누락 fix):
+        timepicker, datepicker, numberpicker, calendarview, pickerselector
+      - Material 3 변형: materialdatepicker, materialtimepicker
     """
-    for v in views[:20]:
+    dialog_class_kw = (
+        "dialog", "bottomsheet", "popup", "alertdialog",
+        "timepicker", "datepicker", "numberpicker",
+        "calendarview", "pickerselector",
+        "materialdatepicker", "materialtimepicker",
+    )
+    dialog_id_kw = (
+        "dialog", "alert", "popup",
+        "time_picker", "date_picker", "picker_dialog",
+    )
+    for v in views[:30]:
         cls = (v.get("class") or "").lower()
         rid = (v.get("resource_id") or "").lower()
-        if any(kw in cls for kw in ("dialog", "bottomsheet", "popup", "alertdialog")):
+        if any(kw in cls for kw in dialog_class_kw):
             return True
-        if any(kw in rid for kw in ("dialog", "alert", "popup")):
+        if any(kw in rid for kw in dialog_id_kw):
             return True
     return False
+
+
+def is_webview_dominant(views: list[dict]) -> tuple[bool, dict | None]:
+    """이 화면이 WebView 가 dominant 한지 — vision fallback 결정용.
+
+    2026-04-30: 멘토 의견 + 실측 (view_tree_parser 코드 0건 webview 처리) 따라:
+    - WebView 안 a11y 활성된 element 는 이미 자동으로 일반 view 로 parse 됨
+    - 단 WebView 가 화면 50%+ 차지 + 안 자식 view 거의 없으면 → 분석 불가능
+    - 그런 화면만 vision fallback 호출 (dominant + 자식 부족)
+
+    반환: (is_dominant_webview, webview_view 또는 None)
+    """
+    if not views:
+        return False, None
+
+    # 화면 영역 가정 (uiautomator dump 의 root bounds 기준)
+    # 보통 1080×2400 / 1080×2160. root view 의 bounds 로 결정.
+    root = views[0] if views else {}
+    root_bounds = _parse_bounds(root.get("bounds", ""))
+    if not root_bounds:
+        return False, None
+    screen_area = (root_bounds[2] - root_bounds[0]) * (root_bounds[3] - root_bounds[1])
+    if screen_area <= 0:
+        return False, None
+
+    webview_classes = ("WebView", "ChromeWebView", "RNCWebView",
+                       "RCTWebView", "ReactWebView", "X5WebView")
+    webview_views = [
+        v for v in views
+        if any(kw in (v.get("class") or "") for kw in webview_classes)
+    ]
+    if not webview_views:
+        return False, None
+
+    # 가장 큰 WebView 의 영역 비율
+    largest_wv = None
+    largest_area = 0
+    for wv in webview_views:
+        b = _parse_bounds(wv.get("bounds", ""))
+        if not b:
+            continue
+        area = (b[2] - b[0]) * (b[3] - b[1])
+        if area > largest_area:
+            largest_area = area
+            largest_wv = wv
+
+    if not largest_wv:
+        return False, None
+    ratio = largest_area / screen_area
+    if ratio < 0.5:
+        return False, None  # webview 가 작은 영역 — 일반 화면
+
+    # dominant webview 안 자식 (text 또는 clickable) 비율
+    children_with_signal = sum(
+        1 for v in views
+        if v.get("class") != largest_wv.get("class")
+        and (v.get("text") or v.get("clickable") or v.get("content_desc"))
+    )
+    # WebView 자체 외에 의미 있는 view 가 5개+ 면 a11y 잘 잡힌 — 분석 가능
+    # 5개 미만이면 webview 안 element 가 a11y 안 노출 — vision fallback 필요
+    is_problem = children_with_signal < 5
+    return is_problem, largest_wv if is_problem else None
+
+
+def _parse_bounds(s: str) -> tuple[int, int, int, int] | None:
+    """uiautomator '[x1,y1][x2,y2]' → (x1,y1,x2,y2)."""
+    import re as _re
+    m = _re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", s)
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))) if m else None
 
 
 def detect_popup_menu(views: list[dict]) -> bool:
@@ -242,10 +367,18 @@ def detect_popup_menu(views: list[dict]) -> bool:
     Popup menus contain tappable list items that represent app functionality
     (Settings, Share, Delete) rather than Allow/Deny prompts — these should
     be walked, not dismissed.
+
+    2026-04-29: dropdownmenu / menucontent 추가 — Material 3 / Compose 의
+    overflow menu (DeskClock 등) 가 이전 패턴에 안 잡혀 dialog 로 오인 →
+    dismiss 됐었음.
     """
     popup_class_kw = (
-        "popupmenu", "listpopupwindow", "dropdownlistview",
-        "menupopupwindow", "menuitem", "cascadingmenupopup",
+        "popupmenu", "popup_menu",
+        "listpopupwindow", "list_popup",
+        "dropdownlistview", "dropdownmenu", "dropdown_menu",
+        "menupopupwindow", "menu_popup",
+        "menuitem", "menucontent", "menu_content",
+        "cascadingmenupopup", "cascadingmenu",
         "overflowmenubutton",
     )
     alert_class_kw = ("alertdialog", "messagedialog", "confirmdialog")
@@ -253,34 +386,58 @@ def detect_popup_menu(views: list[dict]) -> bool:
     has_alert_marker = False
     for v in views[:30]:
         cls = (v.get("class") or "").lower()
-        if any(kw in cls for kw in popup_class_kw):
+        parent = (v.get("parent_class") or "").lower()
+        if any(kw in cls for kw in popup_class_kw) or any(kw in parent for kw in popup_class_kw):
             has_popup_marker = True
         if any(kw in cls for kw in alert_class_kw):
             has_alert_marker = True
     return has_popup_marker and not has_alert_marker
 
 
+_POPUP_PARENT_PATTERNS = (
+    "popupmenu", "popup_menu", "listpopupwindow", "list_popup",
+    "dropdownlist", "menupopupwindow", "menu_popup",
+    "cascadingmenu", "menudropdown",
+    # Material 3 / Compose dropdown (DeskClock 의 overflow menu 가 이쪽)
+    "dropdownmenu", "menucontent",
+)
+_POPUP_ITEM_RID_HINTS = ("title", "menu", "item")
+
+
 def popup_items(views: list[dict]) -> list[dict]:
     """Return clickable views that are inside an active popup menu.
 
-    Matches direct PopupMenu children and clickable views whose resource_id
-    suggests a menu item (title/menu).
+    2026-04-29 강화: parent_class 매칭 광범위화 + popup 영역 안의
+    clickable 모두 잡기 (이전엔 4 패턴만 매칭 → DeskClock 의 Material 3
+    DropdownMenu 같은 곳에서 5 item 중 일부만 잡혀 popup_items[0] 무한
+    재선택 발생). 같은 화면 안 popup item 은 모두 가져오고 호출자가
+    tried 로 라운드.
     """
     items: list[dict] = []
+    seen: set[str] = set()  # bounds 기반 coalesce
+
+    def _key(v: dict) -> str:
+        return f"{v.get('bounds','')}|{v.get('text','')}"
+
     for v in views:
+        if not v.get("clickable"):
+            continue
         cls = (v.get("class") or "").lower()
         parent = (v.get("parent_class") or "").lower()
-        in_popup = (
-            "popupmenu" in parent or "popupmenu" in cls
-            or "listpopupwindow" in parent or "dropdownlist" in parent
-            or "menupopupwindow" in parent
-        )
-        if in_popup and v.get("clickable"):
-            items.append(v)
-        if not in_popup and v.get("clickable") and v.get("text"):
-            rid = (v.get("resource_id") or "").lower()
-            if "title" in rid or "menu" in rid:
+        in_popup = any(p in parent or p in cls for p in _POPUP_PARENT_PATTERNS)
+        if in_popup:
+            k = _key(v)
+            if k not in seen:
                 items.append(v)
+                seen.add(k)
+            continue
+        # 2차 — resource-id hint
+        rid = (v.get("resource_id") or "").lower()
+        if v.get("text") and any(h in rid for h in _POPUP_ITEM_RID_HINTS):
+            k = _key(v)
+            if k not in seen:
+                items.append(v)
+                seen.add(k)
     return items
 
 

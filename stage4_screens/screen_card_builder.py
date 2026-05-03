@@ -75,6 +75,10 @@ def build_screen_cards(pages: list[dict], transitions: list[dict]) -> list[dict]
             "widget_count": len(page.get("elements", [])),
             "structure_str": page.get("structure_str", ""),
             "label_hint": page.get("label_hint", ""),
+            # 2026-05-01 (C+D): page_id 에 들어간 title 과 같은 cluster 의 다른
+            # PNG 들. screenmap_builder 에서 노드 머지 시 aliases 로 보존.
+            "title_text": page.get("title_text", ""),
+            "variant_screenshots": page.get("variant_screenshots", []),
         }
         screen_cards.append(unit)
 

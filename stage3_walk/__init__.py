@@ -69,3 +69,12 @@ def run_stage3(config: PipelineConfig) -> None:
         len(walk.get("transitions", [])),
         coverage.get("ratio", 0) * 100,
     )
+
+    # 2026-04-29: walk 끝에서 evidence-based diagnostic 자동 생성.
+    # 'FAB tap 0회 vs overflow 18회' 같은 root cause 를 추측 없이 답.
+    try:
+        from .walk_analyzer import write_diagnostics
+        path = write_diagnostics(config.tour_dir)
+        logger.info("Diagnostics: %s", path)
+    except Exception as e:
+        logger.warning("Diagnostics generation failed (non-fatal): %s", e)

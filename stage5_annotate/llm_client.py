@@ -163,7 +163,17 @@ class APIClient(LLMClient):
         if not api_key:
             raise RuntimeError("ANTHROPIC_API_KEY not set. Use LLM_MODE=cli or set the key.")
 
-        self.client = anthropic.Anthropic(api_key=api_key)
+        # 2026-04-29: timeout=120 + sdk max_retries=0.
+        # 이전: SDK default (600s, 내부 retry 2회). vision API + 큰 image 에서
+        # SSE/connection drop 시 무한 hang — 사용자 보고된 'Vision labeling
+        # 25/38 에서 멈춤' 의 root cause. 한 노드 호출이 hang 하면 전체 정지.
+        # 우리 코드에 이미 max_retries 루프 있으니 SDK 내부 retry 는 끔 (중복).
+        timeout_s = float(os.environ.get("LLM_TIMEOUT", "120"))
+        self.client = anthropic.Anthropic(
+            api_key=api_key,
+            timeout=timeout_s,
+            max_retries=0,
+        )
         self.model_screen = model_screen or os.environ.get("LLM_MODEL_SCREEN", "claude-sonnet-4-6")
         self.model_widget = model_widget or os.environ.get("LLM_MODEL_WIDGET", "claude-haiku-4-5-20251001")
         self.temperature = temperature

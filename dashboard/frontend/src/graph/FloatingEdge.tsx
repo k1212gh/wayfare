@@ -85,9 +85,13 @@ export function FloatingEdge({ id, source, target, style, markerEnd, data }: Edg
           <div
             style={{
               position: 'absolute', transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-              background: '#fff', padding: '1px 4px', borderRadius: 3,
-              fontSize: 10, color: '#6b7280', fontFamily: "'JetBrains Mono', monospace",
-              pointerEvents: 'none', opacity: 0.9,
+              background: '#ffffff', padding: '2px 7px', borderRadius: 4,
+              fontSize: 11, fontWeight: 500,
+              color: '#1f2937',
+              fontFamily: "'Pretendard Variable', 'Inter', sans-serif",
+              border: '1px solid #e5e7eb',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+              pointerEvents: 'none',
             }}
           >
             {label}

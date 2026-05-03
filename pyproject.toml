@@ -1,7 +1,7 @@
 [project]
 name = "screenatlas"
 version = "0.3.0"
-description = "APK → Screen Map pipeline (static analysis + dynamic walk + LLM annotation)."
+description = "ScreenAtlas — APK → Screen Map pipeline (static analysis + dynamic walk + LLM annotation)."
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "MIT"}

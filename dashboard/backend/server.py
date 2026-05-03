@@ -35,6 +35,74 @@ if not logging.getLogger().handlers:
 
 app = FastAPI(title="ScreenAtlas", version="0.2.0")
 
+
+@app.on_event("startup")
+def _recover_stale_running_tours() -> None:
+    """백엔드 재시작 시 stale 'running' 잡 자동 복구.
+
+    이전 backend 가 죽으면 thread 도 함께 죽음. pipeline_state.json 은 그대로
+    'running' 표시 — 사용자가 Stop 눌러도 read 할 thread 없어 무한 phantom.
+    Startup 시점에 마지막 update 가 충분히 오래됐고 (5분+) 진짜 thread 가
+    없는 잡들을 자동으로 CANCELLED 처리.
+    """
+    import json
+    import time
+    from pathlib import Path
+    from dashboard.backend.paths import WORKSPACE_ROOT, _cancel_path, _pause_path
+
+    STALE_THRESHOLD_SEC = 300  # 5분 이상 update 없으면 stale 로 본다
+    RUNNING_STAGES = {
+        "PREPROCESSING", "STATIC_ANALYZING", "WALKING", "WALK_DONE",
+        "PREPROCESSING_DATA", "CARDS_READY", "BUILDING_SCREENMAP", "LLM_ANNOTATING",
+        "LLM_ANALYZING",
+    }
+    if not WORKSPACE_ROOT.exists():
+        return
+    recovered = 0
+    now = time.time()
+    for tour_dir in WORKSPACE_ROOT.iterdir():
+        if not tour_dir.is_dir():
+            continue
+        sp = tour_dir / "pipeline_state.json"
+        if not sp.exists():
+            continue
+        try:
+            d = json.loads(sp.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        stage = d.get("stage", "")
+        if stage not in RUNNING_STAGES:
+            continue
+        updated = d.get("updated_at", 0)
+        if updated and (now - updated) < STALE_THRESHOLD_SEC:
+            continue  # 진짜 진행 중일 가능성 — 보수적 (5분 이상 update 없을 때만)
+        # Stale → recover
+        stages = d.setdefault("stages", {})
+        for s in stages.values():
+            if isinstance(s, dict) and s.get("status") == "running":
+                s["status"] = "done"
+                s.setdefault("duration_ms", 0)
+        # Stage 5/6 까지 완료된 흔적 있으면 ANNOTATED, 아니면 CANCELLED
+        screenmap_done = (tour_dir / "output" / "screen_map.json").exists()
+        d["stage"] = "ANNOTATED" if screenmap_done else "CANCELLED"
+        d["error"] = "Auto-recovered from stale running state on startup"
+        d["updated_at"] = now
+        try:
+            sp.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            continue
+        # cancel.flag / paused.json 제거 (다음 run 깨끗하게)
+        for p in (_cancel_path(tour_dir.name), _pause_path(tour_dir.name)):
+            try:
+                p.unlink(missing_ok=True)
+            except Exception:
+                pass
+        recovered += 1
+    if recovered:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Recovered %d stale running tour(s) on startup", recovered)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

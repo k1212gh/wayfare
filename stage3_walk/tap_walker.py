@@ -62,6 +62,11 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         self.canonical_map: dict[str, str] = {}  # raw_hash → canonical_id
         self.action_history: list[dict] = []
         self.tried_actions: dict[str, set[str]] = defaultdict(set)  # canonical_id → set of tried action descs
+        # 2026-04-29: popup item 은 어느 fragment 에서 띄워도 같은 popup (overflow
+        # menu 의 Settings/Help 등) — canonical_id 가 background fragment 따라
+        # 달라져서 tried 매번 reset 되는 문제. popup item 의 action_desc
+        # (label@bounds) 는 fragment 무관 같으니 cross-fragment 로 추적.
+        self.tried_popup_items: set[str] = set()
         self.states: list[dict] = []
         self.transitions: list[dict] = []
         self.back_count = 0
@@ -72,6 +77,19 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         self.trap_stats: dict[str, int] = defaultdict(int)
         # Per-canonical RecyclerView tap counter — limit to 3 before forcing scroll
         self.rv_taps_per_screen: dict[str, int] = defaultdict(int)
+        # Per-canonical scroll budget — cap at SCROLL_CAP scrolls per screen so we
+        # don't get stall in infinite-scroll feeds (Instagram-like) where every
+        # swipe loads new items and stall_count never trips. Set of canonicals
+        # that hit a "no more content" boundary (Δviews ≤ 3 after swipe).
+        self.scroll_count_per_screen: dict[str, int] = defaultdict(int)
+        # 2026-04-30: per-list_view visit counter — "리스트뷰 1개만 들어가서 일반화"
+        # 정책. group_id 는 (canonical_id, list_view_group_id) 조합으로 cross-screen
+        # 충돌 회피. 첫 항목 normal score, 2번째부터 list_view_redundancy_penalty.
+        self.list_view_visit_count: dict[str, int] = defaultdict(int)
+        # 2026-05-01: external page detected → 직전 trigger blacklist (W3).
+        # score_action 이 blacklist trigger 발견 시 강 페널티 → 같은 메뉴 재클릭 안 함.
+        self.external_blacklist: set[str] = set()
+        self.scrollable_exhausted: set[str] = set()
 
         # ---- Static-graph-guided walk plan ----
         # Loaded in run() from <tour>/output/screen_map.json (wireframe ScreenMap).
@@ -92,6 +110,39 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         self._allow_external = os.environ.get("ALLOW_EXTERNAL", "").lower() in (
             "1", "true", "yes",
         )
+
+        # Vision-LLM Clicker fallback (opt-in via VISION_CLICKER_ENABLED=1).
+        # Cycle 0~3 (4/29~30) evidence: score 가중치 누적은 TimePicker OK 같은
+        # outside-view stall 을 못 풂. Vision LLM 이 화면 보고 actionable 좌표
+        # 추정 → click 으로 우회. budget 기본 10/잡 ($0.005~0.01 수준).
+        self.vision_tapper = None
+        if os.environ.get("VISION_CLICKER_ENABLED", "").lower() in ("1", "true", "yes"):
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if api_key and "PLACEHOLDER" not in api_key:
+                try:
+                    from .vision_tapper import VisionTapper
+                    self.vision_tapper = VisionTapper(api_key=api_key)
+                    logger.info(
+                        "[vision] Clicker enabled (budget=%d, model=%s)",
+                        self.vision_tapper.budget, self.vision_tapper.model,
+                    )
+                except Exception as e:
+                    logger.warning("[vision] init failed: %s — fallback disabled", e)
+            else:
+                logger.warning("[vision] VISION_CLICKER_ENABLED but ANTHROPIC_API_KEY missing")
+
+        # 2026-04-30: ViewTreeChain + StallDetector — 2-tier fallback.
+        # ViewTreeChain 의 is_primary_sufficient = framework-specific quality
+        # (entry 시점 정적 검사). StallDetector = runtime 동적 (T2/T3/T4).
+        # vision_tapper 없으면 둘 다 no-op (graceful degradation).
+        from .view_tree_chain import ViewTreeChain
+        from .stall_detector import StallDetector
+        self._view_tree_chain = ViewTreeChain(
+            framework=framework,
+            primary_reader=self.extractor,
+            vision_tapper=self.vision_tapper,
+        )
+        self._stall_detector = StallDetector()
 
     def run(self) -> dict:
         """Run the smart walk loop."""
@@ -265,6 +316,10 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
 
         empty_count = 0  # Track consecutive empty UI dumps
         out_of_app_count = 0  # Guard: if we can't return to target app, bail
+        # B 옵션 (2026-04-24): stall-on-page detection — 같은 hash N회 연속이면 hard reset
+        prev_struct_hash = ""
+        same_hash_streak = 0
+        stall_resets = 0  # 무한루프 방지 — 한 run 에 최대 3회만 reset
 
         while event_count < self.max_events and (time.time() - start_time) < self.timeout:
             # 0. Cancellation check (cooperative, from /api/tours/{id}/stop)
@@ -359,6 +414,40 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                 continue
             empty_count = 0
 
+            # B 옵션: Stall detection — 같은 structure_str 6회 연속이면 hard reset.
+            # RN/Compose 처럼 native view tree 가 비어있어 unseen score 가 같은 view 만
+            # 추천하는 경우 / 인증 폼에서 못 빠져나오는 경우 자동 탈출.
+            # 한 run 에 최대 3회만 reset → 무한루프 방지.
+            cur_struct_hash = state.get("structure_str", "")
+            if cur_struct_hash and cur_struct_hash == prev_struct_hash:
+                same_hash_streak += 1
+            else:
+                same_hash_streak = 0
+                prev_struct_hash = cur_struct_hash
+
+            if same_hash_streak >= 6 and stall_resets < 3:
+                stall_resets += 1
+                logger.warning("[STALL] Same structure_str %d times → hard reset #%d (force-stop + relaunch)",
+                               same_hash_streak, stall_resets)
+                self.trap_stats["stall_reset"] = self.trap_stats.get("stall_reset", 0) + 1
+                try:
+                    subprocess.run(["adb", "-s", self.device_serial, "shell",
+                                    "am", "force-stop", package],
+                                   capture_output=True, timeout=5)
+                    time.sleep(1)
+                    subprocess.run(["adb", "-s", self.device_serial, "shell",
+                                    "am", "start", "-n", f"{package}/{main_activity}"],
+                                   capture_output=True, timeout=20)
+                except subprocess.TimeoutExpired:
+                    logger.warning("[stall-reset] adb timed out")
+                # 같은 화면 메모리만 비우고 visited screens 는 유지 (이중 탐색 방지)
+                same_hash_streak = 0
+                prev_struct_hash = ""
+                self.tried_actions.clear()
+                time.sleep(3)
+                event_count += 1
+                continue
+
             # 3-Level hashing: find canonical screen ID
             fp = self.hasher.compute_fingerprint(
                 state.get("views", []),
@@ -391,6 +480,52 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             self.visited_structures[canonical_id] += 1
             self.visited_screens.add(canonical_id)
 
+            # 2026-04-30 Provisional 마킹 (Pass 1 — Stage 3 안 vision 호출 안 함).
+            # quality fail 시 (Compose wrapper / dominant WebView / 빈 Flutter
+            # 등) state 에 needs_vision_in_revisit flag 만 남기고 그대로 진행.
+            # 실제 vision 호출은 Pass 2 (Stage 5 LLM 후 재탐색 phase) 에서.
+            # 이유: Stage 3 안 vision 호출은 walker 사이클을 5초+ 막고,
+            # ScreenMap context (LLM description) 부재 상태라 Pass 2 의 batch 호출이
+            # 더 효율적 (cache hit, 정확도 ↑, 잡 시간 안 늘림).
+            # 2026-05-01: external page guard (W1+W2+W3) — webview 가
+            # Queens Smile / 카카오 OAuth / 네이버 / 외부 도메인 으로 navigate
+            # 하면 그 화면 더 walking 안 하고 BACK + 직전 trigger blacklist.
+            try:
+                from .outbound_intent_guard import detect_outbound_intent
+                is_ext, reason = detect_outbound_intent(state.get("views", []))
+                if is_ext:
+                    logger.info("[external_guard] %s — back + blacklist last action", reason)
+                    self.trap_stats["external_back"] = self.trap_stats.get("external_back", 0) + 1
+                    if self.action_history:
+                        last_desc = self.action_history[-1].get("event_desc") or self.action_history[-1].get("desc", "")
+                        if last_desc:
+                            self.external_blacklist.add(last_desc)
+                            logger.debug("[external_guard] blacklisted trigger: %s", last_desc[:60])
+                    self._press_back()
+                    self.wait_for_stable(timeout=2.0)
+                    continue  # walking 계속, paused 안 함
+            except Exception as e:
+                logger.debug("[external_guard] failed: %s", e)
+
+            if self._view_tree_chain:
+                if not self._view_tree_chain.is_primary_sufficient(state.get("views", [])):
+                    state["needs_vision_in_revisit"] = True
+                    self.trap_stats["provisional_marked"] += 1
+                    # capture.py 가 이미 state.json 을 dump 한 후라 디스크에 flag
+                    # 안 들어감. main loop 에서 마킹 후 다시 dump — 외부 도구가
+                    # state.json 만 보고도 provisional 알 수 있게.
+                    try:
+                        screen_idx = len(self.states) - 1
+                        if screen_idx >= 0:
+                            state_json = self.output_dir / "states" / f"state_{screen_idx:04d}.json"
+                            if state_json.exists():
+                                state_json.write_text(
+                                    json.dumps(state, indent=2, ensure_ascii=False),
+                                    encoding="utf-8",
+                                )
+                    except Exception as e:
+                        logger.debug("[provisional] state.json re-dump failed: %s", e)
+
             # Mark activity as visited in the plan (so we don't re-launch it)
             cur_activity = state.get("activity", "") or ""
             if cur_activity:
@@ -412,7 +547,7 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                                 (tab.get("content_desc") or tab.get("text") or "?")[:30])
                     self._tap_view(tab)
                     event_count += 1
-                    time.sleep(0.8)
+                    self.wait_for_stable(timeout=2.0)  # was time.sleep(0.8)
                     continue
 
             # 1c. Overlay handling: distinguish popup menu (walk) vs
@@ -423,26 +558,44 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                 is_popup = self._detect_popup_menu(views_cur)
                 if is_popup:
                     popup_items = self._popup_items(views_cur)
-                    tried = self.tried_actions.get(canonical_id, set())
-                    # Prefer popup items that haven't been tapped yet
+                    # 2026-04-29: popup item 은 fragment-global. 같은 overflow
+                    # 메뉴를 Alarm/Clock/Timer 탭에서 띄워도 popup 자체는 동일
+                    # (Settings, Help 등). canonical_id 가 background fragment
+                    # 따라 달라져서 tried 매번 reset 되는 게 진짜 'Settings 만
+                    # 누름' 의 root cause.
                     untried = [pi for pi in popup_items
-                               if self.extractor.get_action_desc(pi) not in tried]
-                    target = untried[0] if untried else (popup_items[0] if popup_items else None)
+                               if self.extractor.get_action_desc(pi) not in self.tried_popup_items]
+                    target = untried[0] if untried else None
                     if target:
                         desc = target.get("content_desc") or target.get("text") or target.get("resource_id") or "?"
-                        logger.info("[popup] tapping menu item: %s", desc[:40])
+                        logger.info("[popup] tapping menu item: %s (untried %d/%d, global)",
+                                    desc[:40], len(untried), len(popup_items))
                         self.trap_stats["popup_item_tapped"] += 1
-                        self.tried_actions[canonical_id].add(self.extractor.get_action_desc(target))
+                        action_desc = self.extractor.get_action_desc(target)
+                        # canonical_id 별 + global 양쪽에 기록. canonical 별은 같은
+                        # 화면 안 라운드로빈, global 은 fragment 갈아타도 유지.
+                        self.tried_actions[canonical_id].add(action_desc)
+                        self.tried_popup_items.add(action_desc)
                         self._tap_view(target)
                         event_count += 1
-                        time.sleep(0.8)
+                        self.wait_for_stable(timeout=2.0)  # was time.sleep(0.8)
                         continue
+                    if popup_items:
+                        # 모두 시도 — popup_global_tried 가 5 item 다 가지고 있음.
+                        # 더 누를 거 없으니 popup 닫고 메인으로. 이후 fragment 갈아타
+                        # popup 다시 떠도 untried=[] 라 즉시 dismiss.
+                        logger.info("[popup] all %d items tried (global) — dismissing", len(popup_items))
+                        self.trap_stats["popup_exhausted"] += 1
+                        if self._dismiss_dialog(state):
+                            event_count += 1
+                            self.wait_for_stable(timeout=1.5)
+                            continue
                     # No popup items extractable — dismiss as fallback
                 logger.info("[TRAP] Dialog detected on %s — attempting dismiss", canonical_id)
                 self.trap_stats["dialog_dismissed"] += 1
                 if self._dismiss_dialog(state):
                     event_count += 1
-                    time.sleep(0.8)
+                    self.wait_for_stable(timeout=1.5)  # was time.sleep(0.8)
                     continue
 
             # 2. Detect stall (same canonical screen 3+ times in a row)
@@ -453,6 +606,14 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             self.last_canonical = canonical_id
 
             if self.stall_count >= 2:
+                # 2026-04-30: Vision-LLM fallback BEFORE press back.
+                # XML extractor 가 못 잡는 화면 (Compose/WebView/Flutter 또는 score
+                # 가중치 누적 stall — TimePicker OK 0회 같은) 에서 화면 보고
+                # actionable 좌표 추정. Disabled 면 즉시 False → 기존 back 흐름 유지.
+                if self._try_vision_fallback(state, canonical_id):
+                    self.stall_count = 0
+                    event_count += 1
+                    continue
                 logger.info("Stall on %s (%d times), pressing back", canonical_id, self.stall_count)
                 did_back = self._press_back()
                 if not did_back:
@@ -519,6 +680,34 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                     continue
 
             # 4. Pick action — diversify among top 3 untried to escape greedy traps.
+            # 4a. Scroll budget: drop scroll actions on canonicals that already
+            # exhausted their budget (≥SCROLL_CAP swipes) or hit the boundary
+            # (Δviews ≤3 after the last swipe). Prevents infinite-scroll feeds
+            # from monopolizing walk time. See A3 for boundary detection.
+            SCROLL_CAP = 5
+            scroll_blocked = (
+                canonical_id in self.scrollable_exhausted
+                or self.scroll_count_per_screen[canonical_id] >= SCROLL_CAP
+            )
+            if scroll_blocked:
+                n_before = len(actions)
+                actions = [a for a in actions if a.get("action") != "scroll"]
+                dropped = n_before - len(actions)
+                if dropped:
+                    self.trap_stats["scroll_cap_blocked"] += dropped
+                    logger.info("[TRAP] scroll cap on %s (count=%d, exhausted=%s) — dropped %d scroll actions",
+                                canonical_id,
+                                self.scroll_count_per_screen[canonical_id],
+                                canonical_id in self.scrollable_exhausted,
+                                dropped)
+                if not actions:
+                    # Nothing left to do here — back out
+                    self._press_back()
+                    self.back_count += 1
+                    event_count += 1
+                    time.sleep(0.5)
+                    continue
+
             # Pure greedy keeps hitting the same high-scored item when that
             # item's result state gets coalesce'd back to the same canonical.
             # Rotating among the top-3 untried exposes the walker to more
@@ -531,21 +720,36 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             # a different top candidate.
             best = untried_top[event_count % len(untried_top)]
 
-            # 4b. RecyclerView trap: cap list-item taps per screen.
+            # 4b. RecyclerView/list trap: cap list-item taps per screen.
             # After 3 item taps on the same canonical, force a scroll-down so
             # we see new content instead of tapping identical-looking items.
+            # 2026-04-29: GridView / ViewPager / HorizontalScrollView /
+            # Compose LazyColumn 도 동일 처리. Compose 의 LazyColumn 은 native
+            # 측에서 ComposeView + 자식들이 List* 클래스 또는 lazy* 시그너로 보임.
             best_view = best.get("view") or best
             parent_cls = str(best_view.get("parent_class", "")).lower()
-            is_rv_item = "recyclerview" in parent_cls or "listview" in parent_cls
+            list_kw = (
+                "recyclerview", "listview", "gridview",
+                "viewpager", "horizontalscrollview",
+                "lazycolumn", "lazyrow", "lazylist", "lazygrid",  # Compose
+                "scrollview",  # Compose 의 ScrollView (XML 의 ScrollView 와 다름)
+            )
+            is_rv_item = any(kw in parent_cls for kw in list_kw)
             if is_rv_item:
                 if self.rv_taps_per_screen[canonical_id] >= 3:
                     logger.info("[TRAP] RV cap on %s — scrolling instead of tapping item", canonical_id)
                     self.trap_stats["rv_cap_scrolled"] += 1
                     self._scroll_down(state)
+                    self.scroll_count_per_screen[canonical_id] += 1
                     event_count += 1
-                    time.sleep(0.7)
+                    self.wait_for_stable(timeout=1.5)  # was time.sleep(0.7)
                     continue
                 self.rv_taps_per_screen[canonical_id] += 1
+
+            # 4c. Scroll budget counter — count direct "scroll" actions too
+            # (RV trap path above handles its own _scroll_down counter increment).
+            if best.get("action") == "scroll":
+                self.scroll_count_per_screen[canonical_id] += 1
             logger.info("Event %d: %s on %s (score=%.2f, visits=%d)",
                         event_count, best["action"], best.get("desc", "?"),
                         best["score"], self.visited_structures[canonical_id])
@@ -553,9 +757,15 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             # 5. Execute action + record as tried
             prev_canonical = canonical_id
             self.tried_actions[canonical_id].add(best.get("desc", ""))
+            # 2026-04-30: per-list_view visit count — best 가 list_view 항목이면
+            # 같은 그룹의 N번째 클릭 score 가 다음 iteration 부터 감점됨
+            lg = best.get("list_view_group_id")
+            if lg:
+                self.list_view_visit_count[lg] += 1
+                self.trap_stats["list_view_taps"] += 1
             self._execute_action(best, state)
             event_count += 1
-            time.sleep(0.7)  # Faster walk
+            self.wait_for_stable(timeout=2.0)  # was time.sleep(0.7) — Faster walk
 
             # 5.5. Package guard — if the action sent us into a different app
             # (Gmail via "Send feedback", Chrome via "Privacy policy",
@@ -630,12 +840,31 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         canonical = state.get("canonical_id", state.get("structure_str", ""))
         visit_count = self.visited_structures.get(canonical, 0)
         tried = self.tried_actions.get(canonical, set())
-        context = {"canonical": canonical, "visit_count": visit_count, "tried_actions": tried}
+
+        # ListView detect — 같은 화면에서 한 번만 (cache 가능하지만 화면 짧은
+        # 시간 살아있으니 매번 재계산해도 OK).
+        from .list_view_detector import detect_list_views
+        list_views = detect_list_views(views)
+        # group_id 를 canonical 과 결합해 cross-screen 충돌 방지
+        list_views_scoped = [
+            {**g, "group_id": f"{canonical}::{g['group_id']}"}
+            for g in list_views
+        ]
+
+        context = {
+            "canonical": canonical,
+            "visit_count": visit_count,
+            "tried_actions": tried,
+            "list_views": list_views_scoped,
+            "list_view_visit_count": self.list_view_visit_count,
+            # 2026-05-01: external page guard — 외부 도메인 진입 trigger 영구 blacklist
+            "external_blacklist": self.external_blacklist,
+        }
 
         actions = []
         seen_labels = set()
 
-        for view in views:
+        for view_idx, view in enumerate(views):
             if not self.extractor.is_actionable(view):
                 continue
 
@@ -646,6 +875,8 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                 continue
             seen_labels.add(label)
 
+            # view_index 는 list_view 페널티 계산에 필요
+            context["view_index"] = view_idx
             score = self.extractor.score_action(view, context)
             action_desc = self.extractor.get_action_desc(view)
             if view.get("clickable"):
@@ -657,9 +888,15 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             else:
                 action_type = "click"
 
+            # list_view 그룹 멤버십 — best 선택 시 visit count 증가에 사용
+            from .list_view_detector import view_to_group
+            grp = view_to_group(list_views_scoped, view_idx)
+            list_view_group_id = grp["group_id"] if grp else None
+
             actions.append({
                 "action": action_type,
                 "view": view,
+                "list_view_group_id": list_view_group_id,
                 "score": score,
                 "desc": action_desc,
                 "bounds": view.get("bounds", {}),
@@ -814,6 +1051,11 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
 
         Uses the center x-axis of the first scrollable view, or screen center
         as fallback.  Distance defaults to 800px which is ~1/3 of a standard screen.
+
+        Boundary detection (A3): after the swipe settles, do a light dump and
+        compare node count vs the pre-scroll state. If Δ ≤ 3 the scrollable
+        has nothing new to give — record canonical in `scrollable_exhausted`
+        so future iterations stop trying to scroll this screen.
         """
         scrollable = next(
             (v for v in state.get("views", []) if v.get("scrollable")),
@@ -835,6 +1077,150 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
              "input", "swipe", str(x), str(y_start), str(x), str(y_end), "300"],
             capture_output=True, timeout=5,
         )
+
+        # A3: boundary detection — only if we know the canonical we're on
+        # and it's not already marked exhausted (avoid extra dumps).
+        canonical = getattr(self, "last_canonical", "") or ""
+        if not canonical or canonical in self.scrollable_exhausted:
+            return
+        try:
+            time.sleep(0.5)
+            from . import u2_helper
+            xml_after = u2_helper.dump_hierarchy(self.device_serial, timeout=3.0)
+            if not xml_after or "<hierarchy" not in xml_after:
+                return
+            n_after = xml_after.count("<node")
+            n_before = len(state.get("views", []))
+            delta = abs(n_after - n_before)
+            if delta <= 3:
+                self.scrollable_exhausted.add(canonical)
+                self.trap_stats["scroll_boundary_reached"] += 1
+                logger.info("[scroll] boundary reached on %s (Δnodes=%d, before=%d after=%d)",
+                            canonical, delta, n_before, n_after)
+        except Exception as e:
+            logger.debug("[scroll] boundary detection skipped: %s", e)
+
+    def _scroll_right(self, state: dict, distance: int = 600) -> None:
+        """Horizontal swipe (right→left) to reveal next page in a horizontal
+        scroller — ViewPager / HorizontalScrollView / Compose Pager / image
+        carousels. Mirror of `_scroll_down` along the x-axis.
+
+        Picks the first horizontally-scrollable container by class hint, then
+        falls back to any `scrollable=true` view, then to screen center.
+        Distance 600px is ~half a standard width.
+        """
+        views = state.get("views", []) or []
+        # Class hints first (more accurate than the generic scrollable flag,
+        # which often marks vertical RecyclerViews too).
+        h_class_kw = ("viewpager", "horizontalscroll", "horizontalscrollview",
+                      "horizontalpager", "horizontalrecyclerview")
+        target = None
+        for v in views:
+            cls = (v.get("class") or "").lower()
+            if any(kw in cls for kw in h_class_kw):
+                target = v
+                break
+        if target is None:
+            target = next((v for v in views if v.get("scrollable")), None)
+
+        # Default: middle of screen, swipe right→left
+        y, x_start, x_end = 1200, 900, 900 - distance
+        if target:
+            import re
+            b = target.get("bounds", "")
+            nums = re.findall(r"\d+", str(b))
+            if len(nums) >= 4:
+                x1, y1, x2, y2 = (int(n) for n in nums[:4])
+                y = (y1 + y2) // 2
+                x_start = x1 + (x2 - x1) * 3 // 4
+                x_end = max(x1 + 40, x_start - distance)
+        subprocess.run(
+            ["adb", "-s", self.device_serial, "shell",
+             "input", "swipe", str(x_start), str(y), str(x_end), str(y), "300"],
+            capture_output=True, timeout=5,
+        )
+
+        # Same boundary detection as vertical scroll.
+        canonical = getattr(self, "last_canonical", "") or ""
+        if not canonical or canonical in self.scrollable_exhausted:
+            return
+        try:
+            time.sleep(0.5)
+            from . import u2_helper
+            xml_after = u2_helper.dump_hierarchy(self.device_serial, timeout=3.0)
+            if not xml_after or "<hierarchy" not in xml_after:
+                return
+            n_after = xml_after.count("<node")
+            n_before = len(views)
+            if abs(n_after - n_before) <= 3:
+                self.scrollable_exhausted.add(canonical)
+                self.trap_stats["scroll_boundary_reached"] += 1
+                logger.info("[scroll-right] boundary on %s (before=%d after=%d)",
+                            canonical, n_before, n_after)
+        except Exception as e:
+            logger.debug("[scroll-right] boundary detection skipped: %s", e)
+
+    def _try_vision_fallback(self, state: dict, canonical_id: str) -> bool:
+        """Vision LLM 으로 actionable element 추출 + tap. 성공 시 True.
+
+        호출 조건 (호출자 책임): stall_count >= 2 또는 명시적 trigger.
+        실패 케이스 → False:
+          - vision_tapper 비활성 (env 안 켜졌거나 API key 없음)
+          - 현재 state 에 screenshot 없음
+          - extract_actionable 가 빈 리스트 반환 (budget/저신뢰/네트워크 실패 etc.)
+          - 모든 후보가 이미 시도됨 (canonical_id 안에서 tried 누적)
+        """
+        if self.vision_tapper is None:
+            return False
+        screenshot_path = state.get("screenshot_path") or ""
+        if not screenshot_path or not Path(screenshot_path).exists():
+            return False
+
+        try:
+            actions = self.vision_tapper.extract_actionable(
+                screenshot_path, state_str=canonical_id,
+            )
+        except Exception as e:
+            logger.warning("[vision-fallback] extract failed: %s", e)
+            return False
+
+        if not actions:
+            return False
+
+        tried = self.tried_actions.setdefault(canonical_id, set())
+        for action in actions:
+            label = action.get("label", "?")
+            bounds = action.get("bounds")
+            action_key = f"vision:{label}@{bounds}"
+            if action_key in tried:
+                continue
+            try:
+                cx, cy = self.vision_tapper.click_point(action)
+            except Exception as e:
+                logger.warning("[vision-fallback] click_point failed: %s", e)
+                tried.add(action_key)
+                continue
+            logger.info(
+                "[vision-fallback] tap %r at (%d,%d) conf=%.2f — %s",
+                label, cx, cy, action.get("confidence", 0),
+                (action.get("expected_outcome") or "")[:60],
+            )
+            try:
+                subprocess.run(
+                    ["adb", "-s", self.device_serial, "shell",
+                     "input", "tap", str(cx), str(cy)],
+                    capture_output=True, timeout=5,
+                )
+            except Exception as e:
+                logger.warning("[vision-fallback] adb tap failed: %s", e)
+                tried.add(action_key)
+                return False
+            tried.add(action_key)
+            self.trap_stats["vision_fallback"] = self.trap_stats.get("vision_fallback", 0) + 1
+            time.sleep(0.5)
+            return True
+
+        return False
 
     def _tap_view(self, view: dict) -> None:
         """Tap the center of a view's bounds."""
@@ -872,14 +1258,71 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         views = state.get("views", [])
 
         # --- 2. Bottom navigation ---
-        bottom_tabs = [v for v in views
-                       if "bottomnav" in (v.get("class", "") + v.get("parent_class", "")).lower()
-                       and v.get("clickable")]
+        # 2026-04-29: detection 강화. 이전엔 'bottomnav' class 매칭만 했는데
+        # DeskClock 의 tab views 가 cls=FrameLayout, rid=tab_menu_alarm 패턴 —
+        # bottomnav 키워드 없어서 발견 0건이었음. Evidence: workspace/b6b5abed
+        # state_-001.json 의 4개 tab_menu_* 가 모두 매칭 실패.
+        def _is_bottom_tab(v: dict) -> bool:
+            if not v.get("clickable"):
+                return False
+            cls = v.get("class", "")
+            parent = v.get("parent_class", "")
+            rid = v.get("resource_id", "") or ""
+            haystack = (cls + parent).lower()
+            if "bottomnav" in haystack or "bottomtab" in haystack:
+                return True
+            # rid 패턴 — Material/Compose 의 tab_menu_*, nav_*, tab_*
+            rl = rid.lower()
+            if rl.startswith(("tab_menu_", "nav_tab_", "bottom_tab_")):
+                return True
+            # bounds — 화면 하단 (y > 80% of 2400) 의 가로 작은 영역
+            bounds_str = v.get("bounds", "")
+            try:
+                # "[x1,y1][x2,y2]" 형식
+                import re
+                m = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds_str)
+                if m:
+                    x1, y1, x2, y2 = map(int, m.groups())
+                    if y1 >= 1900 and (x2 - x1) < 300:  # 하단 영역 + 가로 짧음
+                        return True
+            except Exception:
+                pass
+            return False
+
+        bottom_tabs = [v for v in views if _is_bottom_tab(v)]
         for tab in bottom_tabs[:5]:  # cap to 5
-            logger.info("[bootstrap] tapping bottom-nav: %s",
-                        tab.get("content_desc") or tab.get("text") or "?")
+            tab_label = tab.get("content_desc") or tab.get("text") or "?"
+            logger.info("[bootstrap] tapping bottom-nav: %s", tab_label)
             self._tap_view(tab)
-            time.sleep(0.8)
+            self.wait_for_stable(timeout=2.0)
+
+            # 2026-04-29 Cycle 2 Fix A: 각 tab 진입 후 fragment 안 fab 시도.
+            # Evidence (46e287b6): ALARMS fragment 13 state 모두 'Add alarm'
+            # fab Button 있는데 walker 가 한 번도 안 누름. bootstrap 의
+            # 메인 화면 fab 만 시도해서 BEDTIME fab 만 7번 누르고 끝남.
+            # 각 tab 진입 후 그 fragment 의 fab 1개 누르면 TimePicker /
+            # AlarmEditor / TimerKeypad 같은 핵심 task 화면 캡처 가능.
+            try:
+                cur_screen = self._capture_screen(-1)
+                if cur_screen:
+                    cur_views = cur_screen.get("views", []) or []
+                    cur_fabs = self._find_fab_views(cur_views)
+                    if cur_fabs:
+                        fab = cur_fabs[0]
+                        fab_desc = fab.get("content_desc") or fab.get("text") or "?"
+                        logger.info("[bootstrap] tapping FAB in tab '%s': %s",
+                                    tab_label, fab_desc)
+                        self._tap_view(fab)
+                        self.wait_for_stable(timeout=2.0)
+                        # 결과 화면 (TimePicker dialog 등) 다음 사이클에서
+                        # capture 하도록 back. 단 dialog 가 떠있으면 back =
+                        # cancel 동작이라 dialog 닫힘 — 다음 main loop 가 다시
+                        # 발견 가능하게.
+                        self._press_back()
+                        self.wait_for_stable(timeout=1.5)
+            except Exception as e:
+                logger.debug("[bootstrap] fab-in-tab probe failed: %s", e)
+
             self._go_home_tab(bottom_tabs)  # return to first tab after each probe
             time.sleep(0.5)
 
@@ -888,7 +1331,7 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                          for v in views)
         if has_drawer or self._has_drawer_toggle(views):
             self._open_drawer()
-            time.sleep(0.8)
+            self.wait_for_stable(timeout=2.0)  # was time.sleep(0.8)
             # Main loop will discover drawer items as new actionable views
 
         # --- 4. Top-right toolbar icons (overflow / profile / settings) ---
@@ -897,10 +1340,54 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             desc = v.get("content_desc") or v.get("text") or ""
             logger.info("[bootstrap] tapping top-right icon: %s", desc)
             self._tap_view(v)
-            time.sleep(0.8)
+            self.wait_for_stable(timeout=2.0)  # was time.sleep(0.8)
             # Back to main screen so the loop starts from a known baseline
             self._press_back()
             time.sleep(0.4)
+
+        # --- 5. FAB (Floating Action Button) — 우측하단 + 클릭 시 새 화면/시트 진입 흔함
+        # 2026-04-29 추가: DeskClock + 버튼, 알람 추가, 메시지 작성 같은 진입점.
+        fabs = self._find_fab_views(views)
+        for v in fabs[:1]:  # 보통 FAB 는 화면당 1개
+            desc = v.get("content_desc") or v.get("text") or "?"
+            logger.info("[bootstrap] tapping FAB: %s", desc)
+            self._tap_view(v)
+            self.wait_for_stable(timeout=2.0)  # was time.sleep(0.9)
+            self._press_back()  # back 으로 주 화면 복귀 (다이얼로그 닫힘)
+            time.sleep(0.4)
+
+    def _find_fab_views(self, views: list[dict]) -> list[dict]:
+        """FloatingActionButton 후보 — class 매칭 OR 우측하단 영역의 clickable 둥근 버튼."""
+        candidates: list[dict] = []
+        # 1) 명시적 class: FloatingActionButton (Material) / ExtendedFloatingActionButton
+        for v in views:
+            if not v.get("clickable"):
+                continue
+            cls = (v.get("class") or "").lower()
+            if "floatingactionbutton" in cls or cls.endswith(".fab"):
+                candidates.append(v)
+        if candidates:
+            return candidates
+        # 2) Compose / RN: FAB 가 generic class 라 위치 휴리스틱 — 우측하단 (x>2/3, y>2/3)
+        # 화면 크기 기본 1080x2400 가정 — 정확한 viewport 모르므로 bounds 비율로
+        for v in views:
+            if not v.get("clickable"):
+                continue
+            bounds = v.get("bounds", "")
+            # bounds 형식: "[x1,y1][x2,y2]"
+            import re as _re
+            m = _re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds)
+            if not m:
+                continue
+            x1, y1, x2, y2 = map(int, m.groups())
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            w, h = x2 - x1, y2 - y1
+            # 우측 60% 이후 + 하단 65% 이후 + 정사각형 비슷 (가로:세로 0.7~1.3) + 합리적 크기 (50~250px)
+            if cx > 600 and cy > 1500 and 50 < w < 300 and 50 < h < 300:
+                ratio = w / h if h else 0
+                if 0.6 < ratio < 1.4:
+                    candidates.append(v)
+        return candidates
 
     def _has_drawer_toggle(self, views: list[dict]) -> bool:
         """Look for hamburger / drawer toggle button."""
