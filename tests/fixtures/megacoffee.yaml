@@ -1,8 +1,14 @@
 _doc: |
-  Phase B (2026-04-29) — 메가커피(MEGA Coffee) 앱 task fixture.
+  Phase B (2026-04-29) + B (2026-05-03) — 메가커피(MEGA Coffee) 앱 task fixture.
 
-  매칭 룰: match_any (any-of OR 매칭) — activity_substr 또는 functional_category
-  중 하나만 맞으면 그 expected_screen 은 found.
+  매칭 룰: match_any (any-of OR 매칭) — activity_substr / functional_category /
+  text_substr 중 하나만 맞으면 그 expected_screen 은 found.
+
+  text_substr (B, 2026-05-03):
+    webview-dominant 앱은 task 화면이 manifest 에 별도 액티비티로 안 등록됨.
+    메가커피의 메뉴/매장/장바구니/마이페이지는 모두 단일 WebActivity 안의
+    URL/title 만 다른 sub-node. label / screen_purpose / description 텍스트
+    매칭으로 잡는다.
 
 app: megacoffee
 description: "MEGA MGC Coffee — 음료 주문 / 매장 / 멤버십 / 충전 / 기프티콘"
@@ -18,11 +24,13 @@ tasks:
         match_any:
           activity_substr: ["MainActivity", "HomeActivity"]
           functional_category: ["home"]
+          text_substr: ["메가커피 홈", "홈 화면"]
       - description: "메뉴 카테고리 / 음료 목록"
         match_any:
           activity_substr: ["MenuActivity", "ProductListActivity",
                             "BeverageListActivity", "CategoryActivity"]
           functional_category: ["list"]
+          text_substr: ["메뉴 목록", "메가오더", "전체메뉴", "커피 메뉴"]
 
   - id: add_drink_to_cart
     goal: "음료 선택 → 사이즈/샷/시럽 옵션 → 장바구니 담기"
@@ -32,10 +40,12 @@ tasks:
           activity_substr: ["ProductDetailActivity", "MenuDetailActivity",
                             "BeverageDetailActivity", "OptionActivity"]
           functional_category: ["detail", "form"]
+          text_substr: ["메뉴 옵션", "상품 상세", "옵션 선택"]
       - description: "장바구니"
         match_any:
           activity_substr: ["CartActivity", "BasketActivity"]
           functional_category: ["list", "form"]
+          text_substr: ["장바구니", "담은 메뉴"]
 
   - id: checkout_payment
     goal: "장바구니 → 주문 확인 → 결제 진입"
@@ -43,11 +53,13 @@ tasks:
       - description: "장바구니"
         match_any:
           activity_substr: ["CartActivity", "BasketActivity"]
+          text_substr: ["장바구니", "담은 메뉴"]
       - description: "결제 / 주문 확인 화면"
         match_any:
           activity_substr: ["PaymentActivity", "CheckoutActivity",
                             "OrderConfirmActivity"]
           functional_category: ["form"]
+          text_substr: ["결제", "주문 확인", "주문하기", "결제하기", "주문 완료"]
 
   # ─── 부가 기능 ─────
 
@@ -59,6 +71,8 @@ tasks:
           activity_substr: ["StoreActivity", "StoreListActivity",
                             "ShopActivity", "FindStoreActivity",
                             "MapActivity", "BranchActivity"]
+          text_substr: ["매장찾기", "매장 검색", "매장 리스트", "근처 매장",
+                        "매장 안내"]
 
   - id: view_membership
     goal: "멤버십 / 적립 / 쿠폰 화면 진입"
@@ -68,6 +82,8 @@ tasks:
           activity_substr: ["MembershipActivity", "MyPageActivity",
                             "ProfileActivity", "PointActivity",
                             "RewardActivity"]
+          text_substr: ["마이페이지", "내 정보", "멤버십", "스탬프 적립",
+                        "포인트", "내 쿠폰"]
 
   - id: login_or_signup
     goal: "로그인 또는 회원가입 진입"
@@ -77,6 +93,7 @@ tasks:
           activity_substr: ["LoginActivity", "AuthActivity", "SignInActivity",
                             "SignUpActivity"]
           functional_category: ["auth"]
+          text_substr: ["로그인", "회원가입"]
 
   - id: use_gift_voucher
     goal: "기프티콘 / 쿠폰 코드 입력해서 사용"
@@ -85,8 +102,10 @@ tasks:
         match_any:
           activity_substr: ["CouponActivity", "VoucherActivity", "GiftActivity"]
           functional_category: ["list"]
+          text_substr: ["쿠폰함", "기프티콘", "선물함", "쿠폰 리스트"]
       - description: "쿠폰 코드 입력 폼"
         match_any:
           activity_substr: ["CouponInputActivity", "RegisterCouponActivity",
                             "GiftRegisterActivity"]
           functional_category: ["form"]
+          text_substr: ["쿠폰 등록", "쿠폰 코드", "기프티콘 등록"]

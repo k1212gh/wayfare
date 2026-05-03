@@ -237,6 +237,15 @@ def refresh_metadata(
     md["actionable_nodes"] = sum(1 for n in nodes if _is_actionable(n))
     md["plannable_nodes"] = sum(1 for n in nodes if _is_plannable(n))
     md["reachable_count"] = len(nodes) - summary.get("unreachable_count", 0)
+    # 2026-05-03 (P1): user-facing 분모 (capture_priority='A' 만)
+    md["relevant_total"] = sum(
+        1 for n in nodes
+        if n.get("capture_priority", "A") == "A" and not n.get("screen_id", "").startswith("system:")
+    )
+    md["relevant_actionable"] = sum(
+        1 for n in nodes
+        if _is_actionable(n) and n.get("capture_priority", "A") == "A"
+    )
 
     sev_counts = {"high": 0, "medium": 0, "low": 0}
     for issue in issues:

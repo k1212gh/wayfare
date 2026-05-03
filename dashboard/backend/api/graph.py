@@ -364,12 +364,10 @@ async def get_screenshot(tour_id: str, screen_id: str):
                 if f.suffix in (".jpg", ".png") and _within(f, search_dir):
                     return FileResponse(f)
 
-    # Strategy 3: first available screenshot as a last-resort fallback
-    states_dir = tour_dir / "dynamic" / "states"
-    if states_dir.exists():
-        for png in sorted(states_dir.glob("screen_*.png")):
-            return FileResponse(png)
-
+    # 2026-05-03: Strategy 3 (첫 PNG fallback) 제거.
+    # declared 노드 (manifest wireframe) 클릭 시 다른 노드의 첫 PNG 가 반환되어
+    # 사용자가 잘못된 화면 보던 회귀. 진짜 매칭 없으면 404 — frontend 가 onError
+    # 또는 screenshot_ref 빈 노드 검사로 깨끗히 처리.
     raise HTTPException(404, "Screenshot not found")
 
 

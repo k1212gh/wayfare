@@ -67,6 +67,19 @@ def validate_graph(graph: dict) -> dict:
         and n.get("status") in ("enriched", "probed")
         and (n.get("label") or n.get("screen_purpose"))
     )
+    # 2026-05-03 (P1): user-facing 분모 — 외부 OAuth/Bridge/Hidden 같은 plumbing/
+    # deep-link 노드 (capture_priority='B'/'C') 는 진짜 사용자 화면이 아니라
+    # 분모에서 빼야 ACTIONABLE % 의미 정확. activity_classifier 가 이미 'A'/'B'/'C'
+    # 분류 — 'A' (user-facing) 만 분모.
+    relevant_total = sum(
+        1 for n in nodes.values()
+        if n.get("capture_priority", "A") == "A" and not n.get("screen_id", "").startswith("system:")
+    )
+    relevant_actionable = sum(
+        1 for n in nodes.values()
+        if (n.get("widgets") or n.get("primary_affordances") or n.get("chip_groups"))
+        and n.get("capture_priority", "A") == "A"
+    )
     sev_counts = {"high": 0, "medium": 0, "low": 0}
     for issue in issues:
         sev = issue.get("severity", "medium")
@@ -84,6 +97,10 @@ def validate_graph(graph: dict) -> dict:
         "issue_severity": sev_counts,
         "actionable_nodes": actionable,
         "plannable_nodes": plannable,
+        # 2026-05-03 (P1): user-facing 분모. 메가커피 같은 manifest 큰 앱의
+        # ACTIONABLE % 가 외부 OAuth/Braze/Hidden 류로 강제 ↓ 되는 회귀 차단.
+        "relevant_total": relevant_total,
+        "relevant_actionable": relevant_actionable,
         "is_valid": sev_counts["high"] == 0,
     }
 

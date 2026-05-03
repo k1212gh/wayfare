@@ -89,6 +89,12 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         # 2026-05-01: external page detected → 직전 trigger blacklist (W3).
         # score_action 이 blacklist trigger 발견 시 강 페널티 → 같은 메뉴 재클릭 안 함.
         self.external_blacklist: set[str] = set()
+        # 2026-05-03 (R6): multi-target action 페널티 — 같은 (canonical, action_desc)
+        # 가 ≥3 다른 target canonical 로 transition 했으면 random transition 으로 판정.
+        # 메가커피 이벤트 webview 의 wrapper element 가 21 incoming hub 되는 회귀 차단.
+        # key = (canonical_id, action_desc) → set of target canonical_ids
+        from collections import defaultdict as _dd
+        self.action_target_diversity: dict[tuple, set] = _dd(set)
         self.scrollable_exhausted: set[str] = set()
 
         # ---- Static-graph-guided walk plan ----
@@ -279,6 +285,23 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
 
         self.package = package
         self.main_activity = main_activity
+
+        # E (2026-05-03): task fixture 키워드 로드 — walk 시점에 task goal 에
+        # 등장한 명사 (메뉴/장바구니/매장/MY/쿠폰/...) 가 view text 에 hit 시
+        # score 보너스. 메가커피/DeskClock 등 fixture 있으면 자동 적용.
+        self.task_keywords: list[str] = []
+        try:
+            from stage6_screenmap.task_fixture import load_fixture, extract_keywords
+            # package 에서 short app id 추출 (예: co.kr.waldlust.megacoffee → megacoffee)
+            app_id = package.rsplit(".", 1)[-1] if package else ""
+            fix = load_fixture(app_id)
+            if fix:
+                self.task_keywords = extract_keywords(fix)
+                if self.task_keywords:
+                    logger.info("Task fixture keywords loaded (%d): %s",
+                                len(self.task_keywords), self.task_keywords[:8])
+        except Exception as e:
+            logger.debug("Task fixture load failed: %s", e)
 
         # Pre-grant runtime permissions so first-launch permission dialogs
         # don't block walk.  Silently ignored if a permission isn't
@@ -720,6 +743,36 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             # a different top candidate.
             best = untried_top[event_count % len(untried_top)]
 
+            # C (2026-05-03): task-keyword override — task fixture 가 정의한
+            # 키워드 (메뉴/매장/장바구니/마이페이지/메가오더 등) 가 view text
+            # 또는 content_desc 에 hit 한 미시도 액션이 있으면 score 휴리스틱
+            # 무시하고 그것을 best 로 강제. R5/R6/E 같은 score-tuning 으로는
+            # 닿지 못한 task path (find_store / view_membership / checkout)
+            # 에 walk 를 직접 끌어준다. 미시도 필터가 있어 같은 keyword 화면을
+            # 무한히 뱅뱅 돌지 않음.
+            if self.task_keywords:
+                tried_set = self.tried_actions.get(canonical_id, set())
+                keyword_hits: list[dict] = []
+                for a in actions:
+                    if a.get("desc", "") in tried_set:
+                        continue
+                    v = a.get("view") or a
+                    text_blob = f"{v.get('text','') or ''} {v.get('content_desc','') or ''}"
+                    if any(kw in text_blob for kw in self.task_keywords):
+                        keyword_hits.append(a)
+                if keyword_hits:
+                    keyword_hits.sort(key=lambda x: -float(x.get("score", 0) or 0))
+                    kw_best = keyword_hits[0]
+                    if kw_best is not best:
+                        logger.info(
+                            "[TASK-KW] override on %s — desc=%r score=%.1f (was %.1f)",
+                            canonical_id,
+                            (kw_best.get("desc") or "")[:40],
+                            float(kw_best.get("score", 0) or 0),
+                            float(best.get("score", 0) or 0),
+                        )
+                        best = kw_best
+
             # 4b. RecyclerView/list trap: cap list-item taps per screen.
             # After 3 item taps on the same canonical, force a scroll-down so
             # we see new content instead of tapping identical-looking items.
@@ -803,6 +856,11 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                         "event_type": best["action"],
                         "event_str": best.get("desc", ""),
                     })
+                    # R6 (2026-05-03): action 의 target 다이버시티 누적.
+                    # 같은 element click 이 매번 다른 화면으로 가면 random transition.
+                    self.action_target_diversity[
+                        (prev_canonical, best.get("desc", ""))
+                    ].add(new_canonical)
 
         # Save results
         elapsed = time.time() - start_time
@@ -859,6 +917,11 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             "list_view_visit_count": self.list_view_visit_count,
             # 2026-05-01: external page guard — 외부 도메인 진입 trigger 영구 blacklist
             "external_blacklist": self.external_blacklist,
+            # 2026-05-03 (R6): multi-target action diversity — score_action 이
+            # 같은 element 가 ≥3 다른 화면으로 가면 페널티 적용. 이벤트 hub bias 차단.
+            "action_target_diversity": self.action_target_diversity,
+            # E (2026-05-03): task fixture 키워드 — view text/desc 매칭 시 보너스.
+            "task_keywords": self.task_keywords,
         }
 
         actions = []

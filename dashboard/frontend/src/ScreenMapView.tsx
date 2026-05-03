@@ -10,6 +10,7 @@ import {
   Panel,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   MarkerType,
   NodeMouseHandler,
 } from '@xyflow/react';
@@ -27,6 +28,23 @@ interface ScreenMapViewProps {
   searchQuery: string;
   tourId: string;
   appName?: string;
+  /** 외부 (사이드 패널 / EdgeRow 클릭) 에서 노드를 선택했을 때 viewport 이동 */
+  selectedNodeId?: string;
+}
+
+
+/** ReactFlow 안에서만 사용 가능한 useReactFlow hook 으로 selected 노드 → viewport 중앙. */
+function PanToSelected({ selectedId, nodes }: { selectedId?: string; nodes: Node[] }) {
+  const { setCenter } = useReactFlow();
+  useEffect(() => {
+    if (!selectedId) return;
+    const n = nodes.find((x) => x.id === selectedId);
+    if (!n || !n.position) return;
+    const w = (n as any).width || (n as any).measured?.width || 220;
+    const h = (n as any).height || (n as any).measured?.height || 80;
+    setCenter(n.position.x + w / 2, n.position.y + h / 2, { zoom: 1.1, duration: 600 });
+  }, [selectedId, nodes, setCenter]);
+  return null;
 }
 
 function buildLayout(nodes: any[], edges: any[], showScreenshots: boolean, tourId: string) {
@@ -298,7 +316,7 @@ function buildLayout(nodes: any[], edges: any[], showScreenshots: boolean, tourI
 const nodeTypes = { screenshotNode: ScreenshotNode };
 const edgeTypes = { floating: FloatingEdge };
 
-export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery, tourId, appName }: ScreenMapViewProps) {
+export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery, tourId, appName, selectedNodeId }: ScreenMapViewProps) {
   const [showScreenshots, setShowScreenshots] = useState(false);
   const [pathSource, setPathSource] = useState<string | null>(null);
   const [highlightedPath, setHighlightedPath] = useState<{ nodes: Set<string>; edges: Set<string> } | null>(null);
@@ -555,6 +573,7 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
       fitView minZoom={0.05} maxZoom={2}
       proOptions={{ hideAttribution: true }}
     >
+      <PanToSelected selectedId={selectedNodeId} nodes={nodes} />
       <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#d4d4d4" />
       <Controls showInteractive={false} style={{ border: '1px solid #e5e5e5', borderRadius: '8px', overflow: 'hidden' }} />
       <MiniMap

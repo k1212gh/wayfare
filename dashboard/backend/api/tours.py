@@ -73,6 +73,9 @@ async def list_tours():
                     "total_edges": md.get("total_edges", 0),
                     "actionable_nodes": md.get("actionable_nodes", 0),
                     "plannable_nodes": md.get("plannable_nodes", 0),
+                    # P1 (2026-05-03): user-facing 분모 + actionable
+                    "relevant_total": md.get("relevant_total", 0),
+                    "relevant_actionable": md.get("relevant_actionable", 0),
                     "reachable_count": md.get("reachable_count", 0),
                     "validation_issues": md.get("validation_issues", 0),
                     "high_issues": (md.get("issue_severity") or {}).get("high", 0),

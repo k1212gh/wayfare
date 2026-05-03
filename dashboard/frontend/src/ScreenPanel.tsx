@@ -29,10 +29,15 @@ export function ScreenPanel({ node, tourId, allNodes = [], allEdges = [], onSele
   const [screenshotUrl, setScreenshotUrl] = useState('');
 
   useEffect(() => {
-    if (tourId && node.screen_id) {
+    // 2026-05-03: declared 노드 (manifest wireframe — screenshot_ref 없음) 는 fetch 안 함.
+    // 백엔드의 Strategy 3 fallback (첫 PNG) 이 다른 노드 사진을 반환해서 사용자가
+    // 잘못된 화면 보던 회귀 차단.
+    if (tourId && node.screen_id && node.screenshot_ref) {
       setScreenshotUrl(`/api/tours/${tourId}/screenshot/${node.screen_id}`);
+    } else {
+      setScreenshotUrl('');
     }
-  }, [tourId, node.screen_id]);
+  }, [tourId, node.screen_id, node.screenshot_ref]);
 
   // 노드 → 라벨 lookup
   const labelFor = (sid: string): string => {
@@ -41,6 +46,14 @@ export function ScreenPanel({ node, tourId, allNodes = [], allEdges = [], onSele
     const lbl = n.label || '';
     const act = (n.activity || '').split('.').pop();
     return (lbl || act || sid).slice(0, 36);
+  };
+
+  // 노드 → screenshot URL (있을 때만). 연결 노드 thumbnail 미리보기.
+  // entry/declared 노드는 screenshot_ref 없어 undefined 반환.
+  const thumbFor = (sid: string): string | undefined => {
+    const n = allNodes.find((x) => x.screen_id === sid);
+    if (!n || !n.screenshot_ref) return undefined;
+    return `/api/tours/${tourId}/screenshot/${sid}`;
   };
 
   const incoming = allEdges.filter((e) => e.to === node.screen_id);
@@ -184,6 +197,7 @@ export function ScreenPanel({ node, tourId, allNodes = [], allEdges = [], onSele
                 target={labelFor(e.to)}
                 kind={e.kind || 'navigate'}
                 outcome={e.outcome}
+                thumbnailUrl={thumbFor(e.to)}
                 onClick={onSelectNode ? () => onSelectNode(e.to) : undefined}
               />
             ))}
@@ -202,6 +216,7 @@ export function ScreenPanel({ node, tourId, allNodes = [], allEdges = [], onSele
                 target={labelFor(e.from)}
                 kind={e.kind || 'navigate'}
                 direction="in"
+                thumbnailUrl={thumbFor(e.from)}
                 onClick={onSelectNode ? () => onSelectNode(e.from) : undefined}
               />
             ))}
@@ -435,13 +450,14 @@ function Tag({ children, variant = 'default' }: { children: React.ReactNode; var
   );
 }
 
-function EdgeRow({ trigger, target, kind, direction = 'out', outcome, onClick }: {
+function EdgeRow({ trigger, target, kind, direction = 'out', outcome, onClick, thumbnailUrl }: {
   trigger: string;
   target: string;
   kind: string;
   direction?: 'in' | 'out';
   outcome?: string;
   onClick?: () => void;
+  thumbnailUrl?: string;  // 연결 노드의 screenshot — 작은 미리보기
 }) {
   // kind 별 색상 — ScreenMapView 의 STYLE_BY_KIND 와 일치
   const kindColor: Record<string, string> = {
@@ -469,8 +485,24 @@ function EdgeRow({ trigger, target, kind, direction = 'out', outcome, onClick }:
       title={`kind: ${kind}${outcome ? '\n→ ' + outcome : ''}`}
     >
       <div style={{
-        display: 'grid', gridTemplateColumns: '90px 1fr', gap: '8px',
+        display: 'grid',
+        gridTemplateColumns: thumbnailUrl ? '40px 90px 1fr' : '90px 1fr',
+        gap: '8px',
+        alignItems: 'center',
       }}>
+        {thumbnailUrl && (
+          <img
+            src={thumbnailUrl}
+            alt=""
+            loading="lazy"
+            style={{
+              width: '40px', height: '60px', objectFit: 'cover',
+              borderRadius: '3px', border: '1px solid var(--color-border)',
+              background: '#f5f5f5',
+            }}
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden'; }}
+          />
+        )}
         <span style={{
           color: c, fontWeight: 600, fontSize: '11px',
           fontFamily: 'var(--font-mono)',

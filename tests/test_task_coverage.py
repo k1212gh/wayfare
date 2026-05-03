@@ -44,6 +44,102 @@ def test_node_matches_empty_rule_false():
     assert _node_matches({"activity": "x"}, {}) is False
 
 
+# ─── B (2026-05-03) — text_substr 매칭 ─────────────────────
+
+
+def test_node_matches_text_substr_label():
+    """label 에 text_substr 부분일치 → 매칭."""
+    node = {"activity": "WebActivity", "label": "메뉴 옵션 선택"}
+    assert _node_matches(node, {"text_substr": ["메뉴 옵션"]}) is True
+    assert _node_matches(node, {"text_substr": ["옵션"]}) is True
+    assert _node_matches(node, {"text_substr": ["없는단어"]}) is False
+
+
+def test_node_matches_text_substr_screen_purpose():
+    """screen_purpose 에 매칭 — Stage 5 LLM annotation 산물."""
+    node = {"activity": "WebActivity",
+            "screen_purpose": "사용자가 매장 위치를 검색하고 길찾기를 한다."}
+    assert _node_matches(node, {"text_substr": ["매장"]}) is True
+    assert _node_matches(node, {"text_substr": ["길찾기"]}) is True
+
+
+def test_node_matches_text_substr_case_insensitive():
+    node = {"label": "MENU 옵션"}
+    assert _node_matches(node, {"text_substr": ["menu"]}) is True
+
+
+def test_node_matches_text_substr_combines_with_other_rules():
+    """text_substr 매칭은 OR semantics — activity_substr 안 맞아도 통과."""
+    node = {"activity": "Foo", "label": "장바구니"}
+    rule = {
+        "activity_substr": ["CartActivity"],   # not match
+        "text_substr": ["장바구니"],            # match
+    }
+    assert _node_matches(node, rule) is True
+
+
+def test_node_matches_text_substr_empty_list_no_op():
+    """text_substr 가 빈 리스트면 무영향 (다른 룰만 평가)."""
+    node = {"activity": "AlarmsActivity"}
+    rule = {"activity_substr": ["AlarmsActivity"], "text_substr": []}
+    assert _node_matches(node, rule) is True
+
+
+def test_node_matches_text_substr_no_text_fields_safe():
+    """text_substr 룰이 있는데 노드에 text 필드 모두 없어도 crash 안 함."""
+    node = {"activity": "A"}
+    assert _node_matches(node, {"text_substr": ["메뉴"]}) is False
+
+
+def test_megacoffee_fixture_text_substr_loads():
+    """B 적용된 megacoffee.yaml 가 valid YAML + text_substr 룰 들어있는지."""
+    fx = load_fixture("megacoffee")
+    assert fx is not None
+    by_id = {t["id"]: t for t in fx.get("tasks", [])}
+    find_store = by_id["find_store"]
+    rule = find_store["expected_screens"][0]["match_any"]
+    assert "매장찾기" in rule.get("text_substr", []), \
+        "find_store 에 매장찾기 text_substr 있어야"
+    membership = by_id["view_membership"]
+    rule = membership["expected_screens"][0]["match_any"]
+    assert "마이페이지" in rule.get("text_substr", []), \
+        "view_membership 에 마이페이지 text_substr 있어야"
+
+
+def test_extract_keywords_includes_text_substr_terms():
+    """C (2026-05-03): extract_keywords 가 expected_screens.match_any.text_substr
+    까지 봐야 — fixture text_substr 에만 있는 단어 (메가오더 등) 도 walk
+    keyword 화이트리스트에 들어가야 한다."""
+    from stage6_screenmap.task_fixture import extract_keywords
+    fx = load_fixture("megacoffee")
+    kws = set(extract_keywords(fx))
+    # text_substr 에만 있는 단어들 — description/goal 에 없음
+    assert "메가오더" in kws, "text_substr 의 메가오더 추출 안 됨"
+    assert "매장찾기" in kws
+    assert "마이페이지" in kws
+    assert "스탬프" in kws
+
+
+def test_megacoffee_webview_node_matches_via_text():
+    """메가커피 잡 8cbd896a 의 실 노드 — WebActivity sub-node 가
+    text_substr 로 task 매칭되는지 검증.
+    label='스탬프 적립 현황' → view_membership 의 '스탬프 적립' 매칭."""
+    node = {
+        "activity": "co.kr.waldlust.megacoffee.ui.webkit.WebActivity",
+        "functional_category": "detail",
+        "label": "스탬프 적립 현황",
+        "screen_purpose": "사용자가 현재 보유한 스탬프 개수와 무료 쿠폰 획득",
+    }
+    fx = load_fixture("megacoffee")
+    assert fx is not None
+    by_id = {t["id"]: t for t in fx.get("tasks", [])}
+    rule = by_id["view_membership"]["expected_screens"][0]["match_any"]
+    # activity_substr 는 안 맞음 (MembershipActivity 아님)
+    assert not any(s in node["activity"] for s in rule.get("activity_substr", []))
+    # 그러나 text_substr 로 매칭됨
+    assert _node_matches(node, rule) is True
+
+
 # ─── evaluate_task_coverage ────────────────────────────────
 
 

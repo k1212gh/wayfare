@@ -287,6 +287,7 @@ export default function App() {
               searchQuery={searchQuery}
               tourId={activeTourId}
               appName={graphData.screen_map.app_name || graphData.screen_map.package_name}
+              selectedNodeId={selectedNode?.screen_id}
             />
           )}
         </div>

@@ -259,6 +259,25 @@ class XMLViewTreeReader(ViewTreeReader):
             from ..outbound_intent_guard import get_blacklist_penalty
             score += get_blacklist_penalty(action_desc, ext_blacklist)
 
+        # R6 (2026-05-03): multi-target action 페널티. 같은 (canonical, action_desc)
+        # 에서 ≥3 다른 화면으로 transition 한 적 있으면 random transition wrapper
+        # element 로 판정 → 페널티 -3.0. 메가커피 이벤트 hub 의 webview wrapper
+        # 처럼 click 마다 다른 화면 가는 노이즈 차단.
+        diversity = context.get("action_target_diversity") or {}
+        if diversity:
+            targets = diversity.get((canonical, action_desc), set())
+            if len(targets) >= 3:
+                score -= 3.0
+
+        # E (2026-05-03): task fixture 키워드 보너스. fixture 의 task goal 에 등장
+        # 한 명사 (메뉴/장바구니/매장/MY/쿠폰/...) 가 view text/desc 에 hit 면
+        # +2.0. 메가커피/DeskClock 등 fixture 있는 앱의 진짜 task path 우선화.
+        task_keywords = context.get("task_keywords") or []
+        if task_keywords:
+            combined_for_kw = f"{text} {desc}"
+            if any(kw in combined_for_kw for kw in task_keywords):
+                score += 2.0
+
         if view.get("scrollable") and not view.get("clickable"):
             score -= 1.0  # scroll-only
 

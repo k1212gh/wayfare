@@ -35,6 +35,57 @@ def _ctx(visited=0, tried=None):
 # ─── 기존 weights 보존 ────────────────────────────────────
 
 
+def test_r6_multi_target_action_penalty():
+    """R6 (2026-05-03): 같은 (canonical, action_desc) 가 ≥3 다른 화면으로 transition
+    한 적 있으면 random transition wrapper 로 판정 → -3.0 페널티."""
+    e = XMLViewTreeReader()
+    v = _v(cls="Button", text="이벤트 안내")
+    # action_desc 는 get_action_desc 가 만든 (label, bounds) 형식
+    desc = e.get_action_desc(v)
+    # 다이버시티 ≥3 — 메가커피 이벤트 webview wrapper 의 hub 패턴 모사
+    diversity = {("c1", desc): {"target_a", "target_b", "target_c", "target_d"}}
+    ctx_no_div = _ctx()
+    ctx_div = {**_ctx(), "action_target_diversity": diversity}
+    score_normal = e.score_action(v, ctx_no_div)
+    score_penalized = e.score_action(v, ctx_div)
+    assert score_penalized == score_normal - 3.0, \
+        f"R6 penalty -3.0 expected, got Δ={score_penalized - score_normal}"
+
+
+def test_e_task_keyword_bonus():
+    """E (2026-05-03): fixture 의 task keyword (메뉴/매장/MY 등) 가 view text 에
+    hit 시 +2.0 보너스. 메가커피의 진짜 task path 우선화."""
+    e = XMLViewTreeReader()
+    v = _v(cls="TextView", text="메뉴")
+    ctx_no_kw = _ctx()
+    ctx_kw = {**_ctx(), "task_keywords": ["메뉴", "장바구니", "매장"]}
+    s_no = e.score_action(v, ctx_no_kw)
+    s_yes = e.score_action(v, ctx_kw)
+    assert s_yes == s_no + 2.0, f"E task keyword +2.0 expected, got Δ={s_yes - s_no}"
+
+
+def test_e_task_keyword_no_match_no_bonus():
+    """fixture 키워드 매칭 안 되면 보너스 없음."""
+    e = XMLViewTreeReader()
+    v = _v(cls="TextView", text="기타")
+    ctx = {**_ctx(), "task_keywords": ["메뉴", "매장"]}
+    s_with = e.score_action(v, ctx)
+    s_without = e.score_action(v, _ctx())
+    assert s_with == s_without
+
+
+def test_r6_diversity_2_no_penalty():
+    """다이버시티 = 2 (≥3 미만) → 페널티 없음."""
+    e = XMLViewTreeReader()
+    v = _v(cls="Button", text="버튼")
+    desc = e.get_action_desc(v)
+    diversity = {("c1", desc): {"target_a", "target_b"}}  # 2개만
+    ctx = {**_ctx(), "action_target_diversity": diversity}
+    s_with = e.score_action(v, ctx)
+    s_without = e.score_action(v, _ctx())
+    assert s_with == s_without, "diversity < 3 should not penalize"
+
+
 def test_baseline_button_score():
     """일반 Button (rid 없음) — base 1 + 미시도 4 + Button 1.5 = 6.5"""
     e = XMLViewTreeReader()

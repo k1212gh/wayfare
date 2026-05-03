@@ -82,6 +82,43 @@ def _merge_wireframe(config, graph: dict, static_info: dict, metadata: dict) -> 
             # Only Fragment nodes exist for this FQN — add the wireframe Activity
             # as the host node (don't drop it). Fragment hierarchy step will
             # later attach `parent_activity_id` + `contains` edges.
+            #
+            # 2026-05-03 (P2): 자식 fragment 의 widgets / primary_affordances
+            # 를 host activity 에 union — 메가커피 71cc7845 회귀: act_*
+            # (wireframe) 노드와 page_* (fragment) 가 별도라 act_* 가
+            # actionable=False (분모만 갉아먹음). 자식 fragment 가 가진 ui 신호
+            # 합성하면 host 도 actionable 로 승격되어 분자 ↑.
+            children = [
+                n for n in graph["nodes"]
+                if n.get("activity") == act and n.get("node_type") == "fragment"
+            ]
+            if children:
+                # 자식 widgets union (id 기준 coalesce)
+                ui_by_id: dict = {}
+                for c in children:
+                    for ui in (c.get("widgets") or []):
+                        key = ui.get("id") if isinstance(ui, dict) else str(ui)
+                        if key:
+                            ui_by_id[key] = ui
+                if ui_by_id:
+                    sn.setdefault("widgets", [])
+                    for k, v in ui_by_id.items():
+                        if not any(
+                            (e.get("id") if isinstance(e, dict) else str(e)) == k
+                            for e in sn["widgets"]
+                        ):
+                            sn["widgets"].append(v)
+                # primary_affordances union (string list)
+                aff_set = {a for c in children for a in (c.get("primary_affordances") or [])}
+                if aff_set:
+                    existing_aff = set(sn.get("primary_affordances") or [])
+                    sn["primary_affordances"] = list(existing_aff | aff_set)
+                # status 승격 — 자식이 enriched/probed 면 host 도
+                child_statuses = {c.get("status", "") for c in children}
+                if "enriched" in child_statuses:
+                    sn["status"] = "enriched"
+                elif "probed" in child_statuses and sn.get("status", "declared") == "declared":
+                    sn["status"] = "probed"
             if sk_id not in existing_ids:
                 graph["nodes"].append(sn)
                 existing_ids.add(sk_id)

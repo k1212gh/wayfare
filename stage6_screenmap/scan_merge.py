@@ -34,8 +34,15 @@ def _apply_manifest_scan(config, graph: dict) -> None:
             by_activity[act] = n
 
     promoted = 0
+    fake_launched = 0
     for act, result in scan.items():
         if not result.get("launched"):
+            continue
+        # 2026-05-03 (P3): launched=True 만으론 부족. 메가커피 같은 redirect
+        # 패턴 앱은 17/18 가 focus_mismatch (am start 됐지만 즉시 MainActivity 로
+        # 튕김). 진짜 capture 한 노드만 probed 로 마킹.
+        if not result.get("captured") or result.get("focus_mismatch"):
+            fake_launched += 1
             continue
         node = by_activity.get(act)
         if not node:
@@ -43,8 +50,11 @@ def _apply_manifest_scan(config, graph: dict) -> None:
         if node.get("status") == "declared":
             node["status"] = "probed"
             promoted += 1
-    if promoted:
-        logger.info("Manifest scan promoted %d nodes to status='probed'", promoted)
+    if promoted or fake_launched:
+        logger.info(
+            "Manifest scan: %d nodes promoted to 'probed' (fake/redirect launches skipped: %d)",
+            promoted, fake_launched,
+        )
 
     # Also promote classifier-B (plumbing) and classifier-C (deep-link) nodes
     # to `probed` status — they're reachable-by-design (manifest declared +

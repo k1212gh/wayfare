@@ -93,6 +93,94 @@ def test_no_list_view_when_below_threshold():
     assert MIN_LIST_VIEW_SIZE >= 3
 
 
+def test_bottom_nav_row_megacoffee_5tabs():
+    """메가커피 하단 5탭 (홈/이벤트/메가오더/선물하기/전체메뉴) 형태:
+    - parent 가 모두 다른 wrapper View
+    - clickable=False
+    - 화면 하단 (y2 ≈ 2315 / 2400 = 0.965)
+    - 동일 height (34px)
+    R5 의 _detect_bottom_nav_row 가 5개 모두 list_view 으로 인정해야."""
+    # views[0] = root (screen size 1080x2400)
+    views = [
+        {"class": "FrameLayout", "parent_index": -1, "clickable": False,
+         "bounds": [0, 0, 1080, 2400], "text": "", "content_desc": ""},
+    ]
+    # 5 nav tabs — 각자 다른 parent_index (메가커피 실측: 70/73/76/79/82)
+    tab_data = [(70, "홈"), (73, "이벤트"), (76, "메가오더"),
+                (79, "선물하기"), (82, "전체메뉴")]
+    for idx, (pidx, label) in enumerate(tab_data, start=1):
+        views.append({
+            "class": "android.widget.TextView",
+            "parent_index": pidx,
+            "parent_class": "android.view.View",
+            "clickable": False,
+            "bounds": [96 + idx * 192, 2281, 120 + idx * 192, 2315],  # height=34
+            "text": label,
+            "content_desc": "",
+        })
+
+    groups = detect_list_views(views)
+    nav_groups = [g for g in groups if g["pattern"] == "bottom_nav_row"]
+    assert len(nav_groups) == 1, f"expected 1 bottom_nav_row group, got: {[g['pattern'] for g in groups]}"
+    assert len(nav_groups[0]["item_indices"]) == 5
+    # 각 nav 탭 view 가 _list_view_group 마킹 받았는지 (is_actionable 이 인정 가능)
+    nav_views = [v for v in views if v.get("_list_view_group", "").startswith("bottom_nav_h")]
+    assert len(nav_views) == 5
+    nav_texts = {v["text"] for v in nav_views}
+    assert nav_texts == {"홈", "이벤트", "메가오더", "선물하기", "전체메뉴"}
+
+
+def test_bottom_nav_row_n_too_small():
+    """N < 3 (header + 1 element 같은 경우) → bottom_nav_row 아님."""
+    views = [
+        {"class": "FrameLayout", "parent_index": -1, "bounds": [0, 0, 1080, 2400],
+         "clickable": False, "text": "", "content_desc": ""},
+        {"class": "android.widget.TextView", "parent_index": 5, "parent_class": "View",
+         "clickable": False, "bounds": [0, 2300, 200, 2330], "text": "홈"},
+        {"class": "android.widget.TextView", "parent_index": 6, "parent_class": "View",
+         "clickable": False, "bounds": [200, 2300, 400, 2330], "text": "설정"},
+    ]
+    groups = detect_list_views(views)
+    bottom = [g for g in groups if g["pattern"] == "bottom_nav_row"]
+    assert bottom == []
+
+
+def test_bottom_nav_row_not_in_bottom_band():
+    """y2 / screen_h < 0.85 (상단 영역) → bottom_nav_row 아님."""
+    views = [
+        {"class": "FrameLayout", "parent_index": -1, "bounds": [0, 0, 1080, 2400],
+         "clickable": False, "text": "", "content_desc": ""},
+    ]
+    # y2=200 / 2400 = 0.083 (상단)
+    for i, label in enumerate(["A", "B", "C", "D"]):
+        views.append({
+            "class": "android.widget.TextView", "parent_index": 10 + i,
+            "parent_class": "View", "clickable": False,
+            "bounds": [i * 200, 100, (i + 1) * 200, 200], "text": label,
+        })
+    groups = detect_list_views(views)
+    bottom = [g for g in groups if g["pattern"] == "bottom_nav_row"]
+    assert bottom == []
+
+
+def test_bottom_nav_row_too_many_n():
+    """N > 7 (일반 list) → bottom_nav_row 아님 (다른 패턴이 잡거나 무시)."""
+    views = [
+        {"class": "FrameLayout", "parent_index": -1, "bounds": [0, 0, 1080, 2400],
+         "clickable": False, "text": "", "content_desc": ""},
+    ]
+    # 8 tabs at bottom, all same height
+    for i in range(8):
+        views.append({
+            "class": "android.widget.TextView", "parent_index": 20 + i,
+            "parent_class": "View", "clickable": False,
+            "bounds": [i * 130, 2280, (i + 1) * 130, 2310], "text": f"t{i}",
+        })
+    groups = detect_list_views(views)
+    bottom = [g for g in groups if g["pattern"] == "bottom_nav_row"]
+    assert bottom == []
+
+
 def test_string_bounds_does_not_crash():
     """view_tree_parser 가 어떤 view 의 bounds 를 '[x1,y1][x2,y2]' string 으로 줄 때
     list_view_detector 가 TypeError 안 내고 처리. (2026-05-01 메가커피 426cc2ea

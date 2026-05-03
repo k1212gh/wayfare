@@ -116,9 +116,16 @@ function QualityCards({ quality }: { quality: NonNullable<Tour['quality']> }) {
   const reachPct = quality.total_nodes > 0
     ? Math.round((quality.reachable_count / quality.total_nodes) * 100)
     : 0;
-  const actPct = quality.total_nodes > 0
-    ? Math.round((quality.actionable_nodes / quality.total_nodes) * 100)
-    : 0;
+  // 2026-05-03 (P1): user-facing 분모 우선. relevant_total 있으면 그 비율,
+  // 없으면 (이전 잡) 기존 total_nodes 분모. 메가커피 같은 manifest 큰 앱에서
+  // 외부 OAuth/Bridge 가 강제로 분모 부풀리던 회귀 정확화.
+  const actBase = (quality.relevant_total && quality.relevant_total > 0)
+    ? quality.relevant_total
+    : quality.total_nodes;
+  const actCount = (quality.relevant_actionable !== undefined)
+    ? quality.relevant_actionable
+    : quality.actionable_nodes;
+  const actPct = actBase > 0 ? Math.round((actCount / actBase) * 100) : 0;
   const planPct = quality.actionable_nodes > 0
     ? Math.round((quality.plannable_nodes / quality.actionable_nodes) * 100)
     : 0;
@@ -133,10 +140,12 @@ function QualityCards({ quality }: { quality: NonNullable<Tour['quality']> }) {
     },
     {
       label: 'Actionable',
-      main: `${quality.actionable_nodes}`,
-      sub: `${actPct}% — 사용자 조작 가능`,
+      main: `${actCount}`,
+      sub: `${actPct}% / ${actBase} user-facing — 조작 가능`,
       tone: 'default' as const,
-      title: 'widgets / chip_groups / primary_affordances 가 있는 노드',
+      title: (quality.relevant_total && quality.relevant_total > 0)
+        ? `user-facing (capture_priority='A') ${actBase} 중 actionable ${actCount} (${actPct}%). 외부 OAuth/Bridge/Hidden 류는 분모에서 제외.`
+        : 'widgets / chip_groups / primary_affordances 가 있는 노드 / 전체 노드 수',
     },
     {
       label: 'Plannable',

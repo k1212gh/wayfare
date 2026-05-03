@@ -59,6 +59,80 @@ def _bounds_height(bounds) -> int:
     return 0
 
 
+def _bounds_y2(bounds) -> int:
+    """bounds 의 y2 (하단 y 좌표). list 또는 string 모두 처리."""
+    if isinstance(bounds, list) and len(bounds) >= 4:
+        try:
+            return int(bounds[3])
+        except (TypeError, ValueError):
+            return 0
+    if isinstance(bounds, str):
+        import re as _re
+        m = _re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds)
+        if m:
+            return int(m.group(4))
+    return 0
+
+
+def _detect_bottom_nav_row(views: list[dict], screen_h: int) -> list[dict]:
+    """화면 하단 (y2/screen_h ≥ 0.85) 의 동일 height + class TextView sibling row → bottom_nav_row.
+
+    2026-05-03 (R5): 메가커피 같은 webview 앱은 하단 5탭 (홈/이벤트/메가오더/
+    선물하기/전체메뉴) 이 모두 clickable=False + parent=android.view.View +
+    cls=TextView 로 노출. 각 탭의 parent_index 가 다르므로 기존 sibling bucket
+    매칭 실패. **그러나 화면 하단 + 동일 height + 같은 row pattern** 은 명확히
+    nav. 이 휴리스틱으로 감지.
+
+    조건:
+      - y2 / screen_h ≥ 0.85 (하단 15% 영역)
+      - cls 동일 (보통 TextView)
+      - bounds.height 동일 ±4px
+      - text 또는 content_desc 비어있지 않음
+      - 3 ≤ N ≤ 7 (nav 탭은 보통 3-5개. 7 초과면 일반 list_view 가능성)
+
+    반환: [{group_id, container_class, item_indices, pattern: 'bottom_nav_row'}]
+    """
+    if not views or screen_h <= 0:
+        return []
+    bottom_band_threshold = int(screen_h * 0.85)
+    candidates: list[tuple[int, dict]] = []  # (idx, view)
+    for i, v in enumerate(views):
+        text = (v.get("text") or "").strip()
+        desc = (v.get("content_desc") or "").strip()
+        if not (text or desc):
+            continue
+        cls = str(v.get("class", "")).split(".")[-1]
+        if cls != "TextView":
+            continue
+        y2 = _bounds_y2(v.get("bounds"))
+        if y2 < bottom_band_threshold:
+            continue
+        candidates.append((i, v))
+
+    if len(candidates) < MIN_LIST_VIEW_SIZE:
+        return []
+
+    # 같은 height bucket 으로 그룹화 (±4px 허용)
+    by_height: dict[int, list[int]] = defaultdict(list)
+    for i, v in candidates:
+        h = _bounds_height(v.get("bounds"))
+        # 4px 단위 bucket — 동일 height 인접 처리
+        bucket = h // 5
+        by_height[bucket].append(i)
+
+    groups: list[dict] = []
+    for bucket, idxs in by_height.items():
+        if not (MIN_LIST_VIEW_SIZE <= len(idxs) <= 7):
+            continue
+        groups.append({
+            "group_id": f"bottom_nav_h{bucket}",
+            "container_class": "TextView",
+            "item_indices": idxs,
+            "pattern": "bottom_nav_row",
+        })
+    return groups
+
+
 def detect_list_views(views: list[dict]) -> list[dict]:
     """동일 sibling pattern N>=3 자식 묶음을 list_view 으로 마킹.
 
@@ -157,9 +231,21 @@ def detect_list_views(views: list[dict]) -> list[dict]:
             "pattern": "sibling_uniform",
         })
 
-    # 2026-05-02 (F2): group 멤버 view 들에 _list_view_group 마킹.
-    # is_actionable 이 nav-tab 같은 non-clickable text view 도 인정하도록.
-    # in-place mutation (views list 자체를 변경 — caller 가 같은 list 객체 사용 시 반영).
+    # 3) Bottom nav row (R5, 2026-05-03) — 화면 하단 sibling text row.
+    # 메가커피 같은 generic View parent 안 nav 탭 직격 — 1)/2) 에서 못 잡은
+    # 경우만 보완.
+    if views:
+        screen_h = _bounds_y2(views[0].get("bounds"))
+        if screen_h > 0:
+            bottom_groups = _detect_bottom_nav_row(views, screen_h)
+            for bg in bottom_groups:
+                already = {idx for g in groups for idx in g["item_indices"]}
+                bg["item_indices"] = [i for i in bg["item_indices"] if i not in already]
+                if len(bg["item_indices"]) >= MIN_LIST_VIEW_SIZE:
+                    groups.append(bg)
+
+    # group 멤버 view 들에 in-place 마킹 — is_actionable 이 nav-tab/sibling 같은
+    # non-clickable text view 도 인정하도록.
     for g in groups:
         for idx in g["item_indices"]:
             if 0 <= idx < len(views):

@@ -50,13 +50,16 @@ export interface Completeness {
 export interface TourQuality {
   total_nodes: number;
   total_edges: number;
-  actionable_nodes: number;     // 사용자가 탭/입력 가능한 노드
+  actionable_nodes: number;     // 사용자가 탭/입력 가능한 노드 (전체 분모)
   plannable_nodes: number;      // actionable + 라벨링 완료
   reachable_count: number;      // entry 에서 도달 가능
   validation_issues: number;
   high_issues: number;          // severity=high (orphan / 심각한 issue)
-  activity_coverage: number | null;  // alias — completeness.manifest_reachability.launched_ratio
+  activity_coverage: number | null;
   completeness?: Completeness | null;
+  // 2026-05-03 (P1) — user-facing 만 분모 (외부 OAuth/Bridge/Hidden 제외)
+  relevant_total?: number;
+  relevant_actionable?: number;
 }
 
 export interface Tour {
