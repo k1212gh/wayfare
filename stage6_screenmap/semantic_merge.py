@@ -181,7 +181,21 @@ def _is_mergeable(
                 if dist > 0 and sa and sb and sa != sb:
                     pass  # 라벨 / 엣지 검사로 진행 (Tier 1 / 2)
                 else:
-                    return True
+                    # P0-9 (2026-05-04): label guard.
+                    # webview-dominant 앱 (메가커피류) 은 같은 WebActivity 컨테이너
+                    # 안에서 URL/title 만 바뀌어 structure_str 도 같고 phash 도 가까움.
+                    # 그러면 위 sa==sb 분기로 통과해서 merge 되는데, 그 결과
+                    # "주문 영수증" / "이벤트 상세" / "스탬프 적립 현황" 처럼 명백히
+                    # 다른 화면들이 한 노드로 뭉침. 7fe3f44a 잡: 271 raw → 32 final
+                    # (89% 압축) 으로 use_gift_voucher 회귀 발생.
+                    # → label 명백히 다르면 (둘 다 있고 정규화 후 다름) Tier A 거부,
+                    #   Tier 1/2 로 fallthrough 해서 라벨/엣지 검사.
+                    la_n = _normalize_label(a.get("label", ""))
+                    lb_n = _normalize_label(b.get("label", ""))
+                    if la_n and lb_n and la_n != lb_n:
+                        pass  # Tier 1/2 로 진행 — 동일 라벨이면 거기서 merge
+                    else:
+                        return True
 
     la = _normalize_label(a.get("label", ""))
     lb = _normalize_label(b.get("label", ""))
@@ -369,6 +383,14 @@ def semantic_merge(screenmap: dict, threshold: float = 0.85,
                 if not ph_b:
                     continue
                 if _phash_distance(ph_a, ph_b) != 0:
+                    continue
+                # P0-9 (2026-05-04): cross-bucket label guard — webview 같이
+                # 같은 activity + 같은 phash 라도 LLM 이 다른 라벨을 단 화면이면
+                # 다른 화면. 7fe3f44a 잡 회귀의 진짜 원인 (Tier A 가드 추가
+                # 후에도 여기서 합쳐졌음).
+                la_n = _normalize_label(a.get("label", ""))
+                lb_n = _normalize_label(b.get("label", ""))
+                if la_n and lb_n and la_n != lb_n:
                     continue
                 # Cross-bucket pixel-identical merge
                 keeper, goner = _prefer_primary(a, b)

@@ -9,8 +9,9 @@ from stage3_walk.signature_stabilizer import (
 )
 from stage3_walk.view_tree_parser import extract_fragment
 from stage6_screenmap.semantic_merge import (
-    _label_similarity, _normalize_label, semantic_merge,
+    _label_similarity, _normalize_label, semantic_merge, _is_mergeable,
 )
+import stage6_screenmap.semantic_merge as _sm_mod
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -288,6 +289,100 @@ def test_semantic_merge_rewrites_edges():
     # Both edges collapse to (c → a, navigate, tap) — coalesce
     assert len(edges) == 1
     assert edges[0]["to"] == "a"
+
+
+# ─── P0-9 (2026-05-04) — Tier A label guard ──────────────
+
+
+def _seed_phash(monkeypatch, mapping: dict[str, str]) -> None:
+    """_compute_phash 가 디스크 안 거치고 mapping 의 hex 반환하게 한다."""
+    monkeypatch.setattr(_sm_mod, "_compute_phash",
+                        lambda path: mapping.get(path, ""))
+
+
+def test_tier_a_blocks_when_labels_differ_despite_phash_close(monkeypatch):
+    """webview-dominant 시나리오 — structure_str 같고 phash 거리 0 인데
+    label 명백히 다른 두 노드는 Tier A 가 거부, Tier 1/2 fallthrough.
+    7fe3f44a 잡의 \"주문 영수증\" vs \"이벤트 상세\" 같은 케이스."""
+    same_struct = "X|Y|Z"
+    same_phash = "0" * 16  # phash distance = 0
+    a = {"screen_id": "a", "activity": "WebActivity", "node_type": "activity",
+         "label": "주문 영수증", "structure_str": same_struct,
+         "screenshot_ref": "/tmp/a.png"}
+    b = {"screen_id": "b", "activity": "WebActivity", "node_type": "activity",
+         "label": "이벤트 상세", "structure_str": same_struct,
+         "screenshot_ref": "/tmp/b.png"}
+    _seed_phash(monkeypatch, {"/tmp/a.png": same_phash, "/tmp/b.png": same_phash})
+    # label 다름 → Tier 1 거부, Tier 2 도 sim 낮아 거부 → 전체 거부
+    assert _is_mergeable(a, b, edges=[], threshold=0.85) is False
+
+
+def test_tier_a_still_merges_when_one_label_empty(monkeypatch):
+    """label 한쪽만 비었으면 (la or lb 가 falsy) Tier A 의 label guard 통과
+    → 기존 동작 보존 (LLM 라벨 누락된 노드는 합쳐도 OK)."""
+    a = {"screen_id": "a", "activity": "WebActivity", "node_type": "activity",
+         "label": "주문 영수증", "structure_str": "X",
+         "screenshot_ref": "/tmp/a.png"}
+    b = {"screen_id": "b", "activity": "WebActivity", "node_type": "activity",
+         "label": "", "structure_str": "X",
+         "screenshot_ref": "/tmp/b.png"}
+    _seed_phash(monkeypatch, {"/tmp/a.png": "0" * 16, "/tmp/b.png": "0" * 16})
+    assert _is_mergeable(a, b, edges=[], threshold=0.85) is True
+
+
+def test_tier_a_still_merges_when_labels_match(monkeypatch):
+    """label 동일 + phash 같음 → Tier A 정상 merge 유지."""
+    a = {"screen_id": "a", "activity": "X", "node_type": "activity",
+         "label": "Settings", "structure_str": "S",
+         "screenshot_ref": "/tmp/a.png"}
+    b = {"screen_id": "b", "activity": "X", "node_type": "activity",
+         "label": "Settings", "structure_str": "S",
+         "screenshot_ref": "/tmp/b.png"}
+    _seed_phash(monkeypatch, {"/tmp/a.png": "0" * 16, "/tmp/b.png": "0" * 16})
+    assert _is_mergeable(a, b, edges=[], threshold=0.85) is True
+
+
+def test_tier_a_label_guard_does_not_break_byte_identical_screenshot(monkeypatch):
+    """같은 screenshot_ref (재사용) — _is_mergeable 의 ss_a == ss_b 분기는
+    phash 검사 자체를 skip 하므로 label guard 와 무관. Tier 1/2 로 진행."""
+    a = {"screen_id": "a", "activity": "X", "node_type": "activity",
+         "label": "Home A", "screenshot_ref": "/tmp/same.png"}
+    b = {"screen_id": "b", "activity": "X", "node_type": "activity",
+         "label": "Home B", "screenshot_ref": "/tmp/same.png"}
+    # ss_a == ss_b 라 phash 검사 skip — label 다르고 sim 낮으니 거부 (정상)
+    assert _is_mergeable(a, b, edges=[], threshold=0.85) is False
+
+
+def test_tier_a_label_guard_falls_through_when_normalized_labels_match(monkeypatch):
+    """label 표면은 다르지만 normalize 후 같으면 (예: 'Settings ' vs ' SETTINGS ')
+    Tier A 거부 안 하고 Tier 1 이 매칭."""
+    a = {"screen_id": "a", "activity": "X", "node_type": "activity",
+         "label": "Settings ", "structure_str": "S",
+         "screenshot_ref": "/tmp/a.png"}
+    b = {"screen_id": "b", "activity": "X", "node_type": "activity",
+         "label": " SETTINGS ", "structure_str": "S",
+         "screenshot_ref": "/tmp/b.png"}
+    _seed_phash(monkeypatch, {"/tmp/a.png": "0" * 16, "/tmp/b.png": "0" * 16})
+    # normalize 후 동일 → la_n == lb_n → Tier A 통과 (return True)
+    assert _is_mergeable(a, b, edges=[], threshold=0.85) is True
+
+
+def test_tier_a_webview_three_distinct_labels_stay_separate(monkeypatch):
+    """7fe3f44a 회귀 시나리오 통합 — webview 3개가 모두 phash≈0 + structure 동일
+    인데 label 다름 → 합쳐지지 않고 3개 그대로."""
+    nodes = [
+        {"screen_id": f"web_{i}", "activity": "WebActivity",
+         "node_type": "activity", "label": label,
+         "structure_str": "WEBVIEW|FRAME",
+         "screenshot_ref": f"/tmp/web_{i}.png"}
+        for i, label in enumerate(["주문 영수증", "이벤트 상세", "스탬프 적립 현황"])
+    ]
+    screenmap = {"screen_map": {"graph": {"nodes": nodes, "edges": []}}}
+    _seed_phash(monkeypatch, {n["screenshot_ref"]: "0" * 16 for n in nodes})
+    semantic_merge(screenmap)
+    surviving = screenmap["screen_map"]["graph"]["nodes"]
+    assert len(surviving) == 3, \
+        f"webview 3 distinct-label nodes 가 합쳐짐: {len(surviving)} 남음"
 
 
 def test_semantic_merge_never_touches_system_entry():
