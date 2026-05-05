@@ -422,6 +422,8 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                     canonical_id = state.get("canonical_id") or "auth_screen"
                     if not hasattr(self, "_auth_screens_seen"):
                         self._auth_screens_seen: set[str] = set()
+                    if not hasattr(self, "_auth_consecutive_count"):
+                        self._auth_consecutive_count: dict[str, int] = {}
                     self._auth_screens_seen.add(canonical_id)
                     # 진입 액션 blacklist (reuse external_blacklist set)
                     if self.action_history:
@@ -431,14 +433,70 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                             self.external_blacklist.add(last_desc)
                     self.trap_stats["auth_backoff"] = \
                         self.trap_stats.get("auth_backoff", 0) + 1
+                    # P0-10b (2026-05-05): 같은 canonical 에서 auth_backoff 가
+                    # ≥3회 연속 발동하면 BACK 이 같은 화면으로 떨어지는
+                    # dead-lock (37ebca02 잡 — 507회 stall). force-stop +
+                    # 새 launcher 로 끊는다. 같은 auth screen 더 이상 안 가게
+                    # last_desc 외 추가 blacklist 도 효과 X 라 강제 종료가 합리적.
+                    cnt = self._auth_consecutive_count.get(canonical_id, 0) + 1
+                    self._auth_consecutive_count[canonical_id] = cnt
                     logger.info(
-                        "[auth_backoff] auth screen detected on %s — back + blacklist (%d so far)",
-                        canonical_id, self.trap_stats["auth_backoff"],
+                        "[auth_backoff] auth on %s — back + blacklist (consec=%d, total=%d)",
+                        canonical_id, cnt, self.trap_stats["auth_backoff"],
                     )
+                    if cnt >= 3:
+                        # P0-10c (2026-05-05): L3 영구 blocked — force-stop +
+                        # relaunch 후에도 같은 canonical 에 또 도달하는 절대
+                        # 해결 불가 케이스 (KB ARS 결제 + 취소 다이얼로그 같이
+                        # BACK / 키보드 입력 / 우회 모두 안 통하는 외부 게이트
+                        # 웨이) 를 영구 blocked 로 마킹. 이후 같은 canonical
+                        # 도달 시 즉시 BACK + 진입 액션 누적 blacklist.
+                        if not hasattr(self, "_permanent_blocked_canonicals"):
+                            self._permanent_blocked_canonicals: set[str] = set()
+                        if canonical_id in self._permanent_blocked_canonicals:
+                            logger.warning(
+                                "[auth_backoff] canonical %s already permanently blocked but reached again — likely fixture/walk loop",
+                                canonical_id,
+                            )
+                        self._permanent_blocked_canonicals.add(canonical_id)
+                        logger.info(
+                            "[auth_backoff] dead-lock on %s (consec %d) — force-stop + relaunch + permanent block",
+                            canonical_id, cnt,
+                        )
+                        try:
+                            subprocess.run(
+                                ["adb", "-s", self.device_serial, "shell",
+                                 "am", "force-stop", package],
+                                capture_output=True, timeout=5,
+                            )
+                            time.sleep(0.8)
+                            subprocess.run(
+                                ["adb", "-s", self.device_serial, "shell",
+                                 "am", "start", "-n", f"{package}/{main_activity}"],
+                                capture_output=True, timeout=15,
+                            )
+                            time.sleep(2.0)
+                        except Exception as e:
+                            logger.warning("[auth_backoff] force-stop failed: %s", e)
+                        self._auth_consecutive_count[canonical_id] = 0
+                        self.back_count = 0
+                        self.stall_count = 0
+                        # 너무 많이 발동하면 아예 종료
+                        if self.trap_stats["auth_backoff"] >= 30:
+                            logger.warning(
+                                "[auth_backoff] %d total escapes — terminating",
+                                self.trap_stats["auth_backoff"],
+                            )
+                            self._term_reason = "auth_backoff_exhausted"
+                            break
+                        event_count += 1
+                        continue
                     if not self._press_back():
                         # main-activity 라 BACK 거부 → soft restart 로 끊음
                         self._soft_restart(package, main_activity)
                         self.back_count = 0
+                        # soft_restart 가 같은 화면 다시 띄우면 위 force-stop
+                        # 분기로 자연 진입
                     event_count += 1
                     continue
                 # 기존 PAUSE 경로 (AUTH_AUTO_BACKOFF=0)
@@ -585,6 +643,34 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             # Track visits by canonical ID
             self.visited_structures[canonical_id] += 1
             self.visited_screens.add(canonical_id)
+
+            # P0-10b: 정상 (auth 아닌) 화면 진입 시 auth consecutive 카운터
+            # reset — 다음에 auth 만나도 fresh start.
+            if hasattr(self, "_auth_consecutive_count") and self._auth_consecutive_count:
+                self._auth_consecutive_count.clear()
+
+            # P0-10c (2026-05-05): 영구 blocked canonical 즉시 BACK.
+            # 절대 탈출 불가 화면 (KB ARS 결제 외부 페이지 + raon 보안 키패드
+            # 같은) 은 한 번 마킹된 후 다시 도달해도 walk 시간 안 쓰게.
+            if canonical_id in getattr(self, "_permanent_blocked_canonicals", set()):
+                self.trap_stats["permanent_blocked_revisit"] = \
+                    self.trap_stats.get("permanent_blocked_revisit", 0) + 1
+                # 진입 액션도 blacklist (학습 누적)
+                if self.action_history:
+                    last_desc = (self.action_history[-1].get("event_desc")
+                                 or self.action_history[-1].get("desc", ""))
+                    if last_desc:
+                        self.external_blacklist.add(last_desc)
+                logger.info(
+                    "[blocked] revisit %s — back + blacklist (revisits=%d)",
+                    canonical_id,
+                    self.trap_stats["permanent_blocked_revisit"],
+                )
+                if not self._press_back():
+                    self._soft_restart(package, main_activity)
+                    self.back_count = 0
+                event_count += 1
+                continue
 
             # P0-5 (2026-05-04): must_reach 매칭 — 매 dump 시 fixture spec 과
             # 비교. 활성 activity / view text 가 spec 의 activity_substr /
@@ -1882,6 +1968,12 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                 # 또는 AUTH_AUTO_BACKOFF=0 모드.
                 "auth_backoff_count": self.trap_stats.get("auth_backoff", 0),
                 "auth_screens_seen": sorted(getattr(self, "_auth_screens_seen", set())),
+                "permanent_blocked_canonicals": sorted(
+                    getattr(self, "_permanent_blocked_canonicals", set())
+                ),
+                "permanent_blocked_revisits": self.trap_stats.get(
+                    "permanent_blocked_revisit", 0,
+                ),
                 "must_reach": {
                     "total": len(self.must_reach_specs),
                     "hit": sorted(self.must_reach_hit),
