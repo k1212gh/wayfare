@@ -251,3 +251,30 @@ def test_picker_no_collision_with_fab():
     # 둘 다 nav, button, rid +0.5 받음. fab signal +2 vs picker +2 — 같음.
     # fab 는 NAV_KEYWORDS 'add' 매치 +2 추가 → 더 높음
     assert s_fab > s_picker, f"fab 가 picker 보다 높아야 (FAB 가 진짜 entry): fab={s_fab} picker={s_picker}"
+
+
+# ─── P1-6 (2026-05-05) — R5+ score boost ─────────────────────
+
+
+def test_p1_6_bottom_nav_list_view_score_boost():
+    """_list_view_group='bottom_nav_*' prefix view 는 +3 score boost.
+    메가오더 탭이 이벤트 wrapper 점수에 밀리는 패턴 차단."""
+    e = XMLViewTreeReader()
+    base = _v(rid="tab_menu_megaorder", text="메가오더", cls="TextView",
+              clickable=False, bounds="[432,2127][648,2337]")
+    s_no_lg = e.score_action(base, _ctx())
+    boosted = {**base, "_list_view_group": "bottom_nav_h6"}
+    s_with_lg = e.score_action(boosted, _ctx())
+    assert s_with_lg - s_no_lg >= 3.0, \
+        f"bottom_nav list_view boost +3 expected, got Δ={s_with_lg - s_no_lg}"
+
+
+def test_p1_6_other_list_view_groups_no_boost():
+    """다른 list_view group (recyclerview/sibling_uniform) 은 boost 안 받음.
+    bottom_nav_row prefix 만 적용."""
+    e = XMLViewTreeReader()
+    base = _v(text="아이템", cls="TextView", clickable=False)
+    boosted = {**base, "_list_view_group": "recyclerview_h12"}
+    s_no_lg = e.score_action(base, _ctx())
+    s_with_lg = e.score_action(boosted, _ctx())
+    assert abs(s_with_lg - s_no_lg) < 0.01, "non-bottom_nav list_view 은 boost X"

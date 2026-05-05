@@ -278,6 +278,14 @@ class XMLViewTreeReader(ViewTreeReader):
             if any(kw in combined_for_kw for kw in task_keywords):
                 score += 2.0
 
+        # P1-6 (2026-05-05): R5+ score boost — list_view_detector 가 마킹한
+        # bottom_nav_row 멤버는 진짜 사용자 navigation entry. 0a36c524 잡 분석
+        # 결과 메가오더 탭 score 6.5 vs 이벤트 webview wrapper score 7.0 으로
+        # walk 가 이벤트로 빠지는 패턴 → +3 boost 로 우선화.
+        lg = (view.get("_list_view_group") or "")
+        if isinstance(lg, str) and lg.startswith("bottom_nav"):
+            score += 3.0
+
         if view.get("scrollable") and not view.get("clickable"):
             score -= 1.0  # scroll-only
 

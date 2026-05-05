@@ -372,10 +372,16 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         same_hash_streak = 0
         stall_resets = 0  # 무한루프 방지 — 한 run 에 최대 3회만 reset
 
+        # P0-5b (2026-05-04): break 경로별 종료 사유 기록 — _save_results 가
+        # 정확히 분류하도록 변수에 명시. 기존 fallback 분류는 잔존하지만 우선순위
+        # 가 낮음.
+        self._term_reason: str | None = None
+
         while event_count < self.max_events and (time.time() - start_time) < self.timeout:
             # 0. Cancellation check (cooperative, from /api/tours/{id}/stop)
             if self._cancel_flag.exists():
                 logger.info("Cancel flag detected — stopping walk at event %d", event_count)
+                self._term_reason = "cancelled"
                 break
 
             # P0-5 (2026-05-04): must_reach 도달률 ≥ coverage_target 이면 종료.
@@ -389,26 +395,31 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                         len(self.must_reach_hit), len(self.must_reach_specs),
                         hit_ratio * 100, self.coverage_target * 100,
                     )
+                    self._term_reason = "coverage_target_reached"
                     break
 
             # 0a. Pause check (manual or auto-detected login) — wait until user Resumes
             if self._paused_file.exists():
                 if not self._wait_for_resume():
+                    self._term_reason = "paused_then_failed"
                     break  # cancelled during pause or timed out
 
             # 1. Capture current state
             state = self._capture_screen(event_count)
             if not state:
+                self._term_reason = "capture_failed"
                 break
 
             # 1b. Auto-detect login / auth screen → request user input
             if self._detect_user_input_needed(state):
                 self._request_user_input(state)
                 if not self._wait_for_resume():
+                    self._term_reason = "auth_pause_failed"
                     break
                 # after resume, re-capture to avoid stale state
                 state = self._capture_screen(event_count)
                 if not state:
+                    self._term_reason = "capture_failed_after_resume"
                     break
 
             # 1a. Foreground guard: if current activity belongs to a different app
@@ -436,6 +447,7 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                                     activity, package, out_of_app_count)
                     if out_of_app_count >= 5:
                         logger.error("Gave up: foreground never returned to %s", package)
+                        self._term_reason = "out_of_app_giveup"
                         break
                     try:
                         subprocess.run(["adb", "-s", self.device_serial, "shell",
@@ -862,6 +874,45 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                             float(best.get("score", 0) or 0),
                         )
                         best = kw_best
+
+            # P1-3 (2026-05-05): must_reach priority — TASK-KW 보다 더 강한
+            # override. 미 hit must_reach spec 의 text_substr 에 매칭되는
+            # 액션이 있으면 강제 best. 90d2f770 잡에서 must_reach 2/8 (25%)
+            # 만 도달했던 패턴 — task_keyword 는 일반적이고 must_reach 는
+            # 잡 KPI 정의이므로 spec 직격이 합리적.
+            if self.must_reach_specs:
+                tried_set = self.tried_actions.get(canonical_id, set())
+                unhit_substrs: list[str] = []
+                for spec in self.must_reach_specs:
+                    if spec["description"] in self.must_reach_hit:
+                        continue
+                    unhit_substrs.extend(
+                        (spec["match_any"].get("text_substr") or [])
+                    )
+                if unhit_substrs:
+                    mr_hits: list[dict] = []
+                    for a in actions:
+                        if a.get("desc", "") in tried_set:
+                            continue
+                        v = a.get("view") or a
+                        text_blob = (
+                            (v.get("text", "") or "") + " "
+                            + (v.get("content_desc", "") or "")
+                        ).lower()
+                        if any(s.lower() in text_blob for s in unhit_substrs):
+                            mr_hits.append(a)
+                    if mr_hits:
+                        mr_hits.sort(key=lambda x: -float(x.get("score", 0) or 0))
+                        mr_best = mr_hits[0]
+                        if mr_best is not best:
+                            logger.info(
+                                "[MUST-REACH] override on %s — desc=%r score=%.1f (was %.1f)",
+                                canonical_id,
+                                (mr_best.get("desc") or "")[:40],
+                                float(mr_best.get("score", 0) or 0),
+                                float(best.get("score", 0) or 0),
+                            )
+                            best = mr_best
 
             # 4b. RecyclerView/list trap: cap list-item taps per screen.
             # After 3 item taps on the same canonical, force a scroll-down so
@@ -1763,8 +1814,12 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
     def _save_results(self, package: str, elapsed: float, event_count: int) -> dict:
         """Save walk results in DroidBot-compatible format."""
         # P0-5 (2026-05-04): termination_reason 분류 — 이슈 1 (무한루프 검증)
-        # 의 진단 데이터.
-        if self._cancel_flag.exists():
+        # 의 진단 데이터. P0-5b (2026-05-05): break 경로별 self._term_reason
+        # 우선, 없으면 while 조건으로 fallback.
+        explicit = getattr(self, "_term_reason", None)
+        if explicit:
+            term_reason = explicit
+        elif self._cancel_flag.exists():
             term_reason = "cancelled"
         elif self.must_reach_specs and \
                 len(self.must_reach_hit) / len(self.must_reach_specs) >= self.coverage_target:
