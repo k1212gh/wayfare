@@ -47,12 +47,14 @@ tasks:
     goal: "음료 선택 → 사이즈/샷/시럽 옵션 → 장바구니 담기"
     expected_screens:
       - description: "음료 상세 / 옵션 선택"
+        must_reach: true
         match_any:
           activity_substr: ["ProductDetailActivity", "MenuDetailActivity",
                             "BeverageDetailActivity", "OptionActivity"]
           functional_category: ["detail", "form"]
           text_substr: ["메뉴 옵션", "상품 상세", "옵션 선택"]
       - description: "장바구니"
+        must_reach: true
         match_any:
           activity_substr: ["CartActivity", "BasketActivity"]
           functional_category: ["list", "form"]
@@ -78,6 +80,7 @@ tasks:
     goal: "매장 찾기 — 위치 기반 또는 매장 검색"
     expected_screens:
       - description: "매장 리스트 / 매장 검색"
+        must_reach: true
         match_any:
           activity_substr: ["StoreActivity", "StoreListActivity",
                             "ShopActivity", "FindStoreActivity",
@@ -89,6 +92,7 @@ tasks:
     goal: "멤버십 / 적립 / 쿠폰 화면 진입"
     expected_screens:
       - description: "멤버십 / 마이페이지"
+        must_reach: true
         match_any:
           activity_substr: ["MembershipActivity", "MyPageActivity",
                             "ProfileActivity", "PointActivity",
@@ -100,6 +104,7 @@ tasks:
     goal: "로그인 또는 회원가입 진입"
     expected_screens:
       - description: "로그인 / 인증 화면"
+        must_reach: true
         match_any:
           activity_substr: ["LoginActivity", "AuthActivity", "SignInActivity",
                             "SignUpActivity"]
@@ -110,6 +115,7 @@ tasks:
     goal: "기프티콘 / 쿠폰 코드 입력해서 사용"
     expected_screens:
       - description: "쿠폰함 / 기프티콘 리스트"
+        must_reach: true
         match_any:
           activity_substr: ["CouponActivity", "VoucherActivity", "GiftActivity"]
           functional_category: ["list"]
