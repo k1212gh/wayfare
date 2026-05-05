@@ -411,7 +411,37 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                 break
 
             # 1b. Auto-detect login / auth screen → request user input
+            # P0-10 (2026-05-05): AUTH_AUTO_BACKOFF (기본 ON) — 메가커피 처럼
+            # 본인인증/SMS/raon 보안 키패드 같이 자동화 불가능 wall 만나면
+            # PAUSE 대신 BACK + blacklist + walk 계속. 사용자 manual resume
+            # 기다리느라 17분 idle 종료되는 dd79a51c 패턴 차단. ENV=0 으로
+            # 끄면 기존 PAUSE 정책 유지 (사용자 직접 로그인 가능 시).
             if self._detect_user_input_needed(state):
+                auto_backoff = os.environ.get("AUTH_AUTO_BACKOFF", "1") != "0"
+                if auto_backoff:
+                    canonical_id = state.get("canonical_id") or "auth_screen"
+                    if not hasattr(self, "_auth_screens_seen"):
+                        self._auth_screens_seen: set[str] = set()
+                    self._auth_screens_seen.add(canonical_id)
+                    # 진입 액션 blacklist (reuse external_blacklist set)
+                    if self.action_history:
+                        last_desc = (self.action_history[-1].get("event_desc")
+                                     or self.action_history[-1].get("desc", ""))
+                        if last_desc:
+                            self.external_blacklist.add(last_desc)
+                    self.trap_stats["auth_backoff"] = \
+                        self.trap_stats.get("auth_backoff", 0) + 1
+                    logger.info(
+                        "[auth_backoff] auth screen detected on %s — back + blacklist (%d so far)",
+                        canonical_id, self.trap_stats["auth_backoff"],
+                    )
+                    if not self._press_back():
+                        # main-activity 라 BACK 거부 → soft restart 로 끊음
+                        self._soft_restart(package, main_activity)
+                        self.back_count = 0
+                    event_count += 1
+                    continue
+                # 기존 PAUSE 경로 (AUTH_AUTO_BACKOFF=0)
                 self._request_user_input(state)
                 if not self._wait_for_resume():
                     self._term_reason = "auth_pause_failed"
@@ -1847,6 +1877,11 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                     self.hash_stats["new_screens"] / max(elapsed, 1) * 60, 2,
                 ),
                 "termination_reason": term_reason,
+                # P0-10: auth wall 회피 카운터 — backoff 가 작동했으면 walk
+                # 가 멈추지 않고 다른 path 탐색했다는 신호. 0 이면 auth 안 만남
+                # 또는 AUTH_AUTO_BACKOFF=0 모드.
+                "auth_backoff_count": self.trap_stats.get("auth_backoff", 0),
+                "auth_screens_seen": sorted(getattr(self, "_auth_screens_seen", set())),
                 "must_reach": {
                     "total": len(self.must_reach_specs),
                     "hit": sorted(self.must_reach_hit),
