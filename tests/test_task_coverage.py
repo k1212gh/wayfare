@@ -120,6 +120,32 @@ def test_extract_keywords_includes_text_substr_terms():
     assert "스탬프" in kws
 
 
+def test_megacoffee_fixture_has_must_reach():
+    """P0-5 (2026-05-04): megacoffee.yaml 의 핵심 화면이 must_reach 마킹된
+    채 로드되어 TapWalker 가 must_reach_specs 에 넣을 수 있는지."""
+    fx = load_fixture("megacoffee")
+    assert fx is not None
+    must_reach_count = 0
+    for t in fx.get("tasks", []):
+        for s in t.get("expected_screens", []):
+            if s.get("must_reach"):
+                must_reach_count += 1
+                assert s.get("match_any"), f"must_reach 인데 match_any 없음: {s}"
+    assert must_reach_count >= 2, \
+        f"메가커피 fixture 에 must_reach 가 ≥2 개 있어야 (현재 {must_reach_count})"
+
+
+def test_megacoffee_fixture_has_sample_inputs():
+    """P0-7 (2026-05-04): EditText 자동 입력용 sample_inputs 정의 확인."""
+    fx = load_fixture("megacoffee")
+    assert fx is not None
+    samples = fx.get("sample_inputs") or {}
+    assert samples, "sample_inputs 정의 없음"
+    # 핵심 키 — search/id/phone — 적어도 하나 있어야 EditText fallback 작동
+    assert any(k in samples for k in ("search", "id", "phone")), \
+        f"sample_inputs 키 부족: {list(samples.keys())}"
+
+
 def test_megacoffee_webview_node_matches_via_text():
     """메가커피 잡 8cbd896a 의 실 노드 — WebActivity sub-node 가
     text_substr 로 task 매칭되는지 검증.

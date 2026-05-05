@@ -207,6 +207,56 @@ class DeviceSessionMixin:
         time.sleep(0.5)
         return True
 
+    def _input_text(self, text: str) -> bool:
+        """P0-7 (2026-05-04): EditText 에 키보드 입력 dispatch.
+
+        adb shell input text 는 공백을 %s 로 받고 한글 등 non-ASCII 는
+        직접 못 친다. 한글은 clipboard paste 로 우회.
+
+        Returns True if dispatched, False on error/empty.
+        """
+        if not text:
+            return False
+        try:
+            # ASCII-only 빠른 경로: input text 직접
+            if text.isascii():
+                # 공백은 %s, single quote escape
+                escaped = text.replace(" ", "%s").replace("'", "\\'")
+                subprocess.run(
+                    ["adb", "-s", self.device_serial, "shell",
+                     "input", "text", escaped],
+                    capture_output=True, timeout=5,
+                )
+            else:
+                # 한글 등: clipboard 사용 (am broadcast 로 paste)
+                # 1) clipboard 채우기 — base64 encode
+                import base64
+                b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
+                # write to a pull-able location; 가장 단순한 방법은
+                # adb input keyevent + char-by-char 가 아니라 clipboard 사용
+                subprocess.run(
+                    ["adb", "-s", self.device_serial, "shell",
+                     f"echo {b64} | base64 -d | tr -d '\\n' > /sdcard/.clip.tmp"],
+                    capture_output=True, timeout=5, shell=False,
+                )
+                subprocess.run(
+                    ["adb", "-s", self.device_serial, "shell",
+                     "am", "broadcast", "-a", "clipper.set",
+                     "-e", "text", text[:200]],
+                    capture_output=True, timeout=5,
+                )
+                # paste keyevent
+                subprocess.run(
+                    ["adb", "-s", self.device_serial, "shell",
+                     "input", "keyevent", "279"],   # KEYCODE_PASTE
+                    capture_output=True, timeout=5,
+                )
+            time.sleep(0.4)
+            return True
+        except Exception as e:
+            logger.debug("[input_text] failed: %s", e)
+            return False
+
     def _soft_restart(self, package: str, main_activity: str) -> None:
         """Home + am start + clear tried_actions. Used when Back would exit the app.
 

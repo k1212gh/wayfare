@@ -34,6 +34,15 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         self.timeout = timeout
         self.max_events = max_events
         self.framework = framework
+        # P0-5 (2026-05-04): coverage_target 활용 — must_reach 화면 도달률
+        # ≥ 이 값이면 timeout 안 기다리고 즉시 종료. 메가커피 잡 30분 idle
+        # 방지 + 일찍 끝난 잡 진단 가능. config.py:49 의 PipelineConfig 기본값
+        # (0.8) 을 따른다.
+        try:
+            from config import PipelineConfig  # type: ignore
+            self.coverage_target = float(PipelineConfig.coverage_target)
+        except Exception:
+            self.coverage_target = 0.8
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
         (self.output_dir / "states").mkdir(exist_ok=True)
@@ -290,16 +299,35 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         # 등장한 명사 (메뉴/장바구니/매장/MY/쿠폰/...) 가 view text 에 hit 시
         # score 보너스. 메가커피/DeskClock 등 fixture 있으면 자동 적용.
         self.task_keywords: list[str] = []
+        # P0-5 (2026-05-04): fixture 의 must_reach 화면들 + 도달 추적.
+        # task_coverage 의 분자/분모 와 별개 — walk 단에서 "필수 화면 N 중 K
+        # 도달" 측정해 coverage_target 도달 시 즉시 종료.
+        self._fixture: dict | None = None
+        self.must_reach_specs: list[dict] = []   # [{description, match_any}, ...]
+        self.must_reach_hit: set[str] = set()    # description 들 (도달한 것)
         try:
             from stage6_screenmap.task_fixture import load_fixture, extract_keywords
             # package 에서 short app id 추출 (예: co.kr.waldlust.megacoffee → megacoffee)
             app_id = package.rsplit(".", 1)[-1] if package else ""
             fix = load_fixture(app_id)
             if fix:
+                self._fixture = fix
                 self.task_keywords = extract_keywords(fix)
                 if self.task_keywords:
                     logger.info("Task fixture keywords loaded (%d): %s",
                                 len(self.task_keywords), self.task_keywords[:8])
+                # must_reach: tasks[*].expected_screens 중 must_reach=True 인 화면
+                for t in (fix.get("tasks") or []):
+                    for s in (t.get("expected_screens") or []):
+                        if s.get("must_reach"):
+                            self.must_reach_specs.append({
+                                "description": s.get("description", "?"),
+                                "match_any": s.get("match_any") or {},
+                            })
+                if self.must_reach_specs:
+                    logger.info("must_reach screens: %d (target=%.0f%%)",
+                                len(self.must_reach_specs),
+                                self.coverage_target * 100)
         except Exception as e:
             logger.debug("Task fixture load failed: %s", e)
 
@@ -349,6 +377,19 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             if self._cancel_flag.exists():
                 logger.info("Cancel flag detected — stopping walk at event %d", event_count)
                 break
+
+            # P0-5 (2026-05-04): must_reach 도달률 ≥ coverage_target 이면 종료.
+            # 메가커피 잡 30분 timeout idle 방지 — fixture 가 명시한 핵심
+            # 화면을 다 봤으면 더 walking 안 하고 끝낸다.
+            if self.must_reach_specs:
+                hit_ratio = len(self.must_reach_hit) / len(self.must_reach_specs)
+                if hit_ratio >= self.coverage_target:
+                    logger.info(
+                        "[coverage] must_reach %d/%d (%.0f%%) ≥ target %.0f%% — early exit",
+                        len(self.must_reach_hit), len(self.must_reach_specs),
+                        hit_ratio * 100, self.coverage_target * 100,
+                    )
+                    break
 
             # 0a. Pause check (manual or auto-detected login) — wait until user Resumes
             if self._paused_file.exists():
@@ -503,6 +544,38 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             self.visited_structures[canonical_id] += 1
             self.visited_screens.add(canonical_id)
 
+            # P0-5 (2026-05-04): must_reach 매칭 — 매 dump 시 fixture spec 과
+            # 비교. 활성 activity / view text 가 spec 의 activity_substr /
+            # text_substr 에 hit 하면 그 description 을 hit set 에 추가.
+            if self.must_reach_specs:
+                act = (state.get("activity") or "").lower()
+                # view text/desc 다 모아 한 번에 매칭
+                view_blob = " ".join(
+                    (v.get("text", "") or "") + " " + (v.get("content_desc", "") or "")
+                    for v in (state.get("views") or [])
+                ).lower()
+                for spec in self.must_reach_specs:
+                    if spec["description"] in self.must_reach_hit:
+                        continue
+                    m = spec["match_any"]
+                    matched = False
+                    for substr in (m.get("activity_substr") or []):
+                        if substr and substr.lower() in act:
+                            matched = True
+                            break
+                    if not matched:
+                        for substr in (m.get("text_substr") or []):
+                            if substr and substr.lower() in view_blob:
+                                matched = True
+                                break
+                    if matched:
+                        self.must_reach_hit.add(spec["description"])
+                        logger.info(
+                            "[coverage] reached must_reach: %s (%d/%d)",
+                            spec["description"][:40],
+                            len(self.must_reach_hit), len(self.must_reach_specs),
+                        )
+
             # 2026-04-30 Provisional 마킹 (Pass 1 — Stage 3 안 vision 호출 안 함).
             # quality fail 시 (Compose wrapper / dominant WebView / 빈 Flutter
             # 등) state 에 needs_vision_in_revisit flag 만 남기고 그대로 진행.
@@ -524,7 +597,24 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                         if last_desc:
                             self.external_blacklist.add(last_desc)
                             logger.debug("[external_guard] blacklisted trigger: %s", last_desc[:60])
-                    self._press_back()
+                    # P0-1 (2026-05-04): _press_back 가 False (main-activity 거부)
+                    # 일 때 무한 재호출되는 dead-lock fix. 7fe3f44a 잡 17:31 부터
+                    # 6분+ stall — 같은 external URL 계속 detect → BACK 거부 →
+                    # 같은 dump → 반복. Back 안 통하면 soft_restart 로 끊는다.
+                    backed = self._press_back()
+                    if not backed:
+                        # 같은 external URL hit 카운터 — 3회 이상이면 강제 restart
+                        ext_hits = getattr(self, "_external_stall_count", 0) + 1
+                        self._external_stall_count = ext_hits
+                        if ext_hits >= 3:
+                            logger.info("[external_guard] %d hits without Back — soft restart", ext_hits)
+                            self._soft_restart(package, main_activity)
+                            self._external_stall_count = 0
+                            self.back_count = 0
+                            event_count += 1
+                            continue
+                    else:
+                        self._external_stall_count = 0
                     self.wait_for_stable(timeout=2.0)
                     continue  # walking 계속, paused 안 함
             except Exception as e:
@@ -999,6 +1089,22 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         return actions
 
 
+    def _pick_sample_input(self, view: dict) -> str:
+        """P0-7: EditText 의 rid/hint/label 에 맞는 fixture sample_inputs 룩업.
+        없으면 task_keywords 첫 단어, 그것도 없으면 빈 문자열."""
+        rid = (view.get("resource_id", "") or "").lower()
+        hint = (view.get("text", "") or view.get("content_desc", "") or "").lower()
+        # fixture.sample_inputs: {"search": "메뉴", "id": "test", "phone": "01012345678"} 형식
+        samples = (self._fixture or {}).get("sample_inputs") or {}
+        for key, val in samples.items():
+            k = key.lower()
+            if k and (k in rid or k in hint):
+                return str(val)
+        # fallback: task_keywords 첫 단어 (메뉴/매장 등)
+        if self.task_keywords:
+            return self.task_keywords[0]
+        return "test"
+
     def _execute_action(self, action: dict, state: dict) -> None:
         """Execute a UI action via ADB."""
         import subprocess
@@ -1030,6 +1136,26 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             subprocess.run(["adb", "-s", self.device_serial, "shell",
                             "input", "tap", str(x), str(y)],
                            capture_output=True, timeout=5)
+            # P0-7 (2026-05-04): EditText 클릭 시 키보드 뜨는데 텍스트 입력 0
+            # 이라 검색/로그인 후속 화면 도달 못 함. fixture 의 sample_inputs
+            # 또는 task_keywords 첫 단어로 자동 입력.
+            view = action.get("view") or {}
+            cls = (view.get("class", "") or "").lower()
+            if "edittext" in cls:
+                sample = self._pick_sample_input(view)
+                if sample:
+                    time.sleep(0.4)  # 키보드 뜰 시간
+                    if self._input_text(sample):
+                        logger.info("[input_text] EditText filled: %r", sample[:30])
+                        # input 후 IME enter — 검색 form 의 submit trigger
+                        try:
+                            subprocess.run(
+                                ["adb", "-s", self.device_serial, "shell",
+                                 "input", "keyevent", "66"],   # KEYCODE_ENTER
+                                capture_output=True, timeout=5,
+                            )
+                        except Exception:
+                            pass
         elif action["action"] == "longclick":
             # 700ms press — reliably triggers long-press handlers
             subprocess.run(["adb", "-s", self.device_serial, "shell",
@@ -1636,6 +1762,20 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
 
     def _save_results(self, package: str, elapsed: float, event_count: int) -> dict:
         """Save walk results in DroidBot-compatible format."""
+        # P0-5 (2026-05-04): termination_reason 분류 — 이슈 1 (무한루프 검증)
+        # 의 진단 데이터.
+        if self._cancel_flag.exists():
+            term_reason = "cancelled"
+        elif self.must_reach_specs and \
+                len(self.must_reach_hit) / len(self.must_reach_specs) >= self.coverage_target:
+            term_reason = "coverage_target_reached"
+        elif event_count >= self.max_events:
+            term_reason = "max_events"
+        elif elapsed >= self.timeout:
+            term_reason = "timeout"
+        else:
+            term_reason = "unknown"
+
         result = {
             "states": self.states,
             "transitions": self.transitions,
@@ -1646,6 +1786,25 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                 "unique_screens_raw": len(self.visited_screens),
                 "elapsed_seconds": round(elapsed, 1),
                 "package": package,
+                # P0-5: 분당 events / 화면 발견 속도 — 무한루프 패턴 감지용
+                "events_per_minute": round(event_count / max(elapsed, 1) * 60, 1),
+                "screens_per_minute": round(
+                    self.hash_stats["new_screens"] / max(elapsed, 1) * 60, 2,
+                ),
+                "termination_reason": term_reason,
+                "must_reach": {
+                    "total": len(self.must_reach_specs),
+                    "hit": sorted(self.must_reach_hit),
+                    "missing": sorted(
+                        s["description"] for s in self.must_reach_specs
+                        if s["description"] not in self.must_reach_hit
+                    ),
+                    "ratio": (
+                        round(len(self.must_reach_hit) / len(self.must_reach_specs), 3)
+                        if self.must_reach_specs else None
+                    ),
+                    "target": self.coverage_target,
+                },
                 "hashing": {
                     "l1_structural_matches": self.hash_stats["l1_matches"],
                     "l2_phash_matches": self.hash_stats["l2_matches"],
