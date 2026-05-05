@@ -39,7 +39,18 @@ class CaptureMixin:
 
         Returns:
             True 가 stable 도달, False 가 timeout (호출자는 보통 그래도 진행).
+
+        P0 (2026-05-06): framework 별 timeout 보정. Compose 는 main thread
+        에서 reflow 하므로 빠른 dump+click 시 ANR 발생. 'isn't responding'
+        다이얼로그 → +1.5s. RN 은 JS bridge 응답 더 느림 → +1s.
         """
+        fw = getattr(self, "framework", "xml")
+        if fw == "compose":
+            timeout = max(timeout, 4.5)
+            stable_window = max(stable_window, 0.5)
+        elif fw == "react-native":
+            timeout = max(timeout, 4.0)
+            stable_window = max(stable_window, 0.4)
         from .. import u2_helper
         start = time.time()
         last_hash: str | None = None

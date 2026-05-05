@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -402,6 +403,47 @@ def run_pipeline_sync(tour_id: str, device_serial: str = "", from_stage: int = 0
                 p.unlink(missing_ok=True)
             except Exception:
                 pass
+
+        # P0 (2026-05-06): emu storage cleanup — 잡 누적으로 /data 가 91% 사용
+        # 되어 다음 잡 INSUFFICIENT_STORAGE 로 설치 실패하던 문제 (Flutter
+        # sample 잡 8ecf8687) fix. 패키지 + cache 정리.
+        if serial:
+            pkg = _tour_package(tour_id)
+            try:
+                if pkg:
+                    subprocess.run(
+                        ["adb", "-s", serial, "shell", "pm", "clear", pkg],
+                        capture_output=True, timeout=10,
+                    )
+                subprocess.run(
+                    ["adb", "-s", serial, "shell", "pm", "trim-caches", "9999G"],
+                    capture_output=True, timeout=10,
+                )
+                # /data 사용량 80%+ 면 경고 로그 (auto-wipe 까지는 위험)
+                df = subprocess.run(
+                    ["adb", "-s", serial, "shell", "df", "/data"],
+                    capture_output=True, timeout=5, text=True,
+                )
+                for line in (df.stdout or "").splitlines():
+                    if "/data" in line:
+                        parts = line.split()
+                        if len(parts) >= 5 and parts[4].endswith("%"):
+                            pct = int(parts[4].rstrip("%"))
+                            if pct >= 80:
+                                logger.warning(
+                                    "[cleanup] /data %d%% used on %s — manual wipe recommended",
+                                    pct, serial,
+                                )
+            except Exception as e:
+                logger.debug("[cleanup] failed for %s: %s", tour_id, e)
+
+
+def _tour_package(tour_id: str) -> str | None:
+    """잡 metadata 에서 package_name 추출 — cleanup 용."""
+    try:
+        return tour_store.get(tour_id, {}).get("package_name")
+    except Exception:
+        return None
 
 
 def build_static_screenmap(config) -> None:

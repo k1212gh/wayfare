@@ -371,7 +371,18 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         subprocess.run(["adb", "-s", self.device_serial, "shell",
                         "am", "start", "-n", f"{package}/{main_activity}"],
                        capture_output=True, timeout=10)
-        time.sleep(2)
+        # P1 (2026-05-06): RN 은 JS bundle 로드 5-10초 필요. capture 가 그 전에
+        # dump 시도하면 빈 view → click → JS bridge 미초기화 → app crash 후
+        # NexusLauncher dump (ffd7c579 잡 패턴). framework 별 시작 wait 차등.
+        if self.framework == "react-native":
+            logger.info("[rn] waiting 8s for JS bundle load")
+            time.sleep(8)
+        elif self.framework == "flutter":
+            # Flutter 도 engine init 시간 필요
+            logger.info("[flutter] waiting 4s for engine init")
+            time.sleep(4)
+        else:
+            time.sleep(2)
 
         # Tier-1 bootstrap: visit obvious navigation entry points BEFORE random walk
         # starts.  This guarantees bottom-tab screens and drawer contents get captured.
