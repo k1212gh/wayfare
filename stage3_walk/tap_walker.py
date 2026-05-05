@@ -1024,7 +1024,14 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                 tried_set = self.tried_actions.get(canonical_id, set())
                 keyword_hits: list[dict] = []
                 for a in actions:
-                    if a.get("desc", "") in tried_set:
+                    desc = a.get("desc", "")
+                    if desc in tried_set:
+                        continue
+                    # P0-10g (2026-05-05): TASK-KW override 가 external_blacklist
+                    # 무시해서 "바로 주문" / "최근주문" 같은 결제 entry 액션을
+                    # force-stop 후에도 다시 click 하던 회귀 (b341a3ae) fix.
+                    # blacklist desc 는 score 9.00 이라도 skip.
+                    if desc in self.external_blacklist:
                         continue
                     v = a.get("view") or a
                     text_blob = f"{v.get('text','') or ''} {v.get('content_desc','') or ''}"
@@ -1060,7 +1067,11 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                 if unhit_substrs:
                     mr_hits: list[dict] = []
                     for a in actions:
-                        if a.get("desc", "") in tried_set:
+                        desc = a.get("desc", "")
+                        if desc in tried_set:
+                            continue
+                        # P0-10g: blacklist desc 는 must_reach override 도 skip
+                        if desc in self.external_blacklist:
                             continue
                         v = a.get("view") or a
                         text_blob = (
