@@ -156,25 +156,6 @@ class XMLViewTreeReader(ViewTreeReader):
             action = "click"
         return f"{action} {key}"
 
-    # P0-10d (2026-05-05): 결제/카드 입력/외부 게이트웨이 진입 자체 차단.
-    # 카드번호/CVC/본인인증/raon 보안 키패드 같은 화면은 자동화 절대 불가
-    # 하고, 잘못 클릭하면 진짜 결제 시도되는 위험. element 의 텍스트/desc/rid
-    # 에 이 키워드가 hit 하면 score -100 → walk 가 절대 누르지 않음.
-    PAYMENT_DANGER_KEYWORDS = (
-        # 결제 진입
-        "결제하기", "결제 진행", "결제 시도", "주문 확정", "결제 정보",
-        # 카드 정보 입력
-        "카드번호", "카드 번호", "카드식별번호", "cvc", "유효기간",
-        "신용카드", "체크카드", "카드 등록", "카드추가",
-        # 외부 결제 게이트웨이
-        "ars 결제", "kb국민카드", "kb 국민카드", "삼성카드", "현대카드",
-        "신한카드", "우리카드", "하나카드", "롯데카드", "비씨카드",
-        # 본인인증
-        "본인인증", "본인 인증", "휴대폰 인증", "sms 인증", "인증번호 발송",
-        # 보안 키패드
-        "raon", "보안 키패드",
-    )
-
     def score_action(self, view: dict, context: dict[str, Any]) -> float:
         rid = view.get("resource_id", "")
         text = view.get("text", "")
@@ -188,13 +169,6 @@ class XMLViewTreeReader(ViewTreeReader):
         action_desc = self.get_action_desc(view)
 
         score = 1.0
-
-        # P0-10d: 결제 진입 / 카드 입력 / 본인인증 키워드는 score -100 →
-        # 절대 click 안 함. 진입 막아 외부 게이트웨이로 빠지지 않게.
-        for kw in self.PAYMENT_DANGER_KEYWORDS:
-            if kw in combined:
-                score -= 100.0
-                return score   # 다른 보너스 무관 — 절대 누르면 안 됨
 
         # === 미시도 액션 보너스 (가장 큰 신호) ===
         if action_desc not in tried_actions:

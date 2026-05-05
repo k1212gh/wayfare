@@ -269,48 +269,6 @@ def test_p1_6_bottom_nav_list_view_score_boost():
         f"bottom_nav list_view boost +3 expected, got Δ={s_with_lg - s_no_lg}"
 
 
-def test_p0_10d_payment_keyword_blocked():
-    """P0-10d (2026-05-05): 결제하기 / 카드번호 / cvc / 본인인증 등 위험
-    키워드 hit 시 score -100 → 절대 click 안 함. 외부 결제 게이트웨이
-    (KB ARS / raon 보안 키패드) 진입 자체 차단."""
-    e = XMLViewTreeReader()
-    danger_views = [
-        _v(text="결제하기", cls="Button"),
-        _v(text="카드번호", cls="EditText"),
-        _v(text="CVC", cls="EditText"),
-        _v(text="본인인증", cls="Button"),
-        _v(rid="raon_secure_keypad", cls="View"),
-        _v(text="KB국민카드", cls="TextView"),
-        _v(text="휴대폰 인증", cls="Button"),
-    ]
-    for v in danger_views:
-        s = e.score_action(v, _ctx())
-        assert s < -90.0, \
-            f"danger keyword '{v.get('text') or v.get('resource_id')}' 가 차단 안 됨: score={s}"
-
-
-def test_p0_10d_payment_keyword_returns_early():
-    """위험 키워드 hit 시 즉시 return — 다른 보너스 (Button +1.5, 미시도 +4)
-    무관하게 매우 낮은 score."""
-    e = XMLViewTreeReader()
-    # Button + 미시도 + rid + NAV keyword 모두 있어도 결제 키워드면 -100
-    v = _v(rid="payment_btn", text="결제하기", desc="Add payment", cls="Button")
-    s = e.score_action(v, _ctx())
-    assert s < -90.0, f"높은 score 보너스에도 결제 키워드 우선 차단되어야: score={s}"
-
-
-def test_p0_10d_normal_keyword_unaffected():
-    """결제 무관 단어 (메뉴/홈/장바구니) 는 영향 없음."""
-    e = XMLViewTreeReader()
-    # "결제" 단독은 차단 키워드에 없음 — "결제하기" / "결제 진행" 만
-    v_menu = _v(text="메뉴", cls="Button")
-    v_cart = _v(text="장바구니", cls="Button")
-    s_menu = e.score_action(v_menu, _ctx())
-    s_cart = e.score_action(v_cart, _ctx())
-    assert s_menu > 0, f"메뉴 차단되면 안 됨: {s_menu}"
-    assert s_cart > 0, f"장바구니 차단되면 안 됨: {s_cart}"
-
-
 def test_p1_6_other_list_view_groups_no_boost():
     """다른 list_view group (recyclerview/sibling_uniform) 은 boost 안 받음.
     bottom_nav_row prefix 만 적용."""

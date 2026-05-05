@@ -98,6 +98,13 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         # 2026-05-01: external page detected → 직전 trigger blacklist (W3).
         # score_action 이 blacklist trigger 발견 시 강 페널티 → 같은 메뉴 재클릭 안 함.
         self.external_blacklist: set[str] = set()
+        # P0-10f (2026-05-05): structure_str hash 기반 영구 학습.
+        # 키워드/desc 같은 표면 매칭 (P0-10d/e 폐기) 이 아닌 view tree
+        # 구조 hash. 같은 화면이면 잡 마다 동일 hash. desc/문구 무관하게
+        # 의미 기반 매칭. 디스크 저장 (앱별) → 다음 잡 시작 시 자동 학습.
+        # 파일: workspace/_learned/{package}.json
+        self._learned_path: Path | None = None
+        self._learned_structures: set[str] = set()
         # 2026-05-03 (R6): multi-target action 페널티 — 같은 (canonical, action_desc)
         # 가 ≥3 다른 target canonical 로 transition 했으면 random transition 으로 판정.
         # 메가커피 이벤트 webview 의 wrapper element 가 21 incoming hub 되는 회귀 차단.
@@ -295,6 +302,25 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         self.package = package
         self.main_activity = main_activity
 
+        # P0-10f (2026-05-05): structure_str 기반 학습 로드. 이전 잡들이
+        # auth/external/결제 화면으로 검출한 화면의 view tree hash 를 디스크
+        # 에서 읽음 → 같은 구조 화면 도달 시 즉시 BACK. 단어/desc 무관.
+        try:
+            learned_dir = self.output_dir.parent.parent / "_learned"
+            learned_dir.mkdir(parents=True, exist_ok=True)
+            self._learned_path = learned_dir / f"{package}.json"
+            if self._learned_path.exists():
+                data = json.loads(self._learned_path.read_text(encoding="utf-8"))
+                self._learned_structures = set(data.get("blocked_structures", []))
+                if self._learned_structures:
+                    logger.info(
+                        "[learned] %d structure hashes loaded from %s — first-touch skip",
+                        len(self._learned_structures),
+                        self._learned_path.name,
+                    )
+        except Exception as e:
+            logger.debug("[learned] load failed: %s", e)
+
         # E (2026-05-03): task fixture 키워드 로드 — walk 시점에 task goal 에
         # 등장한 명사 (메뉴/장바구니/매장/MY/쿠폰/...) 가 view text 에 hit 시
         # score 보너스. 메가커피/DeskClock 등 fixture 있으면 자동 적용.
@@ -425,7 +451,10 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                     if not hasattr(self, "_auth_consecutive_count"):
                         self._auth_consecutive_count: dict[str, int] = {}
                     self._auth_screens_seen.add(canonical_id)
-                    # 진입 액션 blacklist (reuse external_blacklist set)
+                    # P0-10f: 화면 구조 학습 — view tree hash. desc 무관.
+                    if state.get("structure_str"):
+                        self._learn_structure(state["structure_str"])
+                    # 진입 액션은 in-memory blacklist (이번 잡 안에서만)
                     if self.action_history:
                         last_desc = (self.action_history[-1].get("event_desc")
                                      or self.action_history[-1].get("desc", ""))
@@ -649,6 +678,26 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             if hasattr(self, "_auth_consecutive_count") and self._auth_consecutive_count:
                 self._auth_consecutive_count.clear()
 
+            # P0-10f (2026-05-05): structure_str 학습 매칭 — 디스크에 저장된
+            # 이전 잡들의 차단 화면 구조와 같으면 즉시 BACK + 진입 액션
+            # blacklist. 단어/desc 무관 — view tree hash 매칭.
+            if state.get("structure_str") in self._learned_structures:
+                self.trap_stats["learned_skip"] = self.trap_stats.get("learned_skip", 0) + 1
+                if self.action_history:
+                    last_desc = (self.action_history[-1].get("event_desc")
+                                 or self.action_history[-1].get("desc", ""))
+                    if last_desc:
+                        self.external_blacklist.add(last_desc)
+                logger.info(
+                    "[learned] match structure on %s — back (skips=%d)",
+                    canonical_id, self.trap_stats["learned_skip"],
+                )
+                if not self._press_back():
+                    self._soft_restart(package, main_activity)
+                    self.back_count = 0
+                event_count += 1
+                continue
+
             # P0-10c (2026-05-05): 영구 blocked canonical 즉시 BACK.
             # 절대 탈출 불가 화면 (KB ARS 결제 외부 페이지 + raon 보안 키패드
             # 같은) 은 한 번 마킹된 후 다시 도달해도 walk 시간 안 쓰게.
@@ -718,13 +767,16 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                 from .outbound_intent_guard import detect_outbound_intent
                 is_ext, reason = detect_outbound_intent(state.get("views", []))
                 if is_ext:
-                    logger.info("[external_guard] %s — back + blacklist last action", reason)
+                    logger.info("[external_guard] %s — back + learn structure", reason)
                     self.trap_stats["external_back"] = self.trap_stats.get("external_back", 0) + 1
+                    # P0-10f: 화면 구조 (view tree hash) 학습 — desc 무관.
+                    if state.get("structure_str"):
+                        self._learn_structure(state["structure_str"])
+                    # 진입 액션은 in-memory blacklist (이번 잡 안에서만)
                     if self.action_history:
                         last_desc = self.action_history[-1].get("event_desc") or self.action_history[-1].get("desc", "")
                         if last_desc:
                             self.external_blacklist.add(last_desc)
-                            logger.debug("[external_guard] blacklisted trigger: %s", last_desc[:60])
                     # P0-1 (2026-05-04): _press_back 가 False (main-activity 거부)
                     # 일 때 무한 재호출되는 dead-lock fix. 7fe3f44a 잡 17:31 부터
                     # 6분+ stall — 같은 external URL 계속 detect → BACK 거부 →
@@ -1271,6 +1323,31 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         if self.task_keywords:
             return self.task_keywords[0]
         return "test"
+
+    def _learn_structure(self, structure_str: str) -> None:
+        """P0-10f: 외부/auth/결제 화면의 view tree hash 를 디스크 저장.
+        다음 잡 시작 시 자동 로드 → 같은 구조 화면 도달 시 즉시 BACK.
+
+        단어/desc 매칭 X (P0-10d/e 폐기 이유). view tree 구조만 — 같은
+        화면이면 잡 마다 동일 hash.
+        """
+        if not structure_str or structure_str in self._learned_structures:
+            return
+        self._learned_structures.add(structure_str)
+        try:
+            if self._learned_path:
+                self._learned_path.write_text(
+                    json.dumps({
+                        "package": self.package,
+                        "blocked_structures": sorted(self._learned_structures),
+                        "updated_at": time.time(),
+                    }, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                logger.info("[learned] +structure %s... → %d total saved",
+                            structure_str[:16], len(self._learned_structures))
+        except Exception as e:
+            logger.debug("[learned] save failed: %s", e)
 
     def _execute_action(self, action: dict, state: dict) -> None:
         """Execute a UI action via ADB."""
@@ -1974,6 +2051,10 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                 "permanent_blocked_revisits": self.trap_stats.get(
                     "permanent_blocked_revisit", 0,
                 ),
+                # P0-10f: structure-based learning
+                "learned_structures_loaded": len(self._learned_structures) - self.trap_stats.get("learned_added_this_tour", 0),
+                "learned_structures_total": len(self._learned_structures),
+                "learned_skip_count": self.trap_stats.get("learned_skip", 0),
                 "must_reach": {
                     "total": len(self.must_reach_specs),
                     "hit": sorted(self.must_reach_hit),
