@@ -1016,10 +1016,29 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             # item's result state gets coalesce'd back to the same canonical.
             # Rotating among the top-3 untried exposes the walker to more
             # branches in Compose apps where many items are close in score.
-            untried_top = [a for a in actions[:5]
-                           if a.get("desc", "") not in self.tried_actions.get(canonical_id, set())]
-            if not untried_top:
-                untried_top = actions[:3]
+            # P0-11 (2026-05-06): BFS-style 화면 내부 우선 — 사용자 지적
+            # "하단 탭만 누르면서 화면 내부 버튼 무시" 패턴 fix.
+            # P1-6 의 R5+ score boost (+3) 가 너무 강해 bottom_nav 가 매번
+            # score 9~10, 화면 내부 버튼 (지도 보기 / 상태 텍스트 변경 등)
+            # 이 score 5~7 로 압도됨. 그 결과 walk 가 탭만 누르며 같은
+            # 종류 화면 변형만 잡고 화면 내 콘텐츠 버튼 도달 X.
+            #
+            # Fix: 같은 canonical 의 미시도 액션 중 bottom_nav 아닌 것
+            # (= 화면 내부 element) 이 있으면 그것을 우선. 화면 내부 다
+            # 시도하면 그제서야 탭 click 허용.
+            tried_set = self.tried_actions.get(canonical_id, set())
+            untried_internal = [
+                a for a in actions
+                if a.get("desc", "") not in tried_set
+                and not str(((a.get("view") or a).get("_list_view_group") or "")).startswith("bottom_nav")
+            ]
+            if untried_internal:
+                # 화면 내부 미시도 — 탭 무시
+                untried_top = untried_internal[:5]
+            else:
+                untried_top = [a for a in actions[:5] if a.get("desc", "") not in tried_set]
+                if not untried_top:
+                    untried_top = actions[:3]
             # Round-robin by event count so each visit to the same state picks
             # a different top candidate.
             best = untried_top[event_count % len(untried_top)]
