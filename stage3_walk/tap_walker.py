@@ -309,6 +309,10 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         # 학습한 외부 도메인 set. 새 앱 시작 시 자동 로드 → 첫 dump 차단.
         self._global_domains: set[str] = set()
         self._learned_dir: Path | None = None
+        # P0-10h (2026-05-06): 외부 페이지 진입 trigger 액션 desc 디스크 학습.
+        # in-memory external_blacklist 가 잡 사이 보존 안 되어 매 잡 같은
+        # 결제 trigger ("결제하기" / "바로 주문") 다시 click 하던 회귀 fix.
+        self._learned_action_descs: set[str] = set()
         try:
             learned_dir = self.output_dir.parent.parent / "_learned"
             learned_dir.mkdir(parents=True, exist_ok=True)
@@ -317,10 +321,15 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             if self._learned_path.exists():
                 data = json.loads(self._learned_path.read_text(encoding="utf-8"))
                 self._learned_structures = set(data.get("blocked_structures", []))
-                if self._learned_structures:
+                # P0-10h: action desc 디스크 로드 → external_blacklist 미리 채움
+                self._learned_action_descs = set(data.get("blocked_action_descs", []))
+                if self._learned_action_descs:
+                    self.external_blacklist.update(self._learned_action_descs)
+                if self._learned_structures or self._learned_action_descs:
                     logger.info(
-                        "[learned] %d structure hashes loaded from %s — first-touch skip",
+                        "[learned] %d structures + %d action_descs from %s — first-touch skip",
                         len(self._learned_structures),
+                        len(self._learned_action_descs),
                         self._learned_path.name,
                     )
             # A-1: 글로벌 도메인 로드 (앱간 학습 누적)
@@ -827,11 +836,19 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                     # P0-10f: 화면 구조 (view tree hash) 학습 — desc 무관.
                     if state.get("structure_str"):
                         self._learn_structure(state["structure_str"])
-                    # 진입 액션은 in-memory blacklist (이번 잡 안에서만)
+                    # P0-10h (2026-05-06): 진입 path 전체 학습 — last_desc
+                    # 하나만 학습하면 다음 잡이 "메인 → 최근주문 → 퀵오더 →
+                    # 결제하기" 의 마지막만 차단되고 "최근주문" 다시 click →
+                    # 또 퀵오더. 사용자 짚음: "결제하기 까지 누른 거면 그
+                    # path 다 탐색한 것 → entry 자체 학습".
+                    # 마지막 3 액션 모두 디스크 학습 → 다음 잡 그 path 자체
+                    # 진입 X. 다른 path 탐색 강제.
+                    PATH_LEARN_DEPTH = 3
                     if self.action_history:
-                        last_desc = self.action_history[-1].get("event_desc") or self.action_history[-1].get("desc", "")
-                        if last_desc:
-                            self.external_blacklist.add(last_desc)
+                        for hist_entry in self.action_history[-PATH_LEARN_DEPTH:]:
+                            d = hist_entry.get("event_desc") or hist_entry.get("desc", "")
+                            if d:
+                                self._learn_action_desc(d)
                     # P0-1 (2026-05-04): _press_back 가 False (main-activity 거부)
                     # 일 때 무한 재호출되는 dead-lock fix. 7fe3f44a 잡 17:31 부터
                     # 6분+ stall — 같은 external URL 계속 detect → BACK 거부 →
@@ -1419,18 +1436,42 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         if not structure_str or structure_str in self._learned_structures:
             return
         self._learned_structures.add(structure_str)
+        self._save_learned()
+
+    def _learn_action_desc(self, action_desc: str) -> None:
+        """P0-10h (2026-05-06): 외부/결제 페이지 진입 trigger 액션 desc 를
+        디스크 저장. 잡 종료 시 in-memory blacklist 가 사라져 다음 잡이
+        같은 trigger 다시 click 하던 회귀 fix.
+
+        P0-10e 폐기와 다른 점:
+          P0-10e = 키워드 list 운영 (manual)
+          P0-10h = external_guard hit 시 last_desc 자동 추출 (data driven)
+                   잡 시작 시 디스크 → external_blacklist 자동 로드
+        """
+        if not action_desc:
+            return
+        if action_desc in self._learned_action_descs:
+            return
+        self._learned_action_descs.add(action_desc)
+        # in-memory blacklist 에도 즉시 반영
+        self.external_blacklist.add(action_desc)
+        self._save_learned()
+        logger.info("[learned] +action_desc %r → %d total",
+                    action_desc[:50], len(self._learned_action_descs))
+
+    def _save_learned(self) -> None:
+        """structure + action_desc 학습을 한 파일에 atomic write."""
         try:
             if self._learned_path:
                 self._learned_path.write_text(
                     json.dumps({
                         "package": self.package,
                         "blocked_structures": sorted(self._learned_structures),
+                        "blocked_action_descs": sorted(self._learned_action_descs),
                         "updated_at": time.time(),
                     }, indent=2, ensure_ascii=False),
                     encoding="utf-8",
                 )
-                logger.info("[learned] +structure %s... → %d total saved",
-                            structure_str[:16], len(self._learned_structures))
         except Exception as e:
             logger.debug("[learned] save failed: %s", e)
 
