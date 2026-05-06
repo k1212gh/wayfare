@@ -23,17 +23,157 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import re
+import time
+from pathlib import Path
 from typing import Iterable
 
 logger = logging.getLogger(__name__)
 
 
 # 메가커피 own 도메인 (필요 시 앱별 config 로 분리). 부분 매칭.
+# A-5 (2026-05-06): 폐기 예정. derive_own_domain_parts() 의 fallback 으로만 사용.
 DEFAULT_OWN_DOMAIN_PARTS = (
     "megamgccoffee", "waldlust", "mega-mgc",
 )
+
+
+# ───────────────────────────────────────────────────────────────────────
+# Feature A — 앱간 글로벌 도메인 블랙리스트 (2026-05-06)
+# ───────────────────────────────────────────────────────────────────────
+
+_GLOBAL_DOMAINS_FILENAME = "_global_domains.json"
+
+
+def load_global_domain_blacklist(learned_dir: Path) -> set[str]:
+    """잡 시작 시 호출. 모든 앱이 학습한 외부 도메인 set.
+
+    파일 없거나 깨졌으면 빈 set 반환 + 로그 (잡 실패 안 함).
+    """
+    p = Path(learned_dir) / _GLOBAL_DOMAINS_FILENAME
+    if not p.exists():
+        return set()
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        domains = {d["domain"].lower() for d in data.get("domains", []) if d.get("domain")}
+        if domains:
+            logger.info("[global] %d domains loaded from %s", len(domains), p.name)
+        return domains
+    except Exception as e:
+        logger.warning("[global] load failed: %s", e)
+        return set()
+
+
+def append_global_domain(
+    learned_dir: Path,
+    domain: str,
+    package: str,
+    own_domain_parts: Iterable[str] = (),
+) -> None:
+    """W1/W4 가 새 외부 도메인 발견 시 호출.
+
+    own_domain (자기 앱 도메인) 은 글로벌에 안 올림 (A-4 안전장치).
+    이미 등록된 도메인이면 hit_count++.
+
+    atomic rename 으로 race condition 방지 (다중 잡 동시).
+    """
+    domain = (domain or "").lower().strip()
+    if not domain:
+        return
+    # A-4: 자기 앱 도메인은 글로벌 등록 거부
+    if _is_own_domain(domain, own_domain_parts):
+        return
+
+    p = Path(learned_dir) / _GLOBAL_DOMAINS_FILENAME
+    try:
+        if p.exists():
+            data = json.loads(p.read_text(encoding="utf-8"))
+        else:
+            data = {"domains": [], "version": 1}
+        domains_list = data.setdefault("domains", [])
+        # 기존 entry 찾기
+        existing = next((d for d in domains_list if d.get("domain") == domain), None)
+        now = time.time()
+        if existing:
+            existing["hit_count"] = existing.get("hit_count", 0) + 1
+            existing["last_seen_at"] = now
+        else:
+            domains_list.append({
+                "domain": domain,
+                "first_seen_package": package,
+                "first_seen_at": now,
+                "hit_count": 1,
+                "last_seen_at": now,
+            })
+            logger.info("[global] +domain %r (from %s) → %d total",
+                        domain, package, len(domains_list))
+        # atomic write
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, p)
+    except Exception as e:
+        logger.debug("[global] save failed for %r: %s", domain, e)
+
+
+# ───────────────────────────────────────────────────────────────────────
+# A-5 own_domain 자동 추출 (manifest fallback + package reverse)
+# ───────────────────────────────────────────────────────────────────────
+
+
+def derive_own_domain_parts(
+    package: str,
+    fixture: dict | None = None,
+    static_info: dict | None = None,
+) -> list[str]:
+    """앱별 own_domain_parts 추출. 우선순위:
+
+      1. fixture 의 'own_domain_parts' 명시 (1순위)
+      2. AndroidManifest 의 intent-filter <data android:host> 자동 추출
+      3. package 도메인 reverse (com.kr.waldlust.megacoffee → ['megacoffee', 'waldlust'])
+      4. 빈 list (W1 비활성화, W2/W4 만 사용)
+
+    A-5 (2026-05-06): fixture 없는 앱도 자동 동작 — DEFAULT 메가커피 하드코딩
+    의존성 제거.
+    """
+    # 1. fixture 명시
+    if fixture:
+        explicit = fixture.get("own_domain_parts") or []
+        if explicit:
+            return [str(s).lower() for s in explicit]
+
+    # 2. manifest intent-filter <data> hosts
+    if static_info:
+        hosts = []
+        for af in static_info.get("activities", []) or []:
+            for filt in af.get("intent_filters", []) or []:
+                for d in filt.get("data", []) or []:
+                    h = (d.get("host") or "").lower().strip()
+                    if h and h != "*":
+                        hosts.append(h)
+        if hosts:
+            # tld 제거 → 부분 매칭에 사용
+            parts = []
+            for h in hosts:
+                # m.megamgccoffee.com → megamgccoffee
+                segments = h.replace("www.", "").split(".")
+                if len(segments) >= 2:
+                    parts.append(segments[-2])  # 끝에서 두 번째 segment
+            if parts:
+                return list(set(parts))
+
+    # 3. package reverse (가장 unique 한 segment)
+    if package:
+        segs = [s for s in package.split(".") if len(s) >= 4 and s not in ("com", "net", "org", "kr", "co", "ui", "app", "android")]
+        if segs:
+            # 가장 긴 segment 우선 (보통 앱 이름)
+            segs.sort(key=len, reverse=True)
+            return segs[:2]
+
+    # 4. 빈 list
+    return []
 
 # 외부 페이지 hint — 큰 사회 OAuth / 외부 서비스 / 일반 외부 도메인
 EXTERNAL_HINT_KEYWORDS = (
@@ -65,16 +205,27 @@ def detect_outbound_intent(
     views: list[dict],
     own_domain_parts: Iterable[str] = DEFAULT_OWN_DOMAIN_PARTS,
     max_views_to_scan: int = 80,
-) -> tuple[bool, str]:
-    """반환: (is_external, reason).
+    global_domains: set[str] | None = None,
+) -> tuple[bool, str, str | None]:
+    """반환: (is_external, reason, matched_domain).
 
-    own_domain_parts 안 의 부분 문자열을 가진 도메인은 internal 로 간주.
-    외부 도메인 URL 또는 EXTERNAL_HINT_KEYWORDS 중 하나라도 hit 면 external.
+    A-2 (2026-05-06): 시그니처 확장 — `matched_domain` 추가 반환 (글로벌
+    학습용). global_domains 도 받아 W4 (앱간 학습 도메인) 첫 검사.
+
+    검사 순서:
+      W4 — global_domains hit (가장 빠름, 학습 누적)
+      W1 — URL https://domain 형식
+      W1' — bare domain (queenssmile.com)
+      W2 — EXTERNAL_HINT_KEYWORDS
+
+    own_domain_parts 안의 부분 문자열을 가진 도메인은 internal 로 간주.
 
     빠르게 동작하도록 상위 max_views_to_scan view 만 검사.
     """
     if not views:
-        return False, ""
+        return False, "", None
+
+    global_domains = global_domains or set()
 
     for v in views[:max_views_to_scan]:
         text = (v.get("text") or "")
@@ -84,28 +235,31 @@ def detect_outbound_intent(
         if not combined.strip():
             continue
 
-        # URL 형식 — domain 추출 후 own 비교
-        for m in _URL_RE.finditer(combined):
-            domain = m.group(1)
-            if not _is_own_domain(domain, own_domain_parts):
-                return True, f"external URL: {domain}"
-
-        # 베어 도메인 (URL 스킴 없이 "queenssmile.com" 등)
-        for m in _BARE_DOMAIN_RE.finditer(combined):
-            domain = m.group(1)
-            if not _is_own_domain(domain, own_domain_parts):
-                # 단, own 부분 매칭 안 되어도 일반 단어 (예: app.kr) 인 경우 false
-                # positive 우려. 따라서 hint 키워드와 동시 hit 시만 강하게 판정.
-                # 여기서는 일단 후보 — keyword 검사 후 확정.
-                return True, f"external bare-domain: {domain}"
-
-        # Keyword hint — 부분 매칭 (대소문자 무시)
+        # W4 — global_domains hit (앱간 학습)
         c_lower = combined.lower()
+        if global_domains:
+            for gd in global_domains:
+                if gd in c_lower:
+                    return True, f"global learned: {gd}", gd
+
+        # W1 — URL 형식 → domain 추출 후 own 비교
+        for m in _URL_RE.finditer(combined):
+            domain = m.group(1).lower()
+            if not _is_own_domain(domain, own_domain_parts):
+                return True, f"external URL: {domain}", domain
+
+        # W1' — 베어 도메인 (URL 스킴 없이)
+        for m in _BARE_DOMAIN_RE.finditer(combined):
+            domain = m.group(1).lower()
+            if not _is_own_domain(domain, own_domain_parts):
+                return True, f"external bare-domain: {domain}", domain
+
+        # W2 — Keyword hint
         for kw in EXTERNAL_HINT_KEYWORDS:
             if kw.lower() in c_lower:
-                return True, f"external hint: {kw}"
+                return True, f"external hint: {kw}", None
 
-    return False, ""
+    return False, "", None
 
 
 def get_blacklist_penalty(

@@ -305,9 +305,14 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         # P0-10f (2026-05-05): structure_str 기반 학습 로드. 이전 잡들이
         # auth/external/결제 화면으로 검출한 화면의 view tree hash 를 디스크
         # 에서 읽음 → 같은 구조 화면 도달 시 즉시 BACK. 단어/desc 무관.
+        # A-1+A-3 (2026-05-06): 앱간 글로벌 도메인 블랙리스트 — 모든 앱이
+        # 학습한 외부 도메인 set. 새 앱 시작 시 자동 로드 → 첫 dump 차단.
+        self._global_domains: set[str] = set()
+        self._learned_dir: Path | None = None
         try:
             learned_dir = self.output_dir.parent.parent / "_learned"
             learned_dir.mkdir(parents=True, exist_ok=True)
+            self._learned_dir = learned_dir
             self._learned_path = learned_dir / f"{package}.json"
             if self._learned_path.exists():
                 data = json.loads(self._learned_path.read_text(encoding="utf-8"))
@@ -318,8 +323,16 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                         len(self._learned_structures),
                         self._learned_path.name,
                     )
+            # A-1: 글로벌 도메인 로드 (앱간 학습 누적)
+            from .outbound_intent_guard import load_global_domain_blacklist
+            self._global_domains = load_global_domain_blacklist(learned_dir)
         except Exception as e:
             logger.debug("[learned] load failed: %s", e)
+
+        # A-5 (2026-05-06): own_domain_parts 자동 추출 — fixture 명시 →
+        # manifest intent-filter host → package reverse 순. 메가커피 전용
+        # 하드코딩 (DEFAULT_OWN_DOMAIN_PARTS) 의존성 제거.
+        self._own_domain_parts: list[str] = []
 
         # E (2026-05-03): task fixture 키워드 로드 — walk 시점에 task goal 에
         # 등장한 명사 (메뉴/장바구니/매장/MY/쿠폰/...) 가 view text 에 hit 시
@@ -354,6 +367,22 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                     logger.info("must_reach screens: %d (target=%.0f%%)",
                                 len(self.must_reach_specs),
                                 self.coverage_target * 100)
+            # A-5 own_domain 자동 추출 (fixture → manifest → package reverse)
+            from .outbound_intent_guard import derive_own_domain_parts
+            static_path = self.output_dir.parent / "static" / "analysis.json"
+            static_info = None
+            if static_path.exists():
+                try:
+                    static_info = json.loads(static_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            self._own_domain_parts = derive_own_domain_parts(
+                package, fixture=fix, static_info=static_info,
+            )
+            if self._own_domain_parts:
+                logger.info("[own_domain] %d parts: %s",
+                            len(self._own_domain_parts),
+                            self._own_domain_parts[:5])
         except Exception as e:
             logger.debug("Task fixture load failed: %s", e)
 
@@ -775,11 +804,26 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             # Queens Smile / 카카오 OAuth / 네이버 / 외부 도메인 으로 navigate
             # 하면 그 화면 더 walking 안 하고 BACK + 직전 trigger blacklist.
             try:
-                from .outbound_intent_guard import detect_outbound_intent
-                is_ext, reason = detect_outbound_intent(state.get("views", []))
+                from .outbound_intent_guard import (
+                    detect_outbound_intent, append_global_domain,
+                )
+                is_ext, reason, matched_domain = detect_outbound_intent(
+                    state.get("views", []),
+                    own_domain_parts=self._own_domain_parts,
+                    global_domains=self._global_domains,
+                )
                 if is_ext:
                     logger.info("[external_guard] %s — back + learn structure", reason)
                     self.trap_stats["external_back"] = self.trap_stats.get("external_back", 0) + 1
+                    # A-3 (2026-05-06): 글로벌 도메인 학습 — 앱간 공유.
+                    # matched_domain (URL/bare-domain hit) 만 글로벌 등록. W2
+                    # 키워드 hit (keyword) 는 domain 정보 없으니 skip.
+                    if matched_domain and self._learned_dir:
+                        append_global_domain(
+                            self._learned_dir, matched_domain, self.package,
+                            own_domain_parts=self._own_domain_parts,
+                        )
+                        self._global_domains.add(matched_domain.lower())
                     # P0-10f: 화면 구조 (view tree hash) 학습 — desc 무관.
                     if state.get("structure_str"):
                         self._learn_structure(state["structure_str"])
