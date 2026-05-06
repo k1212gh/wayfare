@@ -401,8 +401,15 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
   }, [graph.nodes, filterCategory, searchQuery]);
 
   const filteredNodeIds = useMemo(() => new Set(filteredNodes.map((n: any) => n.screen_id)), [filteredNodes]);
-  // Edge kind filter — 사용자가 toolbar 에서 toggle 한 kind 들만 표시
-  const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set());
+  // Edge kind filter — 사용자가 toolbar 에서 toggle 한 kind 들만 표시.
+  // 2026-05-06 — default hide 'contains' / 'static_ref' / 'global':
+  //   contains = fragment hierarchy 정적 분석. user click 이 아닌 "MainActivity
+  //   contains FragmentX" 같은 포함 관계 → 메인 hub 가 모든 화면에 직접 연결된
+  //   별모양 만들어 시각적 노이즈. toolbar 의 chip 클릭으로 보이게 가능.
+  //   static_ref / global 도 정적 분석 부산물 — 같은 이유.
+  const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(
+    new Set(['contains', 'static_ref', 'global'])
+  );
   const filteredEdges = useMemo(
     () => graph.edges.filter((e: any) => {
       if (!filteredNodeIds.has(e.from) || !filteredNodeIds.has(e.to)) return false;
