@@ -11,9 +11,10 @@ import React, { useEffect, useRef, useState } from 'react';
 interface LiveDeviceMirrorProps {
   interactive: boolean;
   serial: string;
+  compact?: boolean;
 }
 
-export function LiveDeviceMirror({ interactive, serial }: LiveDeviceMirrorProps) {
+export function LiveDeviceMirror({ interactive, serial, compact = false }: LiveDeviceMirrorProps) {
   const [tick, setTick] = useState<number>(() => Date.now());
   const [err, setErr] = useState<boolean>(false);
   // URL suffix carrying the ADB serial — every /api/device/* call needs it
@@ -63,8 +64,8 @@ export function LiveDeviceMirror({ interactive, serial }: LiveDeviceMirrorProps)
 
   return (
     <div style={{
-      width: '260px', flexShrink: 0,
-      padding: '10px 12px',
+      width: compact ? '100%' : '260px', flexShrink: 0,
+      padding: compact ? '0' : '10px 12px',
       background: '#f9fafb', border: '1px solid var(--color-border)',
       borderRadius: '6px',
       display: 'flex', flexDirection: 'column', gap: '8px',
@@ -102,7 +103,9 @@ export function LiveDeviceMirror({ interactive, serial }: LiveDeviceMirrorProps)
             }}
             onClick={handleClick}
             style={{
-              maxHeight: '460px', width: '220px',
+              maxHeight: compact ? '360px' : '460px',
+              width: compact ? '100%' : '220px',
+              maxWidth: compact ? '240px' : undefined,
               border: '4px solid #0a0a0a', borderRadius: '22px',
               boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
               objectFit: 'contain', background: '#000',

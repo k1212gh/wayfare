@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { InstantTooltip } from './InstantTooltip';
 
 /**
@@ -6,10 +6,30 @@ import { InstantTooltip } from './InstantTooltip';
  * node status, and capture-priority letter. Every row uses InstantTooltip
  * so hovering shows the underlying reasoning without a click.
  *
- * Extracted from ScreenMapView.tsx (Step 6). Pure presentational component —
- * no props, no state; static content defined inline.
+ * Collapsible — click the header chevron to fold/unfold. State persisted
+ * in localStorage so the panel stays in the user's preferred mode across
+ * sessions.
  */
+const STORAGE_KEY = 'screenatlas.graph.legend.collapsed.v2';
+
 export function Legend() {
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      const stored = window.localStorage.getItem(STORAGE_KEY);
+      return stored == null ? true : stored === '1';
+    } catch {
+      return true;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, collapsed ? '1' : '0');
+    } catch {
+      // ignore (private mode etc.)
+    }
+  }, [collapsed]);
+
   const edgeItems = [
     { color: '#2563eb', label: 'Navigate — 확인된 화면 전환',
       tip: '두 Activity 사이의 직접적인 startActivity 호출.\n정적 분석(DEX)에서 const-class Target + startActivity 패턴이 같은 메서드에서 발견되었거나, 동적 탐색에서 실제 전이가 관찰된 경우. ScreenMap에서 가장 신뢰도 높은 엣지.' },
@@ -52,66 +72,131 @@ export function Legend() {
       tip: 'Activity 내부의 Fragment 화면.\n얇은 인디고 테두리 + 인디고 배경.\nActivity host 노드와는 `contains` 엣지로 연결 (점선 하늘색).\n같은 Activity의 Fragment끼리 탭 전환이 일어나면 fragment_nav 엣지로 이어짐.' },
   ];
 
+  const priorityItems = [
+    { letter: 'A', bg: '#059669', label: 'User screen — 탐색/캡처 대상',
+      tip: 'MobileGPT 같은 에이전트가 실제로 상호작용하는 화면. 기본값이며 scan에서 우선순위로 재방문한다.' },
+    { letter: 'B', bg: '#94a3b8', label: 'Plumbing — UI 없음, skip',
+      tip: 'HandleApiCalls, Proxy, Trampoline 류. onCreate에서 finish()를 불러 UI가 거의 없음. 에이전트는 건드릴 일이 없음. 그래프에 존재는 하되 투명도 낮춰 시야에서 빠지게 함.' },
+    { letter: 'C', bg: '#8b5cf6', label: 'Deep-link entry — intent_filter로만 진입',
+      tip: 'VIEW 액션 + scheme/host 조합의 intent_filter를 가진 activity. 앱 UI에서 탭으로 가는 게 아니라 외부 URL/다른 앱에서 불러 들어오는 진입점이라 Scan에서 건너뛰는 게 맞음.' },
+  ];
+
+  // Collapsed pill — minimal footprint
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={() => setCollapsed(false)}
+        title="Legend 펼치기"
+        style={{
+          position: 'absolute', bottom: 16, right: 16, zIndex: 10,
+          padding: '8px 12px',
+          background: 'rgba(30,30,40,0.92)', color: '#e5e7eb',
+          border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8,
+          cursor: 'pointer', fontFamily: "'Inter', sans-serif",
+          fontSize: 11, fontWeight: 600,
+          display: 'flex', alignItems: 'center', gap: 6,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+        }}
+      >
+        <span style={{ fontSize: 13 }}>📋</span>
+        <span>Legend</span>
+        <span style={{ color: '#9ca3af', fontSize: 14, marginLeft: 2 }}>▾</span>
+      </button>
+    );
+  }
+
+  // Section header style — used for all 3 group headers
+  const sectionHeaderStyle: React.CSSProperties = {
+    fontWeight: 600, color: '#9ca3af', marginBottom: 4,
+    fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px',
+  };
+
   return (
     <div style={{
-      position: 'absolute', bottom: 16, right: 16, padding: '12px 14px',
+      position: 'absolute', bottom: 16, right: 16,
       background: 'rgba(30,30,40,0.92)', color: '#e5e7eb',
       borderRadius: '10px', fontSize: '11px', lineHeight: 1.6,
       fontFamily: "'Inter', sans-serif", zIndex: 10, maxWidth: 280,
+      maxHeight: 'calc(100vh - 40px)', display: 'flex', flexDirection: 'column',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
     }}>
-      <div style={{ marginBottom: 10 }}>
-        <div style={{ fontWeight: 600, color: '#9ca3af', marginBottom: 4, fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-          Edge types <span style={{ color: '#6b7280', textTransform: 'none' }}>(hover for detail)</span>
-        </div>
-        {edgeItems.map((it, i) => (
-          <InstantTooltip key={i} text={it.tip}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'help' }}>
-              <svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke={it.color} strokeWidth="2" strokeDasharray={it.dash} /></svg>
-              <span>{it.label}</span>
-            </div>
-          </InstantTooltip>
-        ))}
+      {/* Header bar with collapse toggle */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '8px 12px',
+        borderBottom: '1px solid rgba(255,255,255,0.08)',
+        flexShrink: 0,
+      }}>
+        <span style={{ fontWeight: 600, color: '#e5e7eb', fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 13 }}>📋</span>
+          Legend
+        </span>
+        <button
+          type="button"
+          onClick={() => setCollapsed(true)}
+          title="Legend 접기"
+          style={{
+            background: 'transparent', border: 'none', color: '#9ca3af',
+            cursor: 'pointer', padding: '2px 6px', borderRadius: 4,
+            fontSize: 14, lineHeight: 1, fontFamily: 'inherit',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.08)')}
+          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+        >
+          ▴
+        </button>
       </div>
-      <div>
-        <div style={{ fontWeight: 600, color: '#9ca3af', marginBottom: 4, fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-          Node status <span style={{ color: '#6b7280', textTransform: 'none' }}>(hover for detail)</span>
+
+      {/* Scrollable body */}
+      <div style={{ padding: '10px 14px 12px', overflowY: 'auto' }}>
+        <div style={{ marginBottom: 10 }}>
+          <div style={sectionHeaderStyle}>
+            Edge types <span style={{ color: '#6b7280', textTransform: 'none' }}>(hover for detail)</span>
+          </div>
+          {edgeItems.map((it, i) => (
+            <InstantTooltip key={i} text={it.tip}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'help' }}>
+                <svg width="28" height="8"><line x1="0" y1="4" x2="28" y2="4" stroke={it.color} strokeWidth="2" strokeDasharray={it.dash} /></svg>
+                <span>{it.label}</span>
+              </div>
+            </InstantTooltip>
+          ))}
         </div>
-        {statusItems.map((it, i) => (
-          <InstantTooltip key={i} text={it.tip}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'help' }}>
-              <span style={{ width: 10, height: 10, borderRadius: '50%', background: it.color, border: '2px solid #fff' }} />
-              <span>{it.label}</span>
-            </div>
-          </InstantTooltip>
-        ))}
-      </div>
-      <div style={{ marginTop: 10 }}>
-        <div style={{ fontWeight: 600, color: '#9ca3af', marginBottom: 4, fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-          Capture priority <span style={{ color: '#6b7280', textTransform: 'none' }}>(hover for detail)</span>
+        <div>
+          <div style={sectionHeaderStyle}>
+            Node status <span style={{ color: '#6b7280', textTransform: 'none' }}>(hover for detail)</span>
+          </div>
+          {statusItems.map((it, i) => (
+            <InstantTooltip key={i} text={it.tip}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'help' }}>
+                <span style={{ width: 10, height: 10, borderRadius: '50%', background: it.color, border: '2px solid #fff' }} />
+                <span>{it.label}</span>
+              </div>
+            </InstantTooltip>
+          ))}
         </div>
-        {[
-          { letter: 'A', bg: '#059669', label: 'User screen — 탐색/캡처 대상',
-            tip: 'MobileGPT 같은 에이전트가 실제로 상호작용하는 화면. 기본값이며 scan에서 우선순위로 재방문한다.' },
-          { letter: 'B', bg: '#94a3b8', label: 'Plumbing — UI 없음, skip',
-            tip: 'HandleApiCalls, Proxy, Trampoline 류. onCreate에서 finish()를 불러 UI가 거의 없음. 에이전트는 건드릴 일이 없음. 그래프에 존재는 하되 투명도 낮춰 시야에서 빠지게 함.' },
-          { letter: 'C', bg: '#8b5cf6', label: 'Deep-link entry — intent_filter로만 진입',
-            tip: 'VIEW 액션 + scheme/host 조합의 intent_filter를 가진 activity. 앱 UI에서 탭으로 가는 게 아니라 외부 URL/다른 앱에서 불러 들어오는 진입점이라 Scan에서 건너뛰는 게 맞음.' },
-        ].map((it, i) => (
-          <InstantTooltip key={i} text={it.tip}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'help' }}>
-              <span style={{
-                display: 'inline-block',
-                padding: '1px 6px',
-                borderRadius: 3,
-                background: it.bg, color: '#fff',
-                fontSize: '10px', fontWeight: 700,
-                fontFamily: "'JetBrains Mono', monospace",
-                minWidth: 14, textAlign: 'center' as const,
-              }}>{it.letter}</span>
-              <span>{it.label}</span>
-            </div>
-          </InstantTooltip>
-        ))}
+        <div style={{ marginTop: 10 }}>
+          <div style={sectionHeaderStyle}>
+            Capture priority <span style={{ color: '#6b7280', textTransform: 'none' }}>(hover for detail)</span>
+          </div>
+          {priorityItems.map((it, i) => (
+            <InstantTooltip key={i} text={it.tip}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'help' }}>
+                <span style={{
+                  display: 'inline-block',
+                  padding: '1px 6px',
+                  borderRadius: 3,
+                  background: it.bg, color: '#fff',
+                  fontSize: '10px', fontWeight: 700,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  minWidth: 14, textAlign: 'center' as const,
+                }}>{it.letter}</span>
+                <span>{it.label}</span>
+              </div>
+            </InstantTooltip>
+          ))}
+        </div>
       </div>
     </div>
   );

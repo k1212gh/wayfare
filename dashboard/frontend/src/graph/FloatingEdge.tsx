@@ -6,7 +6,6 @@ import {
   EdgeProps,
   EdgeLabelRenderer,
 } from '@xyflow/react';
-import { EDGE_KIND_DESC } from './colors';
 
 /** Compute the attachment point on a node's border along the line from
  *  source center → target center, so edges follow nodes as they're dragged. */
@@ -42,12 +41,6 @@ export function FloatingEdge({ id, source, target, style, markerEnd, data }: Edg
   });
   const d: any = data || {};
   const label = d.label as string | undefined;
-  const tooltip = [
-    `Kind: ${d.kind || 'navigate'}`,
-    EDGE_KIND_DESC[d.kind] || '',
-    d.confidence ? `Confidence: ${d.confidence}` : '',
-    label ? `Trigger: ${label}` : '',
-  ].filter(Boolean).join('\n');
   return (
     <>
       <path id={id} d={path} style={{ ...(style || {}), pointerEvents: 'none' }} markerEnd={markerEnd} fill="none" />
@@ -57,26 +50,10 @@ export function FloatingEdge({ id, source, target, style, markerEnd, data }: Edg
           stroke="rgba(0,0,0,0.001)"
           strokeWidth="18"
           fill="none"
-          style={{ cursor: 'help' }}
-          onMouseEnter={(e) => {
-            const el = document.getElementById('sa-edge-tooltip');
-            if (el) {
-              el.style.display = 'block';
-              el.textContent = tooltip;
-              el.style.left = e.clientX + 14 + 'px';
-              el.style.top = e.clientY + 14 + 'px';
-            }
-          }}
-          onMouseMove={(e) => {
-            const el = document.getElementById('sa-edge-tooltip');
-            if (el) {
-              el.style.left = e.clientX + 14 + 'px';
-              el.style.top = e.clientY + 14 + 'px';
-            }
-          }}
-          onMouseLeave={() => {
-            const el = document.getElementById('sa-edge-tooltip');
-            if (el) el.style.display = 'none';
+          style={{ cursor: 'pointer' }}
+          onClick={(e) => {
+            e.stopPropagation();
+            d.onOpenEdge?.(d);
           }}
         />
       </g>

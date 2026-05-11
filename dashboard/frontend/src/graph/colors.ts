@@ -3,13 +3,18 @@
 export const CATEGORY_COLOR: Record<string, string> = {
   home: '#2563eb',
   login: '#dc2626',
+  auth: '#be123c',
   settings: '#7c3aed',
   search: '#059669',
   list: '#0891b2',
+  detail: '#d97706',
   content_detail: '#d97706',
+  dialog: '#f59e0b',
+  media: '#0d9488',
   form: '#e11d48',
   profile: '#4f46e5',
   navigation: '#6b7280',
+  entry: '#8b5cf6',
   other: '#9ca3af',
 };
 

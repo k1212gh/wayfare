@@ -371,6 +371,41 @@ async def get_screenshot(tour_id: str, screen_id: str):
     raise HTTPException(404, "Screenshot not found")
 
 
+@router.get("/api/tours/{tour_id}/transition-screenshot/{edge_id}")
+async def get_transition_screenshot(tour_id: str, edge_id: str):
+    """Return the source screenshot from the walk transition behind an edge."""
+    if not _SAFE_ID.match(edge_id):
+        raise HTTPException(400, "Invalid edge_id")
+    tour_dir = _safe_tour_dir(tour_id)
+    graph_path = tour_dir / "output" / "screen_map.json"
+    if not graph_path.exists():
+        raise HTTPException(404, "Graph not found")
+
+    try:
+        screenmap = json.loads(graph_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(500, f"ScreenMap parse failed: {e}")
+
+    graph = screenmap.get("screen_map", {}).get("graph", {})
+    edges = graph.get("edges", [])
+    edge = next((e for e in edges if e.get("edge_id") == edge_id), None)
+    if not edge:
+        raise HTTPException(404, "Edge not found")
+
+    node_map = {n.get("screen_id", ""): n for n in graph.get("nodes", [])}
+    source_node = node_map.get(edge.get("from", ""), {})
+    shot = _transition_screenshot_for_edge(tour_dir, edge, source_node)
+    if shot:
+        return FileResponse(shot)
+
+    ref = source_node.get("screenshot_ref", "")
+    if ref:
+        ref_path = Path(ref)
+        if ref_path.exists() and _within(ref_path, tour_dir):
+            return FileResponse(ref_path)
+    raise HTTPException(404, "Transition screenshot not found")
+
+
 # ─── Internal helpers ──────────────────────────────────────────────
 
 def _ensure_project_on_path() -> None:
@@ -379,3 +414,64 @@ def _ensure_project_on_path() -> None:
     root = str(Path(__file__).parent.parent.parent.parent)
     if root not in sys.path:
         sys.path.insert(0, root)
+
+
+def _transition_screenshot_for_edge(tour_dir: Path, edge: dict, source_node: dict) -> Path | None:
+    walk_path = tour_dir / "dynamic" / "walk.json"
+    states_dir = tour_dir / "dynamic" / "states"
+    if not walk_path.exists() or not states_dir.exists():
+        return None
+    trigger = str(edge.get("trigger_widget", "") or "").strip()
+    action = str(edge.get("trigger_action", "") or "").strip()
+    if not trigger:
+        return None
+    try:
+        walk = json.loads(walk_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    source_activity = str(source_node.get("activity", "") or "")
+    candidates: list[tuple[int, dict]] = []
+    for idx, transition in enumerate(walk.get("transitions", [])):
+        event_type = str(transition.get("event_type", "") or "")
+        event_str = str(transition.get("event_str", "") or "")
+        if action and event_type and action != event_type:
+            continue
+        if event_str.endswith(trigger) or trigger in event_str:
+            score = 0 if event_str.endswith(trigger) else 1
+            candidates.append((score + idx, transition))
+
+    for require_activity_match in (True, False):
+        for _, transition in sorted(candidates, key=lambda item: item[0]):
+            state_file = _state_file_for_screen_id(states_dir, str(transition.get("from_screen", "") or ""))
+            if not state_file or not state_file.exists() or not _within(state_file, states_dir):
+                continue
+            try:
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if (
+                require_activity_match
+                and source_activity
+                and state.get("activity")
+                and state.get("activity") != source_activity
+            ):
+                continue
+            shot = Path(str(state.get("screenshot_path", "") or ""))
+            if shot.exists() and _within(shot, tour_dir):
+                return shot
+    return None
+
+
+def _state_file_for_screen_id(states_dir: Path, screen_id: str) -> Path | None:
+    if not screen_id.startswith("screen_"):
+        return None
+    suffix = screen_id.removeprefix("screen_")
+    if suffix.startswith("-"):
+        name = f"state_{suffix}.json"
+    else:
+        try:
+            name = f"state_{int(suffix):04d}.json"
+        except ValueError:
+            return None
+    return states_dir / name

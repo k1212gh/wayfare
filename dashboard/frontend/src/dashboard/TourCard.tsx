@@ -112,7 +112,7 @@ function DeviceBadge({ serial, active }: { serial?: string; active?: boolean }) 
 /* P1.4 (2026-04-29) — Quality 4-card.
  * ANNOTATED 잡에만 표시. 백엔드 /api/tours 응답의 tour.quality 필드를 그대로 표시.
  * Reached / Actionable / Plannable / Validation 4개 — framework 무관 동일 schema. */
-function QualityCards({ quality }: { quality: NonNullable<Tour['quality']> }) {
+function QualityCards({ quality, compact = false }: { quality: NonNullable<Tour['quality']>; compact?: boolean }) {
   const reachPct = quality.total_nodes > 0
     ? Math.round((quality.reachable_count / quality.total_nodes) * 100)
     : 0;
@@ -164,6 +164,42 @@ function QualityCards({ quality }: { quality: NonNullable<Tour['quality']> }) {
       title: 'high severity issues (= orphan/critical). 0 이면 healthy',
     },
   ];
+  if (compact) {
+    return (
+      <div style={{
+        display: 'flex',
+        gap: 6,
+        flexWrap: 'wrap',
+        marginTop: 10,
+      }}>
+        {cards.map((c) => {
+          const fg = c.tone === 'warn' ? '#dc2626'
+            : c.tone === 'ok' ? '#059669'
+            : 'var(--color-black)';
+          return (
+            <span
+              key={c.label}
+              title={`${c.label}: ${c.main} ${c.sub}`}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'baseline',
+                gap: 5,
+                padding: '3px 8px',
+                border: '1px solid var(--color-border)',
+                borderRadius: 999,
+                background: '#fff',
+                fontSize: 10,
+                color: 'var(--color-gray)',
+              }}
+            >
+              <strong style={{ color: fg, fontFamily: 'var(--font-mono)', fontSize: 11 }}>{c.main}</strong>
+              {c.label}
+            </span>
+          );
+        })}
+      </div>
+    );
+  }
   return (
     <div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginTop: '10px' }}>
@@ -465,6 +501,7 @@ function formatStartedAt(ts: number): string {
 
 interface TourCardProps {
   tour: Tour;
+  variant?: 'normal' | 'active' | 'compact';
   onRun: () => void;
   onStop: () => void;
   onPause: () => void;
@@ -474,25 +511,28 @@ interface TourCardProps {
   onRetryFromStage?: (n: number) => void;  // 1..6 stage 번호로 재실행
 }
 
-export function TourCard({ tour, onRun, onStop, onPause, onResume, onOpen, onDelete, onRetryFromStage }: TourCardProps) {
+export function TourCard({ tour, variant = 'normal', onRun, onStop, onPause, onResume, onOpen, onDelete, onRetryFromStage }: TourCardProps) {
   const running = isRunning(tour.stage);
   const complete = isComplete(tour.stage);
   const failed = tour.stage === 'FAILED' || tour.stage === 'CANCELLED';
   const paused = !!tour.paused;
+  const compact = variant === 'compact';
+  const active = variant === 'active';
 
   const runningDetail = Object.values(tour.stages || {}).find(s => s.status === 'running')?.detail || '';
 
   return (
     <div style={{
-      border: '1px solid var(--color-border)',
+      border: active ? '1px solid #fecaca' : '1px solid var(--color-border)',
       borderRadius: '8px',
-      padding: '16px 20px',
+      padding: compact ? '12px 16px' : active ? '18px 20px' : '16px 20px',
+      background: active ? '#fffafa' : 'var(--color-white)',
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         {/* Left */}
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-            <span style={{ fontSize: '13px', fontWeight: 600 }}>
+            <span style={{ fontSize: active ? '14px' : '13px', fontWeight: 700 }}>
               {tour.app_label
                 || (tour.package_name ? tour.package_name.split('.').slice(-1)[0] : '')
                 || tour.apk_filename
@@ -595,10 +635,12 @@ export function TourCard({ tour, onRun, onStop, onPause, onResume, onOpen, onDel
       )}
       {/* P1.4: Quality 4-card — ANNOTATED 잡에만 (SCREENMAP_GENERATED 는 LLM 전이라 plannable 0) */}
       {tour.stage === 'ANNOTATED' && tour.quality && (
-        <QualityCards quality={tour.quality} />
+        <QualityCards quality={tour.quality} compact={compact} />
       )}
       {/* Progress bar */}
-      <StageProgress stages={tour.stages || {}} />
+      {(!compact || running || failed) && (
+        <StageProgress stages={tour.stages || {}} />
+      )}
     </div>
   );
 }

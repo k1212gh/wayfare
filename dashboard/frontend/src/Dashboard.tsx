@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Tour, Coverage, Device, StageInfo, EmulatorInfo,
   STAGE_LABELS, FRAMEWORK_STYLE, isRunning, isComplete,
@@ -11,12 +11,20 @@ interface DashboardProps {
   onRunStart?: (tourId: string) => void;
 }
 
+function sortToursNewestFirst(a: Tour, b: Tour): number {
+  const byTime = (b.started_at || 0) - (a.started_at || 0);
+  if (byTime !== 0) return byTime;
+  return b.tour_id.localeCompare(a.tour_id);
+}
+
 export function Dashboard({ onOpenGraph, onRunStart }: DashboardProps) {
   const [tours, setTours] = useState<Tour[]>([]);
   const [device, setDevice] = useState<{ connected: boolean; devices: Device[] }>({ connected: false, devices: [] });
   const [emuStatus, setEmuStatus] = useState<EmulatorInfo[]>([]);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [tourFilter, setTourFilter] = useState<'all' | 'active' | 'ready' | 'complete' | 'failed'>('all');
+  const [devicePanelOpen, setDevicePanelOpen] = useState(false);
   // Selected ADB serial for /run. Empty = auto (backend picks first). When 2+
   // devices are attached (real phone + emulator), the user MUST pick one to
   // avoid walking on the wrong device.
@@ -45,10 +53,13 @@ export function Dashboard({ onOpenGraph, onRunStart }: DashboardProps) {
       // Preserve client-side `coverage` so the CoverageBar doesn't flash between polls
       setTours((prev) => {
         const covMap = new Map(prev.map((j) => [j.tour_id, j.coverage]));
-        return (data.tours || []).map((j: Tour) => ({
-          ...j,
-          coverage: j.coverage ?? covMap.get(j.tour_id),
-        }));
+        return ((data.tours || []) as Tour[])
+          .slice()
+          .sort(sortToursNewestFirst)
+          .map((j: Tour) => ({
+            ...j,
+            coverage: j.coverage ?? covMap.get(j.tour_id),
+          }));
       });
     } catch {}
   }, []);
@@ -148,7 +159,7 @@ export function Dashboard({ onOpenGraph, onRunStart }: DashboardProps) {
     if (device.devices.length > 1 && !serial) {
       alert(
         `여러 디바이스가 연결되어 있습니다 (${device.devices.length}개).\n` +
-        `탐색을 실행할 대상을 상단 "Device" 드롭다운에서 먼저 선택해주세요.`,
+        `탐색을 실행할 대상을 상단 디바이스 탭에서 먼저 선택해주세요.`,
       );
       return;
     }
@@ -199,7 +210,7 @@ export function Dashboard({ onOpenGraph, onRunStart }: DashboardProps) {
     const needsDevice = stage <= 3;
     let serial = selectedSerial;
     if (needsDevice && device.devices.length > 1 && !serial) {
-      alert('디바이스가 여러 개입니다. 상단에서 먼저 선택해주세요.');
+      alert('디바이스가 여러 개입니다. 상단 디바이스 탭에서 먼저 선택해주세요.');
       return;
     }
     const params = new URLSearchParams({ from_stage: String(stage) });
@@ -297,6 +308,20 @@ export function Dashboard({ onOpenGraph, onRunStart }: DashboardProps) {
     }
   };
 
+  const runningTours = useMemo(() => tours.filter((j) => isRunning(j.stage)), [tours]);
+  const inactiveTours = useMemo(() => tours.filter((j) => !isRunning(j.stage)), [tours]);
+  const readyTours = useMemo(() => tours.filter((j) => j.stage === 'UPLOADED'), [tours]);
+  const completeTours = useMemo(() => tours.filter((j) => isComplete(j.stage)), [tours]);
+  const failedTours = useMemo(() => tours.filter((j) => j.stage === 'FAILED' || j.stage === 'CANCELLED'), [tours]);
+  const activeTour = runningTours[0];
+  const visibleTours = useMemo(() => {
+    if (tourFilter === 'active') return runningTours;
+    if (tourFilter === 'ready') return readyTours;
+    if (tourFilter === 'complete') return completeTours;
+    if (tourFilter === 'failed') return failedTours;
+    return activeTour ? inactiveTours : tours;
+  }, [tourFilter, tours, runningTours, inactiveTours, readyTours, completeTours, failedTours, activeTour]);
+
   return (
     <div style={{ minHeight: '100vh', background: 'var(--color-white)', fontFamily: 'var(--font)' }}>
       {/* Header */}
@@ -317,67 +342,60 @@ export function Dashboard({ onOpenGraph, onRunStart }: DashboardProps) {
         />
       </header>
 
-      <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '40px 24px' }}>
-        {/* Upload zone */}
-        <div
+      <div style={{ maxWidth: '1180px', margin: '0 auto', padding: '24px 24px 48px' }}>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".apk"
+          multiple
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            if (e.target.files && e.target.files.length > 0) {
+              uploadFiles(e.target.files);
+            }
+          }}
+        />
+
+        <UploadStrip
+          dragOver={dragOver}
+          uploading={uploading}
+          onClick={() => fileRef.current?.click()}
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
           onDrop={handleDrop}
-          onClick={() => fileRef.current?.click()}
-          style={{
-            border: `2px dashed ${dragOver ? 'var(--color-primary)' : 'var(--color-border)'}`,
-            borderRadius: '12px',
-            padding: '40px',
-            textAlign: 'center',
-            cursor: 'pointer',
-            transition: 'border-color 0.15s',
-            marginBottom: '40px',
-          }}
-        >
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".apk"
-            multiple
-            style={{ display: 'none' }}
-            onChange={(e) => {
-              if (e.target.files && e.target.files.length > 0) {
-                uploadFiles(e.target.files);
-              }
-            }}
-          />
-          <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '4px' }}>
-            {uploading ? 'Uploading...' : 'Drop APK here or click to upload'}
-          </div>
-          <div style={{ fontSize: '12px', color: 'var(--color-gray)' }}>
-            Single .apk or multiple split APKs (base.apk + split_config.*.apk)
-          </div>
-        </div>
+        />
 
-        {/* Tours list */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <span style={{ fontSize: '13px', fontWeight: 600 }}>Tours</span>
-          <span style={{ fontSize: '12px', color: 'var(--color-gray)' }}>{tours.length}</span>
-        </div>
-
-        {tours.length === 0 && (
-          <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--color-gray)', fontSize: '13px' }}>
-            No tours yet. Upload an APK to get started.
-          </div>
-        )}
-
-        {(() => {
-          // Is any tour currently in an analysis state (running or user-paused)?
-          // If so, show LiveDeviceMirror as its own card to the right of tours list.
-          const activeTour = tours.find((j) => isRunning(j.stage));
-          const showMirror = !!activeTour;
-          return (
-            <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
-              <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {tours.map((tour) => (
+        {activeTour && (
+          <section style={{ marginBottom: 22 }}>
+            <SectionHeader
+              title="Active"
+              count={runningTours.length}
+              right={(
+                <button
+                  type="button"
+                  onClick={() => setDevicePanelOpen(!devicePanelOpen)}
+                  style={{
+                    padding: '5px 10px',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 6,
+                    background: devicePanelOpen ? 'var(--color-black)' : 'var(--color-white)',
+                    color: devicePanelOpen ? 'var(--color-white)' : 'var(--color-black)',
+                    fontFamily: 'var(--font)',
+                    fontSize: 11,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {devicePanelOpen ? 'Hide Device' : 'Show Device'}
+                </button>
+              )}
+            />
+            <div style={{ display: 'grid', gridTemplateColumns: devicePanelOpen || activeTour.paused ? 'minmax(0, 1fr) 300px' : '1fr', gap: 14, alignItems: 'start' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {runningTours.map((tour) => (
                   <TourCard
                     key={tour.tour_id}
                     tour={tour}
+                    variant="active"
                     onRun={() => runTour(tour.tour_id)}
                     onStop={() => stopTour(tour.tour_id)}
                     onPause={() => pauseTour(tour.tour_id)}
@@ -388,20 +406,72 @@ export function Dashboard({ onOpenGraph, onRunStart }: DashboardProps) {
                   />
                 ))}
               </div>
-              {showMirror && (
-                <div style={{
-                  border: '1px solid var(--color-border)',
-                  borderRadius: '8px',
-                  padding: '16px 20px',
-                  flexShrink: 0,
-                  position: 'sticky' as const, top: 16,
-                }}>
-                  <LiveDeviceMirror interactive={!!activeTour?.paused} serial={selectedSerial} />
-                </div>
+              {(devicePanelOpen || activeTour.paused) && (
+                <LiveDeviceRail
+                  activeTour={activeTour}
+                  serial={selectedSerial}
+                  onClose={() => setDevicePanelOpen(false)}
+                />
               )}
             </div>
-          );
-        })()}
+          </section>
+        )}
+
+        <section>
+          <SectionHeader
+            title="Tours"
+            count={visibleTours.length}
+            right={(
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                <FilterChip active={tourFilter === 'all'} onClick={() => setTourFilter('all')}>
+                  {activeTour ? `History ${inactiveTours.length}` : `All ${tours.length}`}
+                </FilterChip>
+                <FilterChip active={tourFilter === 'active'} onClick={() => setTourFilter('active')}>Active {runningTours.length}</FilterChip>
+                <FilterChip active={tourFilter === 'ready'} onClick={() => setTourFilter('ready')}>Ready {readyTours.length}</FilterChip>
+                <FilterChip active={tourFilter === 'complete'} onClick={() => setTourFilter('complete')}>Complete {completeTours.length}</FilterChip>
+                <FilterChip active={tourFilter === 'failed'} onClick={() => setTourFilter('failed')}>Failed {failedTours.length}</FilterChip>
+              </div>
+            )}
+          />
+
+          {tours.length === 0 && (
+            <div style={{
+              textAlign: 'center',
+              padding: '52px 0',
+              color: 'var(--color-gray)',
+              fontSize: 13,
+              border: '1px dashed var(--color-border)',
+              borderRadius: 8,
+            }}>
+              No tours yet. Upload an APK to get started.
+            </div>
+          )}
+
+          {tours.length > 0 && visibleTours.length === 0 && (
+            <div style={{ padding: '24px 0', color: 'var(--color-gray)', fontSize: 12 }}>
+              No tours in this view.
+            </div>
+          )}
+
+          {visibleTours.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {visibleTours.map((tour) => (
+                <TourCard
+                  key={tour.tour_id}
+                  tour={tour}
+                  variant={isRunning(tour.stage) ? 'active' : 'compact'}
+                  onRun={() => runTour(tour.tour_id)}
+                  onStop={() => stopTour(tour.tour_id)}
+                  onPause={() => pauseTour(tour.tour_id)}
+                  onResume={() => resumeTour(tour.tour_id)}
+                  onOpen={() => onOpenGraph(tour.tour_id)}
+                  onDelete={() => deleteTour(tour.tour_id)}
+                  onRetryFromStage={(n: number) => retryFromStage(tour.tour_id, n)}
+                />
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );
@@ -409,6 +479,177 @@ export function Dashboard({ onOpenGraph, onRunStart }: DashboardProps) {
 
 
 // FRAMEWORK_STYLE moved to dashboard/types.ts (re-exported above).
+
+function SectionHeader({
+  title,
+  count,
+  right,
+}: {
+  title: string;
+  count: number;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      marginBottom: 10,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 700 }}>{title}</span>
+        <span style={{ fontSize: 11, color: 'var(--color-gray)', fontFamily: 'var(--font-mono)' }}>{count}</span>
+      </div>
+      {right}
+    </div>
+  );
+}
+
+function FilterChip({ active, onClick, children }: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        padding: '4px 9px',
+        border: active ? '1px solid var(--color-black)' : '1px solid var(--color-border)',
+        borderRadius: 999,
+        background: active ? 'var(--color-black)' : 'var(--color-white)',
+        color: active ? 'var(--color-white)' : 'var(--color-gray)',
+        fontSize: 11,
+        fontWeight: 600,
+        fontFamily: 'var(--font)',
+        cursor: 'pointer',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function UploadStrip({
+  dragOver,
+  uploading,
+  onClick,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+}: {
+  dragOver: boolean;
+  uploading: boolean;
+  onClick: () => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDragLeave: () => void;
+  onDrop: (e: React.DragEvent) => void;
+}) {
+  return (
+    <div
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onClick={onClick}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 16,
+        border: `1.5px dashed ${dragOver ? 'var(--color-primary)' : 'var(--color-border)'}`,
+        borderRadius: 8,
+        padding: '14px 16px',
+        cursor: 'pointer',
+        background: dragOver ? '#fff7ed' : '#fcfcfc',
+        marginBottom: 22,
+        transition: 'border-color 0.15s, background 0.15s',
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 700 }}>
+          {uploading ? 'Uploading APK...' : 'Upload APK'}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--color-gray)', marginTop: 2 }}>
+          Drop APKs here or choose single/split APK files.
+        </div>
+      </div>
+      <span style={{
+        flexShrink: 0,
+        padding: '6px 12px',
+        borderRadius: 6,
+        background: 'var(--color-black)',
+        color: 'var(--color-white)',
+        fontSize: 11,
+        fontWeight: 700,
+      }}>
+        Browse
+      </span>
+    </div>
+  );
+}
+
+function LiveDeviceRail({
+  activeTour,
+  serial,
+  onClose,
+}: {
+  activeTour: Tour;
+  serial: string;
+  onClose: () => void;
+}) {
+  return (
+    <aside style={{
+      position: 'sticky' as const,
+      top: 72,
+      border: '1px solid var(--color-border)',
+      borderRadius: 8,
+      background: '#fff',
+      padding: 12,
+    }}>
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 8,
+      }}>
+        <div>
+          <div style={{
+            fontSize: 10,
+            color: 'var(--color-gray)',
+            textTransform: 'uppercase' as const,
+            letterSpacing: 0.5,
+            fontWeight: 700,
+          }}>
+            Live Device
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--color-gray)', marginTop: 1 }}>
+            {activeTour.paused ? 'Input enabled while paused' : 'Read-only preview'}
+          </div>
+        </div>
+        {!activeTour.paused && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Hide live device"
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: 'var(--color-gray)',
+              cursor: 'pointer',
+              fontSize: 18,
+              lineHeight: 1,
+            }}
+          >
+            ×
+          </button>
+        )}
+      </div>
+      <LiveDeviceMirror interactive={!!activeTour.paused} serial={serial} compact />
+    </aside>
+  );
+}
 
 function DeviceControls({
   device, emuStatus, selectedSerial, onSelect,
@@ -428,11 +669,53 @@ function DeviceControls({
   const isBooting = anyEmu && anyEmu.state === 'online_booting';
   const isReady = anyEmu && anyEmu.state === 'online_boot_complete';
 
+  const shortSerial = (serial: string) => {
+    if (serial.startsWith('emulator-')) return serial.replace('emulator-', '');
+    return serial.length > 10 ? `...${serial.slice(-6)}` : serial;
+  };
+
+  const deviceBySerial = new Map(device.devices.map((d) => [d.serial, d]));
+  const seenSerials = new Set<string>();
+  const targetOptions = [
+    ...emuStatus.map((e) => {
+      seenSerials.add(e.serial);
+      return {
+        serial: e.serial,
+        label: `Emulator ${shortSerial(e.serial)}`,
+        title: `${e.serial}${e.avd ? ` (${e.avd})` : ''} - ${e.state}`,
+        state: e.state,
+        selectable: deviceBySerial.has(e.serial),
+        kind: 'emulator' as const,
+      };
+    }),
+    ...device.devices
+      .filter((d) => !seenSerials.has(d.serial))
+      .map((d) => ({
+        serial: d.serial,
+        label: d.serial.startsWith('emulator-')
+          ? `Emulator ${shortSerial(d.serial)}`
+          : `Device ${shortSerial(d.serial)}`,
+        title: `${d.serial}${d.info ? ` ${d.info}` : ''}`,
+        state: 'device',
+        selectable: true,
+        kind: d.serial.startsWith('emulator-') ? 'emulator' as const : 'device' as const,
+      })),
+  ];
+  const activeSerial =
+    selectedSerial || (device.devices.length === 1 ? device.devices[0].serial : '');
+  const activeTarget = targetOptions.find((t) => t.serial === activeSerial);
+
   let dotColor = '#d4d4d4';  // gray (no device)
   let label = 'No device';
-  if (isReady || device.connected) {
-    dotColor = '#22c55e';  // green
-    label = anyEmu?.serial || device.devices[0]?.serial || 'Device';
+  if (activeTarget) {
+    label = activeTarget.label;
+    if (activeTarget.state === 'online_booting') {
+      dotColor = '#f59e0b';
+    } else if (['offline', 'unauthorized'].includes(activeTarget.state)) {
+      dotColor = '#dc2626';
+    } else {
+      dotColor = '#22c55e';
+    }
   } else if (isBooting) {
     dotColor = '#f59e0b';  // amber
     label = `${anyEmu.serial} booting…`;
@@ -440,11 +723,6 @@ function DeviceControls({
     dotColor = '#dc2626';  // red
     label = `${anyEmu.serial} ${anyEmu.state}`;
   }
-
-  // Device picker — only rendered when >= 2 ADB devices attached, since
-  // picking the wrong one (e.g. user's real phone instead of emulator) is
-  // destructive. Single-device case stays ambient.
-  const multiDevice = device.devices.length >= 2;
 
   const btn = (onClick: () => void, text: string, title: string, danger = false) => (
     <button
@@ -465,8 +743,9 @@ function DeviceControls({
   );
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
       <span style={{
+        flexShrink: 0,
         display: 'inline-flex', alignItems: 'center', gap: '6px',
         fontSize: '12px', color: 'var(--color-gray)',
         fontFamily: 'var(--font-mono)',
@@ -474,26 +753,58 @@ function DeviceControls({
         <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: dotColor }} />
         {label}
       </span>
-      {multiDevice && (
-        <select
-          value={selectedSerial}
-          onChange={(e) => onSelect(e.target.value)}
-          title="탐색에 사용할 ADB 디바이스. 실기기·에뮬이 동시 연결되어 있으면 반드시 지정."
+      {targetOptions.length > 0 && (
+        <div
+          role="tablist"
+          aria-label="ADB target device"
           style={{
-            fontSize: '11px', padding: '3px 6px',
-            fontFamily: 'var(--font-mono)',
-            border: selectedSerial ? '1px solid var(--color-border)' : '1px solid #dc2626',
-            borderRadius: '5px', background: 'var(--color-white)',
-            cursor: 'pointer', maxWidth: 220,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 2,
+            padding: 2,
+            border: device.devices.length > 1 && !activeSerial
+              ? '1px solid #dc2626'
+              : '1px solid var(--color-border)',
+            borderRadius: 6,
+            background: '#f8fafc',
+            overflowX: 'auto',
+            maxWidth: 360,
           }}
         >
-          <option value="">⚠ 디바이스 선택 필요…</option>
-          {device.devices.map((d) => (
-            <option key={d.serial} value={d.serial}>
-              {d.serial.startsWith('emulator-') ? '🖥 ' : '📱 '}{d.serial}
-            </option>
-          ))}
-        </select>
+          {targetOptions.map((target) => {
+            const active = activeSerial === target.serial;
+            const needsAttention = !target.selectable && ['offline', 'unauthorized'].includes(target.state);
+            return (
+              <button
+                key={target.serial}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                disabled={!target.selectable}
+                onClick={() => onSelect(target.serial)}
+                title={target.selectable ? `탐색 대상: ${target.title}` : `연결 대기: ${target.title}`}
+                style={{
+                  flexShrink: 0,
+                  padding: '3px 8px',
+                  border: 'none',
+                  borderRadius: 4,
+                  background: active ? 'var(--color-black)' : 'transparent',
+                  color: active
+                    ? 'var(--color-white)'
+                    : needsAttention ? '#dc2626' : 'var(--color-gray)',
+                  fontFamily: 'var(--font)',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: target.selectable ? 'pointer' : 'not-allowed',
+                  opacity: target.selectable ? 1 : 0.7,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {target.label}{needsAttention ? ` ${target.state}` : ''}
+              </button>
+            );
+          })}
+        </div>
       )}
       {!anyEmu && btn(onStart, 'Start emulator', 'Launch default AVD')}
       {isStall && btn(() => onKill(anyEmu.serial), 'Kill', 'Stop stall emulator', true)}

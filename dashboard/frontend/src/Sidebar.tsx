@@ -11,6 +11,7 @@ import React, { useEffect, useState } from 'react';
 interface SidebarTour {
   tour_id: string;
   stage: string;
+  started_at?: number;
   app_label?: string;
   apk_filename?: string;
   package_name?: string;
@@ -30,6 +31,12 @@ const RUNNING_STAGES = new Set([
   'PREPROCESSING_DATA', 'LLM_ANALYZING', 'LLM_ANNOTATING', 'BUILDING_SCREENMAP',
 ]);
 
+function sortToursNewestFirst(a: SidebarTour, b: SidebarTour): number {
+  const byTime = (b.started_at || 0) - (a.started_at || 0);
+  if (byTime !== 0) return byTime;
+  return b.tour_id.localeCompare(a.tour_id);
+}
+
 export function Sidebar({ currentPage, activeTourId, onGoDashboard, onOpenGraph }: SidebarProps) {
   const [open, setOpen] = useState(false);
   const [tours, setTours] = useState<SidebarTour[]>([]);
@@ -42,7 +49,9 @@ export function Sidebar({ currentPage, activeTourId, onGoDashboard, onOpenGraph 
       try {
         const r = await fetch('/api/tours');
         const d = await r.json();
-        if (!cancelled) setTours(d.tours || []);
+        if (!cancelled) {
+          setTours(((d.tours || []) as SidebarTour[]).slice().sort(sortToursNewestFirst));
+        }
       } catch {
         if (!cancelled) setTours([]);
       }

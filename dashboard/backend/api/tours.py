@@ -110,6 +110,10 @@ async def list_tours():
             "device_active": active_serial is not None,
             "quality": quality,  # null 또는 8 필드 객체 (additive)
         })
+    tours.sort(
+        key=lambda j: (j.get("started_at") or 0, j.get("tour_id") or ""),
+        reverse=True,
+    )
     return {"tours": tours}
 
 

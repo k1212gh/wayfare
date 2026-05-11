@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   Node,
@@ -17,7 +17,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 import { Legend } from './graph/Legend';
-import { CATEGORY_COLOR } from './graph/colors';
+import { CATEGORY_COLOR, EDGE_KIND_DESC } from './graph/colors';
 import { FloatingEdge } from './graph/FloatingEdge';
 import { ScreenshotNode } from './graph/ScreenshotNode';
 
@@ -36,18 +36,28 @@ interface ScreenMapViewProps {
 /** ReactFlow 안에서만 사용 가능한 useReactFlow hook 으로 selected 노드 → viewport 중앙. */
 function PanToSelected({ selectedId, nodes }: { selectedId?: string; nodes: Node[] }) {
   const { setCenter } = useReactFlow();
+  const lastPannedIdRef = useRef<string>('');
   useEffect(() => {
     if (!selectedId) return;
+    if (lastPannedIdRef.current === selectedId) return;
     const n = nodes.find((x) => x.id === selectedId);
     if (!n || !n.position) return;
     const w = (n as any).width || (n as any).measured?.width || 220;
     const h = (n as any).height || (n as any).measured?.height || 80;
+    lastPannedIdRef.current = selectedId;
     setCenter(n.position.x + w / 2, n.position.y + h / 2, { zoom: 1.1, duration: 600 });
   }, [selectedId, nodes, setCenter]);
   return null;
 }
 
-function buildLayout(nodes: any[], edges: any[], showScreenshots: boolean, tourId: string) {
+function buildLayout(
+  nodes: any[],
+  edges: any[],
+  showScreenshots: boolean,
+  showEdgeLabels: boolean,
+  onOpenEdge: (edgeData: any) => void,
+  tourId: string,
+) {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   const nodeW = showScreenshots ? 180 : 200;
@@ -113,8 +123,11 @@ function buildLayout(nodes: any[], edges: any[], showScreenshots: boolean, tourI
       entry: '외부/시스템 진입 가상 노드',
       probed: 'am start로 강제 런치 성공 — 런타임 도달 가능 확인 (UI 미캡처)',
     };
-    const hasUICaptured = !!n.screenshot_ref && (n.widgets?.length ?? 0) > 0;
-    const jitNeeded = status === 'probed' && !hasUICaptured;
+    const hasScreenshot = !!n.screenshot_ref;
+    const hasWidgets = (n.widgets?.length ?? 0) > 0;
+    const hasUICaptured = hasScreenshot && hasWidgets;
+    const jitNeeded = status === 'probed' && !hasScreenshot;
+    const uiMissing = hasScreenshot && !hasWidgets;
     const prioDesc: Record<string, string> = {
       A: 'User screen (capture 필요) — scan 대상',
       B: 'Plumbing/Trampoline (UI 없음) — scan skip',
@@ -137,6 +150,7 @@ function buildLayout(nodes: any[], edges: any[], showScreenshots: boolean, tourI
       prio && prio in prioDesc ? `Capture priority: ${prio} — ${prioDesc[prio]}` : null,
       n.capture_reason ? `  (reason: ${n.capture_reason})` : null,
       jitNeeded ? '⚡ JIT capture needed: MobileGPT 에이전트가 이 화면에 도달하면 런타임에 uiautomator로 스크린샷/UI 요소를 즉시 캡처 — 파이프라인에서는 am start가 로그인/파라미터 게이트로 막혀 UI 미확보' : null,
+      uiMissing ? 'Screenshot captured, but no UI element list was extracted for this node.' : null,
       n.is_launcher ? 'Launcher: 예' : null,
       n.statically_reachable ? 'Static reachable: DEX 정적 참조 확인됨' : null,
       isSystemTriggered ? '⚡ System-triggered only: 알림/위젯/AlarmManager로만 진입' : null,
@@ -148,11 +162,11 @@ function buildLayout(nodes: any[], edges: any[], showScreenshots: boolean, tourI
     const isFragment = n.node_type === 'fragment';
     const isActivity = n.node_type === 'activity' || (!n.node_type && !isSystem && !isEntry);
 
-    // Show the screenshot card ONLY when this node actually has a captured
-    // screenshot + UI elements. Otherwise every declared/probed activity
-    // would show as a 180×200 empty frame, which makes the graph look like
-    // the pipeline was interrupted mid-run. Those get a compact text card.
-    const useThumbnail = showScreenshots && hasUICaptured;
+    // Show a screenshot card whenever an actual screenshot exists. Some
+    // dynamically discovered page_* nodes have screenshots but no extracted
+    // widgets; hiding those made the graph look like only static A nodes
+    // could expand.
+    const useThumbnail = showScreenshots && hasScreenshot;
 
     // Capture priority A/B/C badge — makes the "which of these is actually
     // an interactive user screen" distinction visible at a glance.
@@ -232,15 +246,15 @@ function buildLayout(nodes: any[], edges: any[], showScreenshots: boolean, tourI
   // Simplified 4-group palette — easier to read at a glance
   const STYLE_BY_KIND: Record<string, { stroke: string; dash?: string; width: number; showLabel?: boolean }> = {
     // Group A: confirmed transitions (solid blue family)
-    navigate:       { stroke: '#2563eb', width: 2, showLabel: true },
-    two_hop:        { stroke: '#6d28d9', width: 1.8, showLabel: true },
+    navigate:       { stroke: '#2563eb', width: 1.35, showLabel: true },
+    two_hop:        { stroke: '#6d28d9', width: 1.25, showLabel: true },
     // contains 는 구조관계 (Activity ↔ Fragment) — 라벨 끄고 점선만으로 표현
     // (이전: 81/113 엣지가 contains 라 fragment_transaction 라벨 도배되던 문제 해소)
     contains:       { stroke: '#0ea5e9', width: 1.0, dash: '3,5', showLabel: false },
     // Group B: entry/external (green family)
-    launcher:       { stroke: '#16a34a', width: 2.2, showLabel: true },
-    intent_filter:  { stroke: '#16a34a', width: 1.3, dash: '4,2', showLabel: true },
-    pending_intent: { stroke: '#65a30d', width: 1.3, dash: '5,3', showLabel: true },
+    launcher:       { stroke: '#16a34a', width: 1.7, showLabel: true },
+    intent_filter:  { stroke: '#16a34a', width: 1.1, dash: '4,2', showLabel: true },
+    pending_intent: { stroke: '#65a30d', width: 1.1, dash: '5,3', showLabel: true },
     // Group C: weak / inferred (gray, no label)
     static_ref:     { stroke: '#cbd5e1', width: 0.8, dash: '2,4', showLabel: false },
     global:         { stroke: '#9ca3af', width: 1.0, dash: '2,3', showLabel: false },
@@ -278,24 +292,45 @@ function buildLayout(nodes: any[], edges: any[], showScreenshots: boolean, tourI
 
   // 노드 → label 빠른 lookup (target label 사용을 위해)
   const nodeLabelMap: Record<string, string> = {};
-  for (const n of nodes) nodeLabelMap[n.screen_id] = n.label || '';
+  const nodeMap: Record<string, any> = {};
+  for (const n of nodes) {
+    nodeLabelMap[n.screen_id] = n.label || '';
+    nodeMap[n.screen_id] = n;
+  }
 
   for (const e of edges) {
     const kind: string = e.kind || (e.trigger_action === 'press_back' ? 'back' : 'navigate');
     const confidence: string = e.confidence || (e.source === 'walk' ? 'observed' : 'static_intent');
     const s = STYLE_BY_KIND[kind] || STYLE_BY_KIND.navigate;
 
-    const label = s.showLabel ? friendlyLabel(e, kind, nodeLabelMap[e.to]) : '';
+    const actionLabel = friendlyLabel(e, kind, nodeLabelMap[e.to]);
+    const label = showEdgeLabels && s.showLabel ? actionLabel : '';
+    const edgeId = e.edge_id || `${e.from}-${e.to}`;
 
-    const opacity = confidence === 'static_intent' && kind !== 'two_hop' && kind !== 'navigate' ? 0.6 : 1;
-    const boost = (e.frequency || 0) >= 3 ? 0.8 : 0;
+    const baseOpacity = showEdgeLabels ? 0.82 : (kind === 'navigate' ? 0.44 : 0.56);
+    const opacity = confidence === 'static_intent' && kind !== 'two_hop' && kind !== 'navigate'
+      ? Math.min(baseOpacity, 0.42)
+      : baseOpacity;
+    const boost = showEdgeLabels && (e.frequency || 0) >= 3 ? 0.5 : 0;
 
     flowEdges.push({
-      id: e.edge_id || `${e.from}-${e.to}`,
+      id: edgeId,
       source: e.from,
       target: e.to,
       type: 'floating',
-      data: { kind, confidence, label },
+      data: {
+        edgeId,
+        kind,
+        confidence,
+        label,
+        actionLabel,
+        raw: e,
+        sourceNode: nodeMap[e.from],
+        targetNode: nodeMap[e.to],
+        sourceLabel: nodeLabelMap[e.from] || e.from,
+        targetLabel: nodeLabelMap[e.to] || e.to,
+        onOpenEdge,
+      },
       style: {
         stroke: s.stroke,
         strokeWidth: s.width + boost,
@@ -315,22 +350,92 @@ function buildLayout(nodes: any[], edges: any[], showScreenshots: boolean, tourI
 
 const nodeTypes = { screenshotNode: ScreenshotNode };
 const edgeTypes = { floating: FloatingEdge };
+type GraphMode = 'flow' | 'structure' | 'diagnostics' | 'custom';
+type ActionBounds = { left: number; top: number; right: number; bottom: number; label?: string };
+
+function parseBoundsValue(value: any): ActionBounds | null {
+  if (!value) return null;
+  if (Array.isArray(value) && value.length >= 4) {
+    const [left, top, right, bottom] = value.map(Number);
+    if ([left, top, right, bottom].every(Number.isFinite) && right > left && bottom > top) {
+      return { left, top, right, bottom };
+    }
+  }
+  if (typeof value === 'object') {
+    const left = Number(value.left ?? value.x1 ?? value.x);
+    const top = Number(value.top ?? value.y1 ?? value.y);
+    const right = Number(value.right ?? value.x2 ?? (Number.isFinite(left) ? left + Number(value.width) : NaN));
+    const bottom = Number(value.bottom ?? value.y2 ?? (Number.isFinite(top) ? top + Number(value.height) : NaN));
+    if ([left, top, right, bottom].every(Number.isFinite) && right > left && bottom > top) {
+      return { left, top, right, bottom, label: value.label || value.text || value.content_desc };
+    }
+  }
+  if (typeof value !== 'string') return null;
+  const match = value.match(/^(.*?)@?\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]/);
+  if (!match) return null;
+  const [, rawLabel, x1, y1, x2, y2] = match;
+  const left = Number(x1);
+  const top = Number(y1);
+  const right = Number(x2);
+  const bottom = Number(y2);
+  if (![left, top, right, bottom].every(Number.isFinite) || right <= left || bottom <= top) return null;
+  const label = rawLabel.replace(/^(click|tap|press)\s+/i, '').trim();
+  return { left, top, right, bottom, label: label || undefined };
+}
+
+function extractActionBounds(raw: any): ActionBounds | null {
+  return (
+    parseBoundsValue(raw?.trigger_bounds) ||
+    parseBoundsValue(raw?.widget_bounds) ||
+    parseBoundsValue(raw?.bounds) ||
+    parseBoundsValue(raw?.bbox) ||
+    parseBoundsValue(raw?.trigger_widget)
+  );
+}
+
+function readableTriggerLabel(value: any): string {
+  if (typeof value !== 'string' || !value.trim()) return '';
+  const parsed = parseBoundsValue(value);
+  if (parsed?.label) return parsed.label;
+  return value.replace(/@\[[^\]]+\]\[[^\]]+\]/, '').trim();
+}
+
+function buildActionText(raw: any, fallback: string): string {
+  const action = raw?.trigger_action || '';
+  const label = readableTriggerLabel(raw?.trigger_widget);
+  if (action === 'click') return label ? `탭: ${label}` : '탭';
+  if (action === 'press_back') return '뒤로가기';
+  if (action === 'intent') return label ? `인텐트: ${label}` : '인텐트';
+  if (action === 'contains') return '화면 포함 관계';
+  return label || fallback || action || '동작';
+}
 
 export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery, tourId, appName, selectedNodeId }: ScreenMapViewProps) {
   const [showScreenshots, setShowScreenshots] = useState(false);
+  const [showEdgeLabels, setShowEdgeLabels] = useState(false);
+  const [edgeFiltersOpen, setEdgeFiltersOpen] = useState(false);
+  const [taskPlannerOpen, setJourneyPlannerOpen] = useState(false);
+  const [graphMode, setGraphMode] = useState<GraphMode>('flow');
+  const [selectedEdgeData, setSelectedEdgeData] = useState<any | null>(null);
   const [pathSource, setPathSource] = useState<string | null>(null);
   const [highlightedPath, setHighlightedPath] = useState<{ nodes: Set<string>; edges: Set<string> } | null>(null);
+  const [planFocus, setPlanFocus] = useState(false);
   const [pathInfo, setPathInfo] = useState<string>('');
   // Natural-language task planning (Claude-powered)
   const [taskInput, setTaskInput] = useState('');
   const [planBusy, setPlanBusy] = useState(false);
   const [planResult, setPlanResult] = useState<any | null>(null);
 
+  const openEdgeDetail = useCallback((edgeData: any) => {
+    setSelectedEdgeData(edgeData);
+  }, []);
+
   const askTask = useCallback(async () => {
     const t = taskInput.trim();
     if (!t) return;
     setPlanBusy(true);
     setPlanResult(null);
+    setPlanFocus(false);
     try {
       const res = await fetch(`/api/tours/${tourId}/plan?task=${encodeURIComponent(t)}`, {
         method: 'POST',
@@ -338,6 +443,7 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
         setPlanResult({ error: err.detail || `HTTP ${res.status}` });
+        setHighlightedPath(null);
         return;
       }
       const data = await res.json();
@@ -355,9 +461,13 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
           }
         }
         setHighlightedPath({ nodes: nodeSet, edges: edgeSet });
+        setPlanFocus(true);
+      } else {
+        setHighlightedPath(null);
       }
     } catch (e: any) {
       setPlanResult({ error: String(e?.message || e) });
+      setHighlightedPath(null);
     } finally {
       setPlanBusy(false);
     }
@@ -381,6 +491,7 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
           }
         }
         setHighlightedPath({ nodes: pathNodeSet, edges: pathEdgeSet });
+        setPlanFocus(false);
         setPathInfo(`${best.hop_count} hops, cost ${best.total_cost}`);
       }
     } catch { setPathInfo('Path error'); }
@@ -388,8 +499,12 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
 
   const filteredNodes = useMemo(() => {
     let nodes = graph.nodes;
-    if (filterCategory) nodes = nodes.filter((n: any) => n.functional_category === filterCategory);
-    if (searchQuery) {
+    if (planFocus && highlightedPath) {
+      nodes = nodes.filter((n: any) => highlightedPath.nodes.has(n.screen_id));
+    } else if (filterCategory) {
+      nodes = nodes.filter((n: any) => n.functional_category === filterCategory);
+    }
+    if (!planFocus && searchQuery) {
       const q = searchQuery.toLowerCase();
       nodes = nodes.filter((n: any) =>
         (n.label || '').toLowerCase().includes(q) ||
@@ -398,7 +513,7 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
       );
     }
     return nodes;
-  }, [graph.nodes, filterCategory, searchQuery]);
+  }, [graph.nodes, filterCategory, searchQuery, planFocus, highlightedPath]);
 
   const filteredNodeIds = useMemo(() => new Set(filteredNodes.map((n: any) => n.screen_id)), [filteredNodes]);
   // Edge kind filter — 사용자가 toolbar 에서 toggle 한 kind 들만 표시.
@@ -410,32 +525,72 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
   const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(
     new Set(['contains', 'static_ref', 'global'])
   );
+  const applyMode = useCallback((mode: Exclude<GraphMode, 'custom'>) => {
+    setGraphMode(mode);
+    if (mode === 'flow') {
+      setHiddenKinds(new Set(['contains', 'static_ref', 'global']));
+      setShowEdgeLabels(false);
+    } else if (mode === 'structure') {
+      setHiddenKinds(new Set(['static_ref', 'global']));
+      setShowEdgeLabels(false);
+    } else {
+      setHiddenKinds(new Set(['contains']));
+      setShowEdgeLabels(true);
+    }
+  }, []);
   const filteredEdges = useMemo(
     () => graph.edges.filter((e: any) => {
       if (!filteredNodeIds.has(e.from) || !filteredNodeIds.has(e.to)) return false;
+      const edgeId = e.edge_id || `${e.from}-${e.to}`;
+      if (planFocus && highlightedPath) return highlightedPath.edges.has(edgeId);
       const kind = e.kind || (e.trigger_action === 'press_back' ? 'back' : 'navigate');
       return !hiddenKinds.has(kind);
     }),
-    [graph.edges, filteredNodeIds, hiddenKinds]
+    [graph.edges, filteredNodeIds, hiddenKinds, planFocus, highlightedPath]
   );
 
   // 그래프에 실제 등장하는 kind 별 카운트 (toggle UI 에 표시)
   const edgeKindCounts = useMemo(() => {
     const c: Record<string, number> = {};
-    for (const e of graph.edges) {
+    const countEdges = planFocus && highlightedPath
+      ? graph.edges.filter((e: any) => highlightedPath.edges.has(e.edge_id || `${e.from}-${e.to}`))
+      : graph.edges;
+    for (const e of countEdges) {
       if (!filteredNodeIds.has(e.from) || !filteredNodeIds.has(e.to)) continue;
       const k = e.kind || (e.trigger_action === 'press_back' ? 'back' : 'navigate');
       c[k] = (c[k] || 0) + 1;
     }
     return c;
-  }, [graph.edges, filteredNodeIds]);
+  }, [graph.edges, filteredNodeIds, planFocus, highlightedPath]);
+
+  const visibleEdgeCount = useMemo(
+    () => planFocus && highlightedPath
+      ? Object.values(edgeKindCounts).reduce((sum, count) => sum + count, 0)
+      : Object.entries(edgeKindCounts)
+      .reduce((sum, [kind, count]) => sum + (hiddenKinds.has(kind) ? 0 : count), 0),
+    [edgeKindCounts, hiddenKinds, planFocus, highlightedPath]
+  );
+  const totalEdgeCount = useMemo(
+    () => Object.values(edgeKindCounts).reduce((sum, count) => sum + count, 0),
+    [edgeKindCounts]
+  );
+  const categoryLegendItems = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const n of filteredNodes) {
+      const cat = n.functional_category || 'other';
+      counts[cat] = (counts[cat] || 0) + 1;
+    }
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10);
+  }, [filteredNodes]);
 
   const layout = useMemo(() => {
     // Tag the nodes array with entry_node_id so buildLayout can highlight it
     const taggedNodes: any = filteredNodes.slice();
     taggedNodes.entry_node_id = graph.entry_node;
-    return buildLayout(taggedNodes, filteredEdges, showScreenshots, tourId);
-  }, [filteredNodes, filteredEdges, showScreenshots, tourId, graph.entry_node]);
+    return buildLayout(taggedNodes, filteredEdges, showScreenshots, showEdgeLabels, openEdgeDetail, tourId);
+  }, [filteredNodes, filteredEdges, showScreenshots, showEdgeLabels, openEdgeDetail, tourId, graph.entry_node]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(layout.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(layout.edges);
@@ -451,7 +606,16 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
   }, [layout.nodes, highlightedPath]);
 
   const styledEdges = useMemo(() => {
-    if (!highlightedPath) return layout.edges;
+    const selectedEdgeId = selectedEdgeData?.edgeId || '';
+    const withSelected = (edgeList: Edge[]) => edgeList.map((e) => {
+      if (e.id !== selectedEdgeId) return e;
+      return {
+        ...e,
+        style: { ...e.style, stroke: '#111827', strokeWidth: 3, opacity: 1 },
+        markerEnd: { type: MarkerType.ArrowClosed, width: 15, height: 15, color: '#111827' },
+      };
+    });
+    if (!highlightedPath) return withSelected(layout.edges);
     return layout.edges.map((e) => {
       const onPath = highlightedPath.edges.has(e.id);
       if (!onPath) return { ...e, style: { ...e.style, opacity: 0.15 } };
@@ -462,7 +626,7 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
         animated: true,
       };
     });
-  }, [layout.edges, highlightedPath]);
+  }, [layout.edges, highlightedPath, selectedEdgeData]);
 
   useEffect(() => { setNodes(styledNodes); }, [styledNodes, setNodes]);
   useEffect(() => { setEdges(styledEdges); }, [styledEdges, setEdges]);
@@ -476,8 +640,10 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
       } else {
         // Normal click = select node + set as path source
         onNodeSelect(node.data);
+        setSelectedEdgeData(null);
         setPathSource(node.id);
         setHighlightedPath(null);
+        setPlanFocus(false);
         setPathInfo('Shift+click another node for path');
       }
     },
@@ -498,85 +664,125 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
 
   return (
     <>
-    {/* Edge-hover tooltip element (imperatively positioned to avoid re-renders) */}
-    <div id="sa-edge-tooltip" style={{
-      display: 'none', position: 'fixed', zIndex: 100000,
-      maxWidth: 320, background: 'rgba(17,24,39,0.96)', color: '#f9fafb',
-      padding: '8px 10px', borderRadius: 6, fontSize: 11, lineHeight: 1.45,
-      fontFamily: "'Inter', sans-serif", pointerEvents: 'none',
-      whiteSpace: 'pre-wrap', boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-      border: '1px solid rgba(255,255,255,0.1)',
-    }} />
-    {/* Task navigator overlay — natural-language task → Claude plan */}
-    <div style={{
-      position: 'absolute', top: 16, left: 16, zIndex: 30,
-      background: 'rgba(255,255,255,0.96)', border: '1px solid var(--color-border)',
-      borderRadius: 8, padding: '10px 12px', maxWidth: 360,
-      boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-    }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-gray)',
-                    marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-        Ask Claude — 자연어 Task로 경로 계획
-      </div>
-      <div style={{ display: 'flex', gap: 6 }}>
-        <input
-          type="text"
-          value={taskInput}
-          placeholder={'예: "가사 화면 보여줘", "계정 전환"'}
-          onChange={(e) => setTaskInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !planBusy) askTask(); }}
-          disabled={planBusy}
+    {/* Task navigator sits below search/filter and stays closed by default. */}
+    <div style={{ position: 'absolute', top: 62, left: 16, zIndex: 30 }}>
+      {!taskPlannerOpen ? (
+        <button
+          type="button"
+          onClick={() => setJourneyPlannerOpen(true)}
           style={{
-            flex: 1, fontSize: 12, padding: '5px 8px',
-            border: '1px solid var(--color-border)', borderRadius: 4,
+            padding: '8px 12px',
+            background: 'rgba(255,255,255,0.96)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 8,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+            fontSize: 12,
+            fontWeight: 600,
+            color: 'var(--color-black)',
+            cursor: 'pointer',
             fontFamily: 'var(--font)',
           }}
-        />
-        <button onClick={askTask} disabled={planBusy || !taskInput.trim()} style={{
-          fontSize: 11, padding: '5px 12px', cursor: planBusy ? 'wait' : 'pointer',
-          background: 'var(--color-black)', color: 'var(--color-white)',
-          border: 'none', borderRadius: 4, fontFamily: 'var(--font)',
-          opacity: planBusy || !taskInput.trim() ? 0.5 : 1,
-        }}>
-          {planBusy ? '...' : 'Plan'}
+        >
+          Ask Claude
         </button>
-      </div>
-      {planResult && (
-        <div style={{ marginTop: 8, fontSize: 11, maxHeight: 240, overflowY: 'auto' }}>
-          {planResult.error ? (
-            <div style={{ color: '#dc2626' }}>error: {planResult.error}</div>
-          ) : (
-            <>
-              {Array.isArray(planResult.steps) && planResult.steps.length > 0 ? (
-                <ol style={{ paddingLeft: 16, margin: '4px 0' }}>
-                  {planResult.steps.map((s: any, i: number) => (
-                    <li key={i} style={{ marginBottom: 4, lineHeight: 1.4 }}>
-                      <span style={{ fontFamily: 'var(--font-mono)', color: '#6b7280' }}>
-                        {s.from} → {s.to}
-                      </span>
-                      {s.trigger && <span style={{ color: '#059669' }}> [{s.trigger}]</span>}
-                      {s.why && <div style={{ color: '#374151', fontSize: 10, marginTop: 2 }}>{s.why}</div>}
-                    </li>
-                  ))}
-                </ol>
+      ) : (
+        <div style={{
+          background: 'rgba(255,255,255,0.96)', border: '1px solid var(--color-border)',
+          borderRadius: 8, padding: '10px 12px', width: 340,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            fontSize: 11, fontWeight: 600, color: 'var(--color-gray)',
+            marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5,
+          }}>
+            <span>Ask Claude</span>
+            <button
+              type="button"
+              onClick={() => setJourneyPlannerOpen(false)}
+              aria-label="Close task navigator"
+              style={{
+                background: 'transparent', border: 'none', color: 'var(--color-gray)',
+                cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: 0,
+              }}
+            >
+              ×
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              type="text"
+              value={taskInput}
+              placeholder={'예: "가사 화면 보여줘", "계정 전환"'}
+              onChange={(e) => setTaskInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !planBusy) askTask(); }}
+              disabled={planBusy}
+              style={{
+                flex: 1, fontSize: 12, padding: '5px 8px',
+                border: '1px solid var(--color-border)', borderRadius: 4,
+                fontFamily: 'var(--font)',
+              }}
+            />
+            <button onClick={askTask} disabled={planBusy || !taskInput.trim()} style={{
+              fontSize: 11, padding: '5px 12px', cursor: planBusy ? 'wait' : 'pointer',
+              background: 'var(--color-black)', color: 'var(--color-white)',
+              border: 'none', borderRadius: 4, fontFamily: 'var(--font)',
+              opacity: planBusy || !taskInput.trim() ? 0.5 : 1,
+            }}>
+              {planBusy ? '...' : 'Plan'}
+            </button>
+          </div>
+          {planResult && (
+            <div style={{ marginTop: 8, fontSize: 11, maxHeight: 240, overflowY: 'auto' }}>
+              {planResult.error ? (
+                <div style={{ color: '#dc2626' }}>error: {planResult.error}</div>
               ) : (
-                <div style={{ color: 'var(--color-gray)' }}>No steps returned.</div>
+                <>
+                  {Array.isArray(planResult.steps) && planResult.steps.length > 0 ? (
+                    <ol style={{ paddingLeft: 16, margin: '4px 0' }}>
+                      {planResult.steps.map((s: any, i: number) => (
+                        <li key={i} style={{ marginBottom: 4, lineHeight: 1.4 }}>
+                          <span style={{ fontFamily: 'var(--font-mono)', color: '#6b7280' }}>
+                            {s.from} → {s.to}
+                          </span>
+                          {s.trigger && <span style={{ color: '#059669' }}> [{s.trigger}]</span>}
+                          {s.why && <div style={{ color: '#374151', fontSize: 10, marginTop: 2 }}>{s.why}</div>}
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <div style={{ color: 'var(--color-gray)' }}>No steps returned.</div>
+                  )}
+                  {planResult.notes && (
+                    <div style={{ marginTop: 4, padding: '4px 6px', background: '#fef3c7',
+                                  color: '#92400e', borderRadius: 3, fontSize: 10 }}>
+                      {planResult.notes}
+                    </div>
+                  )}
+                </>
               )}
-              {planResult.notes && (
-                <div style={{ marginTop: 4, padding: '4px 6px', background: '#fef3c7',
-                              color: '#92400e', borderRadius: 3, fontSize: 10 }}>
-                  {planResult.notes}
-                </div>
-              )}
-            </>
+            </div>
           )}
         </div>
       )}
     </div>
+    {selectedEdgeData && (
+      <EdgeDetailPanel
+        edgeData={selectedEdgeData}
+        tourId={tourId}
+        onClose={() => setSelectedEdgeData(null)}
+        onSelectNode={(node: any) => {
+          if (!node) return;
+          onNodeSelect(node);
+          setSelectedEdgeData(null);
+        }}
+      />
+    )}
     <ReactFlow
       nodes={nodes} edges={edges}
       onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
       onNodeClick={onNodeClick} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
+      onPaneClick={() => setSelectedEdgeData(null)}
       fitView minZoom={0.05} maxZoom={2}
       proOptions={{ hideAttribution: true }}
     >
@@ -590,14 +796,34 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
       />
 
       <Panel position="top-right">
-        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', maxWidth: '70vw', justifyContent: 'flex-end' }}>
+        <div style={{
+          display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap',
+          maxWidth: 'min(68vw, 960px)', justifyContent: 'flex-end',
+        }}>
+          <div style={{
+            display: 'inline-flex', gap: 2, padding: 3,
+            background: 'rgba(255,255,255,0.95)',
+            border: '1px solid #e5e5e5', borderRadius: 8,
+          }}>
+            <ModeBtn active={graphMode === 'flow'} onClick={() => applyMode('flow')}>Flow</ModeBtn>
+            <ModeBtn active={graphMode === 'structure'} onClick={() => applyMode('structure')}>Structure</ModeBtn>
+            <ModeBtn active={graphMode === 'diagnostics'} onClick={() => applyMode('diagnostics')}>Diagnostics</ModeBtn>
+          </div>
           <PanelBtn active={showScreenshots} onClick={() => setShowScreenshots(!showScreenshots)}>
-            {showScreenshots ? 'Hide Screenshots' : 'Show Screenshots'}
+            {showScreenshots ? 'Screenshots On' : 'Screenshots Off'}
+          </PanelBtn>
+          <PanelBtn active={showEdgeLabels} onClick={() => setShowEdgeLabels(!showEdgeLabels)}>
+            Labels
           </PanelBtn>
           {highlightedPath && (
-            <PanelBtn onClick={() => { setHighlightedPath(null); setPathSource(null); setPathInfo(''); }}>
-              Clear Path
-            </PanelBtn>
+            <>
+              <PanelBtn active={planFocus} onClick={() => setPlanFocus(!planFocus)}>
+                Focus Plan
+              </PanelBtn>
+              <PanelBtn onClick={() => { setHighlightedPath(null); setPlanFocus(false); setPathSource(null); setPathInfo(''); }}>
+                Clear Path
+              </PanelBtn>
+            </>
           )}
           <PanelBtn onClick={downloadKG}>Download ScreenMap</PanelBtn>
           {pathInfo && (
@@ -605,8 +831,11 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
               {pathInfo}
             </span>
           )}
-          {/* Edge kind filter chips — 클릭으로 해당 kind 엣지 숨김 */}
-          {Object.keys(edgeKindCounts).length > 0 && (
+          <PanelBtn active={edgeFiltersOpen} onClick={() => setEdgeFiltersOpen(!edgeFiltersOpen)}>
+            Edges {visibleEdgeCount}/{totalEdgeCount}
+          </PanelBtn>
+          {/* Edge kind filter chips — opened only when needed to keep the canvas readable. */}
+          {edgeFiltersOpen && Object.keys(edgeKindCounts).length > 0 && (
             <div style={{
               display: 'flex', gap: '3px', alignItems: 'center',
               padding: '4px 8px', background: 'rgba(255,255,255,0.95)',
@@ -625,8 +854,9 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
                         const next = new Set(hiddenKinds);
                         if (hidden) next.delete(kind); else next.add(kind);
                         setHiddenKinds(next);
+                        setGraphMode('custom');
                       }}
-                      title={hidden ? `${kind} 보이기` : `${kind} 숨기기`}
+                      title={hidden ? `Show ${kind}` : `Hide ${kind}`}
                       style={{
                         cursor: 'pointer', fontSize: '10px',
                         padding: '2px 7px', borderRadius: '10px',
@@ -652,9 +882,13 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
           display: 'flex', gap: '8px', flexWrap: 'wrap', padding: '6px 10px',
           background: 'rgba(255,255,255,0.95)', border: '1px solid #e5e5e5', borderRadius: '6px', fontSize: '10px',
         }}>
-          {Object.entries(CATEGORY_COLOR).slice(0, 7).map(([cat, color]) => (
+          {categoryLegendItems.map(([cat, count]) => (
             <span key={cat} style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-              <span style={{ width: 8, height: 8, borderRadius: '2px', background: color }} /> {cat}
+              <span style={{
+                width: 8, height: 8, borderRadius: '2px',
+                background: CATEGORY_COLOR[cat] || CATEGORY_COLOR.other,
+              }} />
+              {cat} <span style={{ color: '#9ca3af', fontFamily: 'var(--font-mono)' }}>{count}</span>
             </span>
           ))}
         </div>
@@ -666,6 +900,368 @@ export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery
   );
 }
 
+function EdgeDetailPanel({
+  edgeData,
+  tourId,
+  onClose,
+  onSelectNode,
+}: {
+  edgeData: any;
+  tourId: string;
+  onClose: () => void;
+  onSelectNode: (node: any) => void;
+}) {
+  const raw = edgeData.raw || {};
+  const kind = edgeData.kind || raw.kind || 'navigate';
+  const action = buildActionText(raw, edgeData.actionLabel || kind);
+  const actionBounds = extractActionBounds(raw);
+  const actionDetail = [
+    raw.trigger_action ? `action=${raw.trigger_action}` : null,
+    raw.trigger_widget ? `element=${raw.trigger_widget}` : null,
+  ].filter(Boolean).join(' · ');
+  const source = edgeData.sourceNode;
+  const target = edgeData.targetNode;
+  const transitionScreenshotUrl = edgeData.edgeId
+    ? `/api/tours/${tourId}/transition-screenshot/${edgeData.edgeId}`
+    : '';
+
+  return (
+    <div style={{
+      position: 'absolute',
+      top: 72,
+      right: 16,
+      zIndex: 36,
+      width: 430,
+      maxWidth: 'calc(100vw - 40px)',
+      background: 'rgba(255,255,255,0.98)',
+      border: '1px solid var(--color-border)',
+      borderRadius: 8,
+      boxShadow: '0 10px 30px rgba(15,23,42,0.16)',
+      fontFamily: 'var(--font)',
+      overflow: 'hidden',
+    }}>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        padding: '10px 12px', borderBottom: '1px solid var(--color-border)',
+      }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-gray)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            Transition
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2 }}>
+            {edgeData.sourceLabel} → {edgeData.targetLabel}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close transition detail"
+          style={{
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            color: 'var(--color-gray)', fontSize: 18, lineHeight: 1, padding: 4,
+          }}
+        >
+          ×
+        </button>
+      </div>
+
+      <div style={{ padding: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+          <ScreenshotPreview
+            tourId={tourId}
+            node={source}
+            label="출발 화면"
+            overlay={`해야 할 동작: ${action}`}
+            preferredUrl={transitionScreenshotUrl}
+            highlightBounds={actionBounds}
+            highlightLabel={action}
+            onClick={() => onSelectNode(source)}
+          />
+          <ScreenshotPreview
+            tourId={tourId}
+            node={target}
+            label="도착 화면"
+            overlay="이 화면으로 이동"
+            onClick={() => onSelectNode(target)}
+          />
+        </div>
+
+        <div style={{
+          padding: '9px 10px',
+          background: '#f8fafc',
+          border: '1px solid var(--color-border)',
+          borderRadius: 6,
+          fontSize: 12,
+          lineHeight: 1.5,
+        }}>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+            <Badge>{kind}</Badge>
+            <Badge>{edgeData.confidence || 'unknown'}</Badge>
+          </div>
+          <div><strong>동작:</strong> {action}</div>
+          {actionDetail && (
+            <div style={{ color: 'var(--color-gray)', fontFamily: 'var(--font-mono)', fontSize: 11, marginTop: 2 }}>
+              {actionDetail}
+            </div>
+          )}
+          {EDGE_KIND_DESC[kind] && (
+            <div style={{ color: '#374151', marginTop: 6 }}>
+              {EDGE_KIND_DESC[kind]}
+            </div>
+          )}
+          {raw.condition && (
+            <div style={{ color: 'var(--color-gray)', marginTop: 6 }}>
+              condition: {String(raw.condition)}
+            </div>
+          )}
+          {raw.outcome && (
+            <div style={{ color: '#059669', marginTop: 6 }}>
+              outcome: {String(raw.outcome)}
+            </div>
+          )}
+          {!actionBounds && (
+            <div style={{ color: 'var(--color-gray)', fontSize: 10.5, marginTop: 8 }}>
+              이 간선에는 버튼 좌표가 없어 위치 박스 대신 trigger 라벨만 표시합니다.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ScreenshotPreview({
+  tourId,
+  node,
+  label,
+  overlay,
+  preferredUrl,
+  highlightBounds,
+  highlightLabel,
+  onClick,
+}: {
+  tourId: string;
+  node: any;
+  label: string;
+  overlay: string;
+  preferredUrl?: string;
+  highlightBounds?: ActionBounds | null;
+  highlightLabel?: string;
+  onClick: () => void;
+}) {
+  const [failed, setFailed] = useState(false);
+  const mediaRef = useRef<HTMLDivElement | null>(null);
+  const [urlIndex, setUrlIndex] = useState(0);
+  const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
+  const [mediaSize, setMediaSize] = useState({ width: 0, height: 0 });
+  const nodeScreenshotUrl = node?.screenshot_ref && node?.screen_id
+    ? `/api/tours/${tourId}/screenshot/${node.screen_id}`
+    : '';
+  const urls = useMemo(
+    () => Array.from(new Set([preferredUrl, nodeScreenshotUrl].filter(Boolean) as string[])),
+    [preferredUrl, nodeScreenshotUrl],
+  );
+  const urlKey = urls.join('|');
+  const screenshotUrl = urls[urlIndex] || '';
+  const title = node?.label || node?.activity?.split('.').pop() || node?.screen_id || 'Unknown';
+
+  useEffect(() => {
+    setFailed(false);
+    setUrlIndex(0);
+    setNaturalSize({ width: 0, height: 0 });
+  }, [urlKey]);
+
+  useEffect(() => {
+    const el = mediaRef.current;
+    if (!el) return;
+    const update = () => {
+      const rect = el.getBoundingClientRect();
+      setMediaSize({ width: rect.width, height: rect.height });
+    };
+    update();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', update);
+      return () => window.removeEventListener('resize', update);
+    }
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const highlightBox = useMemo(() => {
+    if (!highlightBounds || !naturalSize.width || !naturalSize.height || !mediaSize.width || !mediaSize.height) {
+      return null;
+    }
+    const likelyPhone = naturalSize.width / naturalSize.height > 0.35 && naturalSize.width / naturalSize.height < 0.65;
+    const normalized = Math.max(highlightBounds.right, highlightBounds.bottom) <= 1;
+    const coordWidth = normalized ? 1 : Math.max(likelyPhone ? 1080 : naturalSize.width, highlightBounds.right);
+    const coordHeight = normalized ? 1 : Math.max(likelyPhone ? 2400 : naturalSize.height, highlightBounds.bottom);
+    const imageAspect = naturalSize.width / naturalSize.height;
+    const mediaAspect = mediaSize.width / mediaSize.height;
+    const displayWidth = imageAspect > mediaAspect ? mediaSize.width : mediaSize.height * imageAspect;
+    const displayHeight = imageAspect > mediaAspect ? mediaSize.width / imageAspect : mediaSize.height;
+    const offsetX = (mediaSize.width - displayWidth) / 2;
+    const offsetY = (mediaSize.height - displayHeight) / 2;
+
+    const left = offsetX + (highlightBounds.left / coordWidth) * displayWidth;
+    const top = offsetY + (highlightBounds.top / coordHeight) * displayHeight;
+    const right = offsetX + (highlightBounds.right / coordWidth) * displayWidth;
+    const bottom = offsetY + (highlightBounds.bottom / coordHeight) * displayHeight;
+    const clampedLeft = Math.max(offsetX, Math.min(offsetX + displayWidth, left));
+    const clampedTop = Math.max(offsetY, Math.min(offsetY + displayHeight, top));
+    const clampedRight = Math.max(offsetX, Math.min(offsetX + displayWidth, right));
+    const clampedBottom = Math.max(offsetY, Math.min(offsetY + displayHeight, bottom));
+    if (clampedRight <= clampedLeft || clampedBottom <= clampedTop) return null;
+    return {
+      left: clampedLeft,
+      top: clampedTop,
+      width: clampedRight - clampedLeft,
+      height: clampedBottom - clampedTop,
+      labelLeft: Math.max(6, Math.min(clampedLeft, mediaSize.width - 150)),
+      labelTop: Math.max(6, clampedTop - 26),
+    };
+  }, [highlightBounds, naturalSize, mediaSize]);
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        position: 'relative',
+        minHeight: 210,
+        border: '1px solid var(--color-border)',
+        borderRadius: 8,
+        padding: 0,
+        overflow: 'hidden',
+        background: '#f5f5f5',
+        cursor: node ? 'pointer' : 'default',
+        fontFamily: 'var(--font)',
+      }}
+      title={title}
+    >
+      <div ref={mediaRef} style={{ position: 'relative', height: 210, background: '#f1f5f9' }}>
+        {screenshotUrl && !failed ? (
+          <img
+            src={screenshotUrl}
+            alt={title}
+            onLoad={(e) => {
+              setNaturalSize({
+                width: e.currentTarget.naturalWidth,
+                height: e.currentTarget.naturalHeight,
+              });
+            }}
+            onError={() => {
+              if (urlIndex < urls.length - 1) {
+                setUrlIndex(urlIndex + 1);
+              } else {
+                setFailed(true);
+              }
+            }}
+            style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center', display: 'block' }}
+          />
+        ) : (
+          <div style={{
+            height: 210,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'var(--color-gray)',
+            fontSize: 12,
+            padding: 12,
+            textAlign: 'center',
+          }}>
+            {title}
+          </div>
+        )}
+        {highlightBox && (
+          <>
+            <div style={{
+              position: 'absolute',
+              left: highlightBox.left,
+              top: highlightBox.top,
+              width: highlightBox.width,
+              height: highlightBox.height,
+              border: '2px solid #ef4444',
+              boxShadow: '0 0 0 2px rgba(239,68,68,0.2), 0 0 18px rgba(239,68,68,0.55)',
+              borderRadius: 5,
+              background: 'rgba(239,68,68,0.10)',
+              pointerEvents: 'none',
+            }} />
+            <span style={{
+              position: 'absolute',
+              left: highlightBox.labelLeft,
+              top: highlightBox.labelTop,
+              maxWidth: 'calc(100% - 12px)',
+              padding: '3px 6px',
+              background: '#ef4444',
+              color: '#fff',
+              borderRadius: 5,
+              fontSize: 10,
+              fontWeight: 800,
+              lineHeight: 1.2,
+              boxShadow: '0 2px 8px rgba(15,23,42,0.24)',
+              pointerEvents: 'none',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}>
+              {highlightLabel || '탭'}
+            </span>
+          </>
+        )}
+      </div>
+      <div style={{
+        position: 'absolute', top: 8, left: 8, right: 8,
+        display: 'flex', justifyContent: 'space-between', gap: 6,
+      }}>
+        <span style={{
+          padding: '3px 7px',
+          background: 'rgba(17,24,39,0.82)',
+          color: '#fff',
+          borderRadius: 5,
+          fontSize: 10,
+          fontWeight: 700,
+        }}>
+          {label}
+        </span>
+      </div>
+      <div style={{
+        position: 'absolute',
+        left: 8,
+        right: 8,
+        bottom: 8,
+        padding: '6px 8px',
+        background: 'rgba(255,255,255,0.94)',
+        border: '1px solid rgba(15,23,42,0.12)',
+        borderRadius: 6,
+        color: '#111827',
+        fontSize: 11,
+        fontWeight: 700,
+        lineHeight: 1.35,
+        textAlign: 'left',
+      }}>
+        {overlay}
+      </div>
+    </button>
+  );
+}
+
+function Badge({ children }: { children: React.ReactNode }) {
+  return (
+    <span style={{
+      padding: '2px 7px',
+      background: '#111827',
+      color: '#fff',
+      borderRadius: 999,
+      fontSize: 10,
+      fontWeight: 700,
+      fontFamily: 'var(--font-mono)',
+    }}>
+      {children}
+    </span>
+  );
+}
+
 function PanelBtn({ children, onClick, active }: { children: React.ReactNode; onClick: () => void; active?: boolean }) {
   return (
     <button onClick={onClick} style={{
@@ -673,5 +1269,27 @@ function PanelBtn({ children, onClick, active }: { children: React.ReactNode; on
       border: '1px solid #e5e5e5', borderRadius: '6px', cursor: 'pointer',
       background: active ? '#0a0a0a' : '#fff', color: active ? '#fff' : '#404040',
     }}>{children}</button>
+  );
+}
+
+function ModeBtn({ children, onClick, active }: { children: React.ReactNode; onClick: () => void; active: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        padding: '4px 8px',
+        fontSize: '10px',
+        fontWeight: 600,
+        fontFamily: 'var(--font)',
+        border: 'none',
+        borderRadius: 6,
+        cursor: 'pointer',
+        background: active ? '#0a0a0a' : 'transparent',
+        color: active ? '#fff' : '#525252',
+      }}
+    >
+      {children}
+    </button>
   );
 }

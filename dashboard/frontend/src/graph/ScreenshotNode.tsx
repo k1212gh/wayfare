@@ -8,10 +8,14 @@ export function ScreenshotNode({ data }: { data: any }) {
   const [imgError, setImgError] = useState(false);
   const status: string = data.status || 'resolved';
   const STATUS_DOT: Record<string, string> = {
+    declared: '#cbd5e1',
+    probed:   '#3b82f6',
     resolved: '#22c55e',
+    enriched: '#22c55e',
     partial:  '#f59e0b',
     unknown:  '#ef4444',
     entry:    '#8b5cf6',
+    system:   '#d97706',
   };
   const statusColor = STATUS_DOT[status] || '#9ca3af';
   const prio: string = data.capture_priority || '';
