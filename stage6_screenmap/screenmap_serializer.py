@@ -79,6 +79,8 @@ def _serialize_node(node: dict) -> dict:
         "scroll_metadata": node.get("scroll_metadata", {}),
         "screenshot_ref": node.get("screenshot_ref", ""),
         "structure_str": node.get("structure_str", ""),
+        # P0-14: byte-equal screenshot 시그널. semantic_merge L0 override 기록 보존.
+        "screenshot_md5": node.get("screenshot_md5", ""),
         "confidence": node.get("confidence", "medium"),
         # Lifecycle status (declared / probed / resolved / partial / unknown / entry / enriched)
         "status": node.get("status", "declared"),
@@ -108,7 +110,8 @@ def _serialize_edge(edge: dict) -> dict:
         "returned_params": edge.get("returned_params", []),
     }
     # Preserve edge metadata — drives frontend styling + path planning.
-    for opt in ("confidence", "source", "frequency", "weight"):
+    for opt in ("confidence", "source", "frequency", "weight",
+                "outcome", "trigger_bounds", "trigger_label"):
         if opt in edge:
             out[opt] = edge[opt]
     return out

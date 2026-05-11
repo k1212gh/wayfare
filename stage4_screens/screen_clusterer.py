@@ -150,6 +150,9 @@ def cluster_screens_to_pages(
             "screenshot_path": rep_shot,
             "variant_screenshots": variant_shots,
             "screen_count": len(group),
+            # P0-14: representative 의 byte-equal screenshot 시그널 보존.
+            # semantic_merge 가 같은 md5 page 끼리 L0 authoritative 머지.
+            "screenshot_md5": representative.get("screenshot_md5", ""),
         }
         pages.append(page)
 

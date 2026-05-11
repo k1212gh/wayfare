@@ -152,6 +152,18 @@ def _is_mergeable(
     if a.get("screen_id", "").startswith("system:") or b.get("screen_id", "").startswith("system:"):
         return False
 
+    # Tier 0 (P0-14, 2026-05-07): byte-identical screenshot — authoritative override.
+    # md5 가 같다는 건 픽셀 버퍼가 완전히 동일하다는 뜻이라 의미적으로 같은 화면일 수밖에 없음
+    # (pHash 0 와 다름 — pHash 는 8×8 DCT 시그니처 일치이고 다른 화면도 충돌 가능).
+    # 메가커피 6caa9768: 같은 "스탬프 유의사항" 5번 캡처가 byte-identical 인데 stage3 의
+    # structure_str 카운트 jitter 로 5개 canonical 로 갈라진 케이스. 라벨/엣지 가드 모두
+    # 통과시켜 즉시 머지 — false merge 위험은 캡처 파이프라인이 의도적으로 같은 png 를
+    # 다른 state 에 매핑한 경우에만 있고 그건 별개 버그로 간주.
+    md5_a = a.get("screenshot_md5", "") or ""
+    md5_b = b.get("screenshot_md5", "") or ""
+    if md5_a and md5_b and md5_a == md5_b:
+        return True
+
     # Tier A: pHash visual merge (strongest evidence).
     # Lenient threshold for infinite-scroll feed pairs: Instagram-like screens
     # show different items per scroll position, so identical screens still

@@ -80,6 +80,11 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         self.transitions: list[dict] = []
         self.back_count = 0
         self.stall_count = 0
+        # P0-13 (2026-05-06): ping-pong loop 인식 — 두 canonical 사이 alternating
+        # 패턴 (A→B→A→B→A) 감지용 슬라이딩 window. 메가커피 "메가퀵결제 관리 ↔
+        # 메가퀵결제 등록" 처럼 own_domain 안 결제 폼 loop 은 W2 keyword guard
+        # 에 안 잡히고 stall escape 도 "연속 같은 canonical" 만 잡아 무한 진행.
+        self._recent_canonicals: list[str] = []
         self.last_canonical = ""
         self.hash_stats = {"l1_matches": 0, "l2_matches": 0, "l3_matches": 0, "new_screens": 0}
         # Trap instrumentation
@@ -717,10 +722,69 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             state["canonical_id"] = canonical_id
             state["structure_str"] = fp.structural_hash
             state["state_str"] = canonical_id  # Use canonical as state_str
+            # P0-14: byte-equal screenshot 시그널 — semantic_merge 의 L0 override 용
+            if fp.screenshot_md5:
+                state["screenshot_md5"] = fp.screenshot_md5
 
             # Track visits by canonical ID
             self.visited_structures[canonical_id] += 1
             self.visited_screens.add(canonical_id)
+
+            # P0-13 (2026-05-06): ping-pong loop 인식 — 두 canonical 사이
+            # alternating 패턴 감지 시 진입 액션 학습 + BACK 강제. own_domain
+            # 안에서 결제 폼 loop 같은 케이스 (메가커피 메가퀵결제 관리 ↔ 등록)
+            # 는 external_guard 와 stall escape 모두 못 잡아 walk 시간의 50%
+            # 까지 낭비. 7+ step alternating 검출 시 두 canonical 진입 desc
+            # 모두 blacklist + 디스크 학습 → 다음 잡 즉시 차단.
+            self._recent_canonicals.append(canonical_id)
+            if len(self._recent_canonicals) > 8:
+                self._recent_canonicals.pop(0)
+            if len(self._recent_canonicals) >= 7:
+                last_7 = self._recent_canonicals[-7:]
+                unique_recent = set(last_7)
+                # P0-13.1 (2026-05-06): 정확한 alternating 검사 — even index
+                # 가 모두 같고 odd index 도 모두 같은 경우만 (A,B,A,B,A,B,A).
+                # 이전 a_count in (3,4) 는 AAAABBB 같은 block→block 도 trigger
+                # 하는 false positive 가 있었다 (563d2e9b 잡에서 4회 모두 false
+                # positive, 학습 0개 — pingpong_blocked 카운트만 올라감).
+                is_alternating = (
+                    len(unique_recent) == 2
+                    and last_7[0] != last_7[1]
+                    and all(last_7[i] == last_7[0] for i in range(0, 7, 2))
+                    and all(last_7[i] == last_7[1] for i in range(1, 7, 2))
+                )
+                # P0-13.1 fallback: 같은 canonical 25회+ visit + 현재 = 그 hash
+                # → in-app trap 으로 간주, 진입 desc 학습 (alternating 아니라도).
+                visit_trap = self.visited_structures[canonical_id] >= 25
+                if is_alternating or visit_trap:
+                    # 최근 6개 transition desc 학습. blacklist 검사 없이 강제 학습
+                    # (P0-13 은 blacklist 안에 있으면 skip 했지만, 디스크 재학습은
+                    # 안전 — _learn_action_desc 가 idempotent 이므로 중복 없음).
+                    learned_now = []
+                    for hist in self.action_history[-6:]:
+                        d = hist.get("event_desc") or hist.get("desc", "")
+                        if d:
+                            self.external_blacklist.add(d)
+                            if d not in self._learned_action_descs:
+                                self._learn_action_desc(d)
+                                learned_now.append(d)
+                    self.trap_stats["pingpong_blocked"] = \
+                        self.trap_stats.get("pingpong_blocked", 0) + 1
+                    pattern_label = "alt" if is_alternating else f"visit{self.visited_structures[canonical_id]}"
+                    logger.info(
+                        "[pingpong] %s detected on %s (last7=%s) — +%d new descs learned",
+                        pattern_label, canonical_id,
+                        "".join("A" if c == last_7[0] else ("B" if c == last_7[1] else "?") for c in last_7),
+                        len(learned_now),
+                    )
+                    # 슬라이딩 window 초기화 — 같은 trap 재감지 방지
+                    self._recent_canonicals.clear()
+                    # BACK 강제 — loop 끊기
+                    if not self._press_back():
+                        self._soft_restart(package, main_activity)
+                        self.back_count = 0
+                    event_count += 1
+                    continue
 
             # P0-10b: 정상 (auth 아닌) 화면 진입 시 auth consecutive 카운터
             # reset — 다음에 auth 만나도 fresh start.
@@ -971,6 +1035,38 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             self.last_canonical = canonical_id
 
             if self.stall_count >= 2:
+                # P0-12 (2026-05-06): stall escape 우선 — untried 액션 있으면
+                # BACK 대신 그것을 강제 시도. 메가커피 같은 익명 view 화면에서
+                # 클릭 결과가 같은 canonical 로 coalesce → stall 인 경우, 다른
+                # untried 후보 강제 click 으로 BACK→soft_restart loop 회피.
+                # 19 untried 다 소진된 후에야 vision/back 으로 escalate.
+                stall_actions = self._get_scored_actions(state)
+                tried_set = self.tried_actions.get(canonical_id, set())
+                stall_untried = [a for a in stall_actions
+                                 if a.get("desc", "") not in tried_set
+                                 and a.get("desc", "") not in self.external_blacklist]
+                if stall_untried:
+                    forced = stall_untried[self.stall_count % len(stall_untried)]
+                    logger.info(
+                        "[stall-escape] %s stall=%d, forcing untried action: %s (untried=%d)",
+                        canonical_id, self.stall_count,
+                        (forced.get("desc") or "?")[:40], len(stall_untried),
+                    )
+                    self.trap_stats["stall_escape_forced"] = \
+                        self.trap_stats.get("stall_escape_forced", 0) + 1
+                    self.tried_actions[canonical_id].add(forced.get("desc", ""))
+                    # P0-13.2: stall escape 가 강제 click 한 액션도 history 적재.
+                    # ping-pong 차단 학습 시 진입 desc 누락 방지.
+                    self.action_history.append({
+                        "canonical_id": canonical_id,
+                        "desc": forced.get("desc", ""),
+                        "event_desc": forced.get("desc", ""),
+                        "action": forced.get("action", ""),
+                    })
+                    self._execute_action(forced, state)
+                    event_count += 1
+                    self.wait_for_stable(timeout=2.0)
+                    continue
                 # 2026-04-30: Vision-LLM fallback BEFORE press back.
                 # XML extractor 가 못 잡는 화면 (Compose/WebView/Flutter 또는 score
                 # 가중치 누적 stall — TimePicker OK 0회 같은) 에서 화면 보고
@@ -1221,6 +1317,16 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             # 5. Execute action + record as tried
             prev_canonical = canonical_id
             self.tried_actions[canonical_id].add(best.get("desc", ""))
+            # P0-13.2 (2026-05-06): action_history 적재 — 이전까지 list 가 항상
+            # 비어 있어 P0-10h (외부 페이지 학습) 와 P0-13 (ping-pong 학습) 의
+            # `for hist in self.action_history[-N:]` 루프가 dead loop 였다.
+            # canonical_id 와 desc 만 있으면 학습 키로 충분하니 최소 정보만 적재.
+            self.action_history.append({
+                "canonical_id": canonical_id,
+                "desc": best.get("desc", ""),
+                "event_desc": best.get("desc", ""),  # P0-10h 가 둘 다 보므로 동기화
+                "action": best.get("action", ""),
+            })
             # 2026-04-30: per-list_view visit count — best 가 list_view 항목이면
             # 같은 그룹의 N번째 클릭 score 가 다음 iteration 부터 감점됨
             lg = best.get("list_view_group_id")

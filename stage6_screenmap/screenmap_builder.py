@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -161,11 +162,7 @@ def _build_node(sg_node: dict, analysis: dict, unit: dict) -> dict:
         "screen_purpose": analysis.get("screen_purpose", sg_node.get("functional_role", "")),
         "params": sg_node.get("screen_params", {"inputs": [], "outputs": [], "displays": []}),
         "widgets": [
-            {
-                "id": e.get("widget_id", ""),
-                "type": e.get("action_type", e.get("action_types", ["click"])[0] if e.get("action_types") else "click"),
-                "role": e.get("role", e.get("content_desc", "")),
-            }
+            _build_widget(e)
             for e in analysis.get("key_widgets", unit.get("available_actions", []))
         ],
         # ScreenMap expressivity extensions (sprint 2026-04-27). All optional, default
@@ -178,6 +175,12 @@ def _build_node(sg_node: dict, analysis: dict, unit: dict) -> dict:
         "screenshot_ref": unit.get("screenshot", ""),
         # Kept so the dashboard can resolve screenshots by structure hash.
         "structure_str": unit.get("structure_str", ""),
+        # P0-14 (2026-05-07): byte-equal screenshot 시그널 — semantic_merge 의
+        # L0 authoritative override 용. unit 또는 sg_node 어느 쪽에 있어도 보존.
+        "screenshot_md5": (
+            unit.get("screenshot_md5", "")
+            or sg_node.get("screenshot_md5", "")
+        ),
         "confidence": analysis.get("confidence", "medium"),
         # 2026-04-30 (Pass 1 → Pass 2 흐름):
         # Stage 3 의 quality fail 화면 (Compose wrapper / dominant WebView /
@@ -214,8 +217,24 @@ def _build_node(sg_node: dict, analysis: dict, unit: dict) -> dict:
     }
 
 
+def _build_widget(element: dict) -> dict:
+    out = {
+        "id": element.get("widget_id", ""),
+        "type": element.get(
+            "action_type",
+            element.get("action_types", ["click"])[0] if element.get("action_types") else element.get("type", "click"),
+        ),
+        "role": element.get("role", element.get("content_desc", element.get("description", ""))),
+    }
+    for key in ("bounds", "bbox", "rect", "text", "label", "content_desc", "resource_id", "class"):
+        value = element.get(key)
+        if value not in (None, "", [], {}):
+            out[key] = value
+    return out
+
+
 def _build_edge(sg_edge: dict) -> dict:
-    return {
+    edge = {
         "edge_id": _make_edge_id(
             sg_edge.get("from", ""),
             sg_edge.get("to", ""),
@@ -230,6 +249,29 @@ def _build_edge(sg_edge: dict) -> dict:
         "passed_params": sg_edge.get("passed_params", []),
         "returned_params": sg_edge.get("returned_params", []),
         "kind": sg_edge.get("kind", ""),
+    }
+    trigger_bounds = _parse_trigger_bounds(edge["trigger_widget"])
+    if trigger_bounds:
+        edge["trigger_bounds"] = trigger_bounds["bounds"]
+        edge["trigger_label"] = trigger_bounds["label"]
+    return edge
+
+
+def _parse_trigger_bounds(trigger_widget: str) -> dict | None:
+    match = re.match(
+        r"^(.*?)@?\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]"
+        r"\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]",
+        str(trigger_widget or ""),
+    )
+    if not match:
+        return None
+    label, x1, y1, x2, y2 = match.groups()
+    left, top, right, bottom = map(float, (x1, y1, x2, y2))
+    if right <= left or bottom <= top:
+        return None
+    return {
+        "label": label.strip(),
+        "bounds": {"left": left, "top": top, "right": right, "bottom": bottom},
     }
 
 

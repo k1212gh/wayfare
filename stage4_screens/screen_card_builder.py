@@ -79,6 +79,8 @@ def build_screen_cards(pages: list[dict], transitions: list[dict]) -> list[dict]
             # PNG 들. screenmap_builder 에서 노드 머지 시 aliases 로 보존.
             "title_text": page.get("title_text", ""),
             "variant_screenshots": page.get("variant_screenshots", []),
+            # P0-14: byte-equal screenshot 시그널 propagation (state→page→unit→node).
+            "screenshot_md5": page.get("screenshot_md5", ""),
         }
         screen_cards.append(unit)
 

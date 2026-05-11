@@ -35,3 +35,6 @@ scan_started.flag
 # OS cruft
 .DS_Store
 Thumbs.db
+
+# Ad-hoc dumpsys / adb dump captures at repo root
+/tmp_*.txt

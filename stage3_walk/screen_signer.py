@@ -25,12 +25,52 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+_BOUNDS_RE = None
+
+# P0-14 (2026-05-07): Android SystemUI overlay 의 status bar 가 dump 에 같이 잡혀
+# 시계 분 단위 변화 + 신호 강도 텍스트 변화로 a11y_parts 가 분기되는 문제 방어.
+# uiautomator dump 는 foreground app + systemui overlay 를 같이 토해내는데, 캡처
+# 시점마다 9:19/9:20 PM 또는 "two bars"/"signal full" 처럼 desc 가 바뀌면 같은
+# 화면이 다른 structural_hash 로 갈림. 메가커피 잡 잔여 false-split 5개의 진짜
+# 원인. 이 prefix 들로 시작하는 rid 는 a11y_parts 수집에서 제외.
+_SYSTEMUI_RID_PREFIXES = (
+    "status_bar", "statusicons", "system_icons", "notification",
+    "battery", "clock", "wifi", "mobile", "carrier", "airplane",
+    "system:id/",   # framework decor / system bars 일반
+)
+
+
+def _is_systemui_rid(rid: str) -> bool:
+    if not rid:
+        return False
+    low = rid.lower()
+    return any(low.startswith(p) for p in _SYSTEMUI_RID_PREFIXES)
+
+
+def _parse_bounds_y_top(bounds: str) -> int | None:
+    """Extract y_top from "[x1,y1][x2,y2]" bounds string. None on parse failure."""
+    if not bounds:
+        return None
+    global _BOUNDS_RE
+    if _BOUNDS_RE is None:
+        import re
+        _BOUNDS_RE = re.compile(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]")
+    m = _BOUNDS_RE.match(bounds)
+    if not m:
+        return None
+    try:
+        return int(m.group(2))
+    except ValueError:
+        return None
+
+
 @dataclass
 class ScreenSignature:
     """Multi-level fingerprint for a UI state."""
     structural_hash: str = ""       # Level 1
     perceptual_hash: str = ""       # Level 2
     gnn_embedding: list[float] = field(default_factory=list)  # Level 3
+    screenshot_md5: str = ""        # L0 — byte-equal authoritative override (P0-14)
     activity: str = ""
     widget_count: int = 0
 
@@ -66,6 +106,16 @@ class ScreenSigner:
         # Level 2: pHash (if screenshot available)
         if screenshot_path and Path(screenshot_path).exists():
             fp.perceptual_hash = self._perceptual_hash(screenshot_path)
+            # L0: screenshot byte hash for authoritative override (P0-14).
+            # pHash 는 perceptual 유사성이라 다른 화면 충돌 가능. byte-equal 은
+            # "같은 픽셀" 보장이라 false merge 위험 없음. 메가커피 6caa9768 잡
+            # 처럼 같은 WebView 화면을 여러 번 캡처한 경우 jpg 파일이 byte-identical
+            # 로 나오는 케이스 대상 (md5 동일 → semantic_merge 가 즉시 머지).
+            try:
+                with open(screenshot_path, "rb") as fh:
+                    fp.screenshot_md5 = hashlib.md5(fh.read()).hexdigest()
+            except OSError:
+                fp.screenshot_md5 = ""
 
         # Level 3: HashGNN embedding
         fp.gnn_embedding = self._gnn_hash(views)
@@ -151,27 +201,93 @@ class ScreenSigner:
         where every swipe loads new items don't generate per-scroll canonical
         IDs.
 
-        Still ignores: free-form `text` (changes with data/language), `bounds`.
+        WebView/Flutter-aware (P0-12, 2026-05-06): when accessibility signals
+        are missing (every clickable view has empty rid+desc — typical of
+        WebView-rendered Compose screens like 메가커피), fall back to a
+        layout signature derived from clickable views' Y-bucket positions.
+        Without this, Home / 메가오더 / 이벤트 / 전체메뉴 all collapse to the
+        same canonical because their class hierarchies are identical (all
+        anonymous Views) — walk gets stall thinking every click "didn't move",
+        triggers BACK loop, and force-stops indefinitely.
+
+        WebView count-jitter fix (P0-14, 2026-05-07): structure_parts used to
+        be a sorted list, so anonymous View 1~2개 차이가 그대로 다른 hash 로
+        분기됐다 (메가커피 6caa9768 잡 — 같은 "스탬프 유의사항" 5번 캡처가
+        107/109/110/111 view 수 차이로 5개 다른 canonical 로 갈림). 이제는
+        (class, flags) 별 Counter 로 집계 + log-scale bucket 으로 quantize 해
+        ±1~2 흔들림은 흡수하되 1↔10 같은 의미있는 카운트 차이는 분기 유지.
+
+        Layout fallback gate also relaxed (P0-14): old gate `n_click >= 5 and
+        n_a11y_unique <= 2` 가 4-clickable WebView (스탬프 유의사항: 이전/새로고침/
+        stampNotice/닫기) 를 못 잡아 폴백 미발동했음. 새 게이트 `n_click >= 3
+        and n_a11y_unique < n_click` 로 “a11y 가 빈약한 모든 화면” 을 커버.
+
+        Still ignores: free-form `text` (changes with data/language), exact
+        `bounds` (we quantize Y to 50px buckets so minor pixel shifts don't
+        explode canonical count).
         """
+        from collections import Counter
         from . import signature_stabilizer
         views = signature_stabilizer.collapse_scroll_children(views)
-        structure_parts = []
-        accessibility_parts = []
+        # P0-14: count (class, flags) tokens then log-bucket the count so that
+        # WebView render-progress jitter (107 vs 109 anonymous View) hashes the
+        # same. Log-bucket boundaries were chosen so 1↔10 (정적 vs 동적 리스트)
+        # 같은 진짜 의미 차이는 다른 bucket 으로 떨어져 false merge 위험 최소.
+        structure_counter: Counter = Counter()
+        accessibility_parts: list[str] = []
+        clickable_y_buckets: list[int] = []  # P0-12 layout fallback signal
         for v in views:
             cls = v.get("class", "")
             clickable = "C" if v.get("clickable") else ""
             scrollable = "S" if v.get("scrollable") else ""
             editable = "E" if v.get("editable") else ""
             flags = clickable + scrollable + editable
-            structure_parts.append(f"{cls}:{flags}")
-            # Stable a11y signals — same across visits to the same screen
+            structure_counter[f"{cls}:{flags}"] += 1
+            # Stable a11y signals — same across visits to the same screen.
+            # P0-14: SystemUI overlay (status bar 시계·신호) rid 는 캡처마다 desc 가
+            # 바뀌므로 a11y 수집에서 제외. 그리고 desc 는 stabilize_content_desc 로
+            # 시간 토큰 마스킹 거쳐 ticking clock 변동 흡수.
             rid = v.get("resource_id") or v.get("resource-id") or ""
             desc = v.get("content_desc") or v.get("content-desc") or ""
-            if rid or desc:
-                accessibility_parts.append(f"{rid}@{desc}")
+            if _is_systemui_rid(rid):
+                pass  # systemui overlay — drop entirely
+            elif rid or desc:
+                stable_desc = signature_stabilizer.stabilize_content_desc(desc)
+                accessibility_parts.append(f"{rid}@{stable_desc}")
+            # Layout fallback: collect clickable views' Y position (50px bucket)
+            if v.get("clickable"):
+                bounds = v.get("bounds", "")
+                y_top = _parse_bounds_y_top(bounds)
+                if y_top is not None:
+                    clickable_y_buckets.append(y_top // 50)
 
-        raw = (f"{activity}|{'|'.join(sorted(structure_parts))}"
-               f"||{'|'.join(sorted(set(accessibility_parts)))}")
+        def _bucket(n: int) -> str:
+            # log-scale bucket: 1, 2, 3-4, 5-9, 10-19, 20-49, 50-99, 100+
+            if n <= 0:   return "0"
+            if n == 1:   return "1"
+            if n == 2:   return "2"
+            if n <= 4:   return "3-4"
+            if n <= 9:   return "5-9"
+            if n <= 19:  return "10-19"
+            if n <= 49:  return "20-49"
+            if n <= 99:  return "50-99"
+            return "100+"
+
+        structure_tokens = sorted(
+            f"{token}#{_bucket(count)}" for token, count in structure_counter.items()
+        )
+
+        # P0-14: 폴백 게이트 완화. 4-clickable WebView 같은 a11y 빈약 화면도 커버.
+        layout_part = ""
+        n_click = sum(1 for v in views if v.get("clickable"))
+        n_a11y_unique = len(set(accessibility_parts))
+        if n_click >= 3 and n_a11y_unique < n_click:
+            # Sort + tuple for stable hash; multiset = same view set, same hash
+            layout_part = "|".join(str(b) for b in sorted(clickable_y_buckets))
+
+        raw = (f"{activity}|{'|'.join(structure_tokens)}"
+               f"||{'|'.join(sorted(set(accessibility_parts)))}"
+               f"||L:{layout_part}")
         return hashlib.sha256(raw.encode()).hexdigest()
 
     # ─── Level 2: Perceptual Hash ─────────────────────────
