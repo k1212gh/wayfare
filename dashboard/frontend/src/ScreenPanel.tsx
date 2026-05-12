@@ -6,6 +6,8 @@ interface ScreenPanelProps {
   allNodes?: any[];
   allEdges?: any[];
   onSelectNode?: (nid: string) => void;
+  /** 엣지 리스트 행 클릭 시 — 노드 이동 대신 엣지 detail 패널을 띄움. */
+  onSelectEdge?: (edge: any) => void;
 }
 
 // 엣지 trigger 를 사람이 읽기 좋은 짧은 문구로
@@ -25,7 +27,7 @@ function friendlyTrigger(e: any): string {
   return action || kind || '?';
 }
 
-export function ScreenPanel({ node, tourId, allNodes = [], allEdges = [], onSelectNode }: ScreenPanelProps) {
+export function ScreenPanel({ node, tourId, allNodes = [], allEdges = [], onSelectNode, onSelectEdge }: ScreenPanelProps) {
   const [screenshotUrl, setScreenshotUrl] = useState('');
 
   useEffect(() => {
@@ -198,7 +200,7 @@ export function ScreenPanel({ node, tourId, allNodes = [], allEdges = [], onSele
                 kind={e.kind || 'navigate'}
                 outcome={e.outcome}
                 thumbnailUrl={thumbFor(e.to)}
-                onClick={onSelectNode ? () => onSelectNode(e.to) : undefined}
+                onClick={onSelectEdge ? () => onSelectEdge(e) : undefined}
               />
             ))}
           </div>
@@ -217,7 +219,7 @@ export function ScreenPanel({ node, tourId, allNodes = [], allEdges = [], onSele
                 kind={e.kind || 'navigate'}
                 direction="in"
                 thumbnailUrl={thumbFor(e.from)}
-                onClick={onSelectNode ? () => onSelectNode(e.from) : undefined}
+                onClick={onSelectEdge ? () => onSelectEdge(e) : undefined}
               />
             ))}
           </div>

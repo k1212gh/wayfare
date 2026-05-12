@@ -13,6 +13,7 @@ export default function App() {
   const [graphData, setGraphData] = useState<any>(null);
   const [tourStage, setTourStage] = useState<string>('');
   const [selectedNode, setSelectedNode] = useState<any>(null);
+  const [selectedEdgeData, setSelectedEdgeData] = useState<any | null>(null);
   const [filterCategory, setFilterCategory] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   // Track a tour the user just Ran — once its wireframe is ready, auto-navigate
@@ -288,6 +289,8 @@ export default function App() {
               tourId={activeTourId}
               appName={graphData.screen_map.app_name || graphData.screen_map.package_name}
               selectedNodeId={selectedNode?.screen_id}
+              selectedEdgeData={selectedEdgeData}
+              onSelectedEdgeDataChange={setSelectedEdgeData}
             />
           )}
         </div>
@@ -314,6 +317,22 @@ export default function App() {
                 const found = (graphData?.screen_map?.graph?.nodes || [])
                   .find((n: any) => n.screen_id === nid);
                 if (found) setSelectedNode(found);
+              }}
+              onSelectEdge={(e: any) => {
+                const nodes = graphData?.screen_map?.graph?.nodes || [];
+                const src = nodes.find((n: any) => n.screen_id === e.from);
+                const tgt = nodes.find((n: any) => n.screen_id === e.to);
+                setSelectedEdgeData({
+                  edgeId: e.edge_id || `${e.from}-${e.to}`,
+                  kind: e.kind || (e.trigger_action === 'press_back' ? 'back' : 'navigate'),
+                  confidence: e.confidence || (e.source === 'walk' ? 'observed' : 'static_intent'),
+                  actionLabel: '',
+                  raw: e,
+                  sourceNode: src,
+                  targetNode: tgt,
+                  sourceLabel: src?.label || e.from,
+                  targetLabel: tgt?.label || e.to,
+                });
               }}
             />
           </aside>

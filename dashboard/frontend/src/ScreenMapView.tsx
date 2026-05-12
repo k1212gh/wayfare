@@ -30,6 +30,9 @@ interface ScreenMapViewProps {
   appName?: string;
   /** 외부 (사이드 패널 / EdgeRow 클릭) 에서 노드를 선택했을 때 viewport 이동 */
   selectedNodeId?: string;
+  /** Controlled mode: 외부에서 edge detail 패널을 열고 닫을 수 있도록. 미지정 시 내부 state 사용. */
+  selectedEdgeData?: any | null;
+  onSelectedEdgeDataChange?: (data: any | null) => void;
 }
 
 
@@ -410,13 +413,23 @@ function buildActionText(raw: any, fallback: string): string {
   return label || fallback || action || '동작';
 }
 
-export function ScreenMapView({ graph, onNodeSelect, filterCategory, searchQuery, tourId, appName, selectedNodeId }: ScreenMapViewProps) {
+export function ScreenMapView({
+  graph, onNodeSelect, filterCategory, searchQuery, tourId, appName, selectedNodeId,
+  selectedEdgeData: externalEdgeData,
+  onSelectedEdgeDataChange,
+}: ScreenMapViewProps) {
   const [showScreenshots, setShowScreenshots] = useState(false);
   const [showEdgeLabels, setShowEdgeLabels] = useState(false);
   const [edgeFiltersOpen, setEdgeFiltersOpen] = useState(false);
   const [taskPlannerOpen, setJourneyPlannerOpen] = useState(false);
   const [graphMode, setGraphMode] = useState<GraphMode>('flow');
-  const [selectedEdgeData, setSelectedEdgeData] = useState<any | null>(null);
+  const [internalEdgeData, setInternalEdgeData] = useState<any | null>(null);
+  const isControlled = externalEdgeData !== undefined;
+  const selectedEdgeData = isControlled ? externalEdgeData : internalEdgeData;
+  const setSelectedEdgeData = useCallback((data: any | null) => {
+    if (onSelectedEdgeDataChange) onSelectedEdgeDataChange(data);
+    if (!isControlled) setInternalEdgeData(data);
+  }, [onSelectedEdgeDataChange, isControlled]);
   const [pathSource, setPathSource] = useState<string | null>(null);
   const [highlightedPath, setHighlightedPath] = useState<{ nodes: Set<string>; edges: Set<string> } | null>(null);
   const [planFocus, setPlanFocus] = useState(false);
