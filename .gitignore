@@ -16,6 +16,7 @@ logs/
 
 # Editor/tooling caches
 .pytest_cache/
+pytest-cache-files-*/
 .mypy_cache/
 .ruff_cache/
 .vscode/
