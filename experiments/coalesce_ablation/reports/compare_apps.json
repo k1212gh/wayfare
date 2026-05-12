@@ -1,0 +1,62 @@
+{
+  "clock": {
+    "tour_id": "7d02192a",
+    "app_label": "clock",
+    "package_name": "com.google.android.deskclock",
+    "n_screens": 272,
+    "activities_found": 7,
+    "per_policy_canonicals": {
+      "L1_only": 93,
+      "L2_only": 40,
+      "L3_only": 2,
+      "L1+L2": 39,
+      "L1+L2+L3": 2,
+      "L1_authoritative": 93
+    },
+    "per_policy_reduction": {
+      "L1_only": 0.658,
+      "L2_only": 0.853,
+      "L3_only": 0.993,
+      "L1+L2": 0.857,
+      "L1+L2+L3": 0.993,
+      "L1_authoritative": 0.658
+    },
+    "fingerprint_stats": {
+      "n_screens": 272,
+      "l1_coverage": 1.0,
+      "l2_coverage": 1.0,
+      "l3_coverage": 1.0,
+      "md5_coverage": 1.0
+    }
+  },
+  "mega": {
+    "tour_id": "432b611e",
+    "app_label": "mega",
+    "package_name": "co.kr.waldlust.megacoffee",
+    "n_screens": 326,
+    "activities_found": 4,
+    "per_policy_canonicals": {
+      "L1_only": 55,
+      "L2_only": 26,
+      "L3_only": 2,
+      "L1+L2": 26,
+      "L1+L2+L3": 2,
+      "L1_authoritative": 55
+    },
+    "per_policy_reduction": {
+      "L1_only": 0.831,
+      "L2_only": 0.92,
+      "L3_only": 0.994,
+      "L1+L2": 0.92,
+      "L1+L2+L3": 0.994,
+      "L1_authoritative": 0.831
+    },
+    "fingerprint_stats": {
+      "n_screens": 326,
+      "l1_coverage": 1.0,
+      "l2_coverage": 1.0,
+      "l3_coverage": 1.0,
+      "md5_coverage": 1.0
+    }
+  }
+}
