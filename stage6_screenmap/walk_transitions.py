@@ -49,6 +49,16 @@ def _inject_walk_transitions(graph: dict, transitions: list[dict],
             struct_to_page[struct] = cu["screen_id"]
             struct_to_page[struct[:16]] = cu["screen_id"]
 
+    # F 안 (2026-05-12): state_str → page_id 역색인.
+    # stage4 cluster_screens_to_pages 가 page.state_strs 에 묶어둔 멤버십을 그대로 사용.
+    # 4월 27일 fix (canonical_id 우선) 의 사상을 stage6 까지 cascade.
+    state_str_to_page: dict[str, str] = {}
+    for cu in screen_cards:
+        pid = cu["screen_id"]
+        for ss in cu.get("state_strs", []):
+            if ss:
+                state_str_to_page[ss] = pid
+
     # Build walk state_str → state mapping (for synthesis)
     exp_to_struct: dict[str, str] = {}
     exp_to_screen: dict[str, dict] = {}
@@ -106,13 +116,17 @@ def _inject_walk_transitions(graph: dict, transitions: list[dict],
         # Direct page match
         if exp_id in {n["screen_id"] for n in graph.get("nodes", [])}:
             return exp_id
-        # Via structure_str
+        # F (2026-05-12): state_str 역색인 우선. stage4 cluster 멤버십 그대로 사용.
+        page = state_str_to_page.get(exp_id)
+        if page:
+            return page
+        # Via structure_str (old path — F 매칭 미스 시 backup)
         struct = exp_to_struct.get(exp_id, "")
         if struct:
             page = struct_to_page.get(struct) or struct_to_page.get(struct[:16])
             if page:
                 return page
-        # By canonical index
+        # By canonical index (step 1 측정용으로 유지 — step 2 에서 제거 예정)
         if exp_id.startswith("screen_"):
             try:
                 idx = int(exp_id.split("_")[1])

@@ -81,6 +81,9 @@ def build_screen_cards(pages: list[dict], transitions: list[dict]) -> list[dict]
             "variant_screenshots": page.get("variant_screenshots", []),
             # P0-14: byte-equal screenshot 시그널 propagation (state→page→unit→node).
             "screenshot_md5": page.get("screenshot_md5", ""),
+            # F 안 (2026-05-12): stage4 cluster 멤버십을 stage6 까지 cascade.
+            # walk_transitions.resolve() 가 state_str → page_id 직접 매핑에 사용.
+            "state_strs": page.get("state_strs", []),
         }
         screen_cards.append(unit)
 
