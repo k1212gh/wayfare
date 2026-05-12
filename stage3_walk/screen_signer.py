@@ -96,31 +96,69 @@ class ScreenSigner:
         self._gnn_model = None
 
     def compute_fingerprint(self, views: list[dict], activity: str,
-                            screenshot_path: str = "") -> ScreenSignature:
-        """Compute all 3 levels of fingerprint for a state."""
+                            screenshot_path: str = "",
+                            *, eager: bool = False) -> ScreenSignature:
+        """Compute fingerprint for a state.
+
+        Lazy mode (default) — L1 structural hash + L0 screenshot md5 만 계산.
+          L2 (perceptual_hash) 와 L3 (gnn_embedding) 는 비어 둠. 매칭 정책상
+          L1 양쪽 있으면 L2/L3 안 보므로 walk 중에는 미계산이 결과 동일하면서
+          비용 절약. L1 이 비어있을 때만 L2/L3 도 즉시 계산 (조건적 eager) —
+          uiautomator dump 비어있는 캡처에서 폴백이 작동해야 하기 때문.
+
+        Eager mode (``eager=True``) — 모든 신호 계산. Stage 3 → 4 전이 시점에
+          ``finalize_fingerprint`` 가 batch 호출하거나, 합성 테스트가 강제 호출.
+
+        비용 (참고):
+          - L1 ~ 마이크로초
+          - L0 md5 ~ ms (file I/O + 빠른 hash)
+          - L2 pHash ~ 수십~수백 ms (PIL decode + DCT)
+          - L3 GNN ~ ms (fallback 카운트 벡터) 또는 그 이상 (torch GCN)
+        """
         fp = ScreenSignature(activity=activity)
 
-        # Level 1: Structural hash
+        # Level 1 (always) — 매칭 결정의 거의 99%
         fp.structural_hash = self._structural_hash(views, activity)
+        fp.widget_count = len([v for v in views if v.get("clickable")])
 
-        # Level 2: pHash (if screenshot available)
+        # L0 screenshot md5 (cheap, file I/O) — Stage 6 semantic_merge 가
+        # state json 단에서 사용하므로 walk 중에도 항상 계산.
         if screenshot_path and Path(screenshot_path).exists():
-            fp.perceptual_hash = self._perceptual_hash(screenshot_path)
-            # L0: screenshot byte hash for authoritative override (P0-14).
-            # pHash 는 perceptual 유사성이라 다른 화면 충돌 가능. byte-equal 은
-            # "같은 픽셀" 보장이라 false merge 위험 없음. 메가커피 6caa9768 잡
-            # 처럼 같은 WebView 화면을 여러 번 캡처한 경우 jpg 파일이 byte-identical
-            # 로 나오는 케이스 대상 (md5 동일 → semantic_merge 가 즉시 머지).
             try:
                 with open(screenshot_path, "rb") as fh:
                     fp.screenshot_md5 = hashlib.md5(fh.read()).hexdigest()
             except OSError:
                 fp.screenshot_md5 = ""
 
-        # Level 3: HashGNN embedding
-        fp.gnn_embedding = self._gnn_hash(views)
-        fp.widget_count = len([v for v in views if v.get("clickable")])
+        # Conditional eager: L1 이 비어있다 = 폴백이 필요 = L2/L3 즉시 계산.
+        # eager=True 면 강제 모두 계산.
+        need_fallback = (not fp.structural_hash) or eager
+        if need_fallback:
+            if screenshot_path and Path(screenshot_path).exists():
+                fp.perceptual_hash = self._perceptual_hash(screenshot_path)
+            fp.gnn_embedding = self._gnn_hash(views)
 
+        return fp
+
+    def finalize_fingerprint(self, fp: ScreenSignature, views: list[dict],
+                             screenshot_path: str) -> ScreenSignature:
+        """Lazy 로 빠진 L2/L3 를 채워넣음. Stage 3 종료 직후 batch 호출.
+
+        Stage 6 semantic_merge 가 ScreenMap node 단계에서 pHash / md5 를 사용하므로
+        walk 종료 후엔 모든 fingerprint 가 완성돼 있어야 한다. 이 함수가
+        그 차이를 보전한다. 이미 채워진 신호는 건드리지 않는다 (idempotent).
+        """
+        if not fp.perceptual_hash and screenshot_path and Path(screenshot_path).exists():
+            fp.perceptual_hash = self._perceptual_hash(screenshot_path)
+        if not fp.gnn_embedding:
+            fp.gnn_embedding = self._gnn_hash(views)
+        # md5 는 compute 단계에서 이미 채워지지만 누락 보전.
+        if not fp.screenshot_md5 and screenshot_path and Path(screenshot_path).exists():
+            try:
+                with open(screenshot_path, "rb") as fh:
+                    fp.screenshot_md5 = hashlib.md5(fh.read()).hexdigest()
+            except OSError:
+                pass
         return fp
 
     def find_match(self, fp: ScreenSignature) -> str | None:

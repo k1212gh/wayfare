@@ -2312,6 +2312,32 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             },
         }
 
+        # P0-15 (2026-05-07): walk 종료 직후 batch finalize.
+        # Walk 중에는 fingerprint 가 lazy 로 계산돼 L1 으로 결정 안 된 캡처만
+        # L2/L3 가 채워진 상태. Stage 6 의 semantic_merge 가 모든 노드 쌍에
+        # 대해 pHash 거리를 보므로 누락 fingerprint 가 있으면 후처리 중 다시
+        # 비싸게 계산해야 함. 여기서 한 번에 모든 fingerprint 를 완성시켜
+        # Stage 4/5/6 가 모두 동일한 fingerprint 를 재사용하도록 한다.
+        finalized = 0
+        for canonical_id, fp in self.hasher.known_fingerprints.items():
+            if fp.perceptual_hash and fp.gnn_embedding:
+                continue   # 이미 완성된 fingerprint — 폴백으로 채워진 케이스
+            # 해당 canonical 의 대표 state 를 찾아 views / screenshot 복원
+            rep_screen = next(
+                (s for s in self.states if s.get("canonical_id") == canonical_id),
+                None,
+            )
+            if not rep_screen:
+                continue
+            self.hasher.finalize_fingerprint(
+                fp,
+                rep_screen.get("views", []),
+                rep_screen.get("screenshot_path", "") or "",
+            )
+            finalized += 1
+        if finalized:
+            logger.info("[lazy] finalized %d fingerprints (L2/L3) post-walk", finalized)
+
         # Save walk.json (compatible with utg_parser output)
         out_path = self.output_dir / "walk.json"
         out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
