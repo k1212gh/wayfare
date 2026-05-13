@@ -32,9 +32,9 @@ export function ScreenshotNode({ data }: { data: any }) {
       }}
     >
       <Handle id="t" type="target" position={Position.Top} style={{ opacity: 0, pointerEvents: 'none' }} />
-      <div style={{ height: 200, background: '#f5f5f5', overflow: 'hidden', position: 'relative' }}>
+      <div style={{ height: 320, background: '#f5f5f5', overflow: 'hidden', position: 'relative' }}>
         {!imgError ? (
-          <img src={screenshotUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top' }}
+          <img src={screenshotUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center', background: '#000' }}
             onError={() => setImgError(true)} />
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#d4d4d4', fontSize: '11px' }}>
@@ -61,17 +61,30 @@ export function ScreenshotNode({ data }: { data: any }) {
             {prio}
           </span>
         )}
-        <span style={{
-          position: 'absolute', top: 4, right: 4, padding: '1px 6px',
-          fontSize: '9px', fontWeight: 600, borderRadius: '4px',
-          background: color, color: '#fff', fontFamily: "'JetBrains Mono', monospace",
-        }}>
-          {data.functional_category || 'other'}
-        </span>
       </div>
       <div style={{ padding: '6px 8px' }}>
         <div style={{ fontSize: '10px', fontWeight: 600, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
           {data.label || data.screen_id}
+        </div>
+        <div style={{ display: 'flex', gap: '6px', marginTop: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
+          {status && (
+            <div style={{
+              padding: '2px 6px', fontSize: '9px', fontWeight: 600,
+              background: `${statusColor}1A`, color: statusColor, borderRadius: '4px',
+              display: 'inline-flex', alignItems: 'center', gap: '4px', maxWidth: '100%',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', border: `1px solid ${statusColor}4D`
+            }} title={`Status: ${status}`}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor }} />
+              {status.toUpperCase()}
+            </div>
+          )}
+          <span style={{
+            padding: '2px 6px', fontSize: '9px', fontWeight: 600, borderRadius: '4px',
+            background: color, color: '#fff', fontFamily: "'Inter', sans-serif",
+            display: 'inline-flex', alignItems: 'center', border: `1px solid ${color}`
+          }}>
+            {(data.functional_category || 'other').toUpperCase()}
+          </span>
         </div>
       </div>
       <Handle id="s" type="source" position={Position.Bottom} style={{ opacity: 0, pointerEvents: 'none' }} />

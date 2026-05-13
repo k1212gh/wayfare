@@ -89,9 +89,18 @@ export function ScreenPanel({ node, tourId, allNodes = [], allEdges = [], onSele
       {/* Purpose (한 줄 요약) */}
       {node.screen_purpose && (
         <Section title="Purpose">
-          <p style={{ color: 'var(--color-gray)', lineHeight: 1.6, margin: 0 }}>
+          <div style={{
+            padding: '8px 12px',
+            background: '#eef2ff',
+            border: '1px solid #c7d2fe',
+            borderRadius: '6px',
+            color: '#3730a3',
+            fontWeight: 600,
+            fontSize: '13px',
+            lineHeight: 1.5,
+          }}>
             {node.screen_purpose}
-          </p>
+          </div>
         </Section>
       )}
 
@@ -101,6 +110,24 @@ export function ScreenPanel({ node, tourId, allNodes = [], allEdges = [], onSele
           <p style={{ color: 'var(--color-black)', lineHeight: 1.6, margin: 0 }}>
             {node.description}
           </p>
+        </Section>
+      )}
+
+      {/* Screenshot (Moved up as requested) */}
+      {screenshotUrl && (
+        <Section title="Screenshot">
+          <img
+            src={screenshotUrl}
+            alt="Screen capture"
+            style={{
+              width: '100%',
+              borderRadius: '8px',
+              border: '1px solid var(--color-border)',
+            }}
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.display = 'none';
+            }}
+          />
         </Section>
       )}
 
@@ -394,23 +421,6 @@ export function ScreenPanel({ node, tourId, allNodes = [], allEdges = [], onSele
         </Section>
       )}
 
-      {/* Screenshot */}
-      {screenshotUrl && (
-        <Section title="Screenshot">
-          <img
-            src={screenshotUrl}
-            alt="Screen capture"
-            style={{
-              width: '100%',
-              borderRadius: '8px',
-              border: '1px solid var(--color-border)',
-            }}
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.display = 'none';
-            }}
-          />
-        </Section>
-      )}
     </div>
   );
 }
@@ -421,12 +431,12 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   return (
     <div style={{ marginBottom: '20px' }}>
       <div style={{
-        fontSize: '11px',
-        fontWeight: 600,
-        color: 'var(--color-gray)',
-        letterSpacing: '0.4px',
+        fontSize: '13px',
+        fontWeight: 700,
+        color: 'var(--color-black)',
+        letterSpacing: '0.2px',
         textTransform: 'uppercase' as const,
-        marginBottom: '8px',
+        marginBottom: '10px',
       }}>
         {title}
       </div>

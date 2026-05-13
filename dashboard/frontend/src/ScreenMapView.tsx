@@ -20,6 +20,7 @@ import { Legend } from './graph/Legend';
 import { CATEGORY_COLOR, EDGE_KIND_DESC } from './graph/colors';
 import { FloatingEdge } from './graph/FloatingEdge';
 import { ScreenshotNode } from './graph/ScreenshotNode';
+import { CustomTextNode } from './graph/CustomTextNode';
 
 interface ScreenMapViewProps {
   graph: { entry_node: string; nodes: any[]; edges: any[] };
@@ -60,12 +61,17 @@ function buildLayout(
   showEdgeLabels: boolean,
   onOpenEdge: (edgeData: any) => void,
   tourId: string,
+  spacingScale: number = 1.0,
 ) {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   const nodeW = showScreenshots ? 180 : 200;
-  const nodeH = showScreenshots ? 260 : 56;
-  g.setGraph({ rankdir: 'TB', nodesep: showScreenshots ? 30 : 40, ranksep: showScreenshots ? 60 : 70 });
+  const nodeH = showScreenshots ? 320 : 56;
+  g.setGraph({ 
+    rankdir: 'TB', 
+    nodesep: (showScreenshots ? 40 : 40) * spacingScale, 
+    ranksep: (showScreenshots ? 100 : 70) * spacingScale 
+  });
 
   const flowNodes: Node[] = [];
   const flowEdges: Edge[] = [];
@@ -202,68 +208,37 @@ function buildLayout(
 
     flowNodes.push({
       id: n.screen_id,
-      data: useThumbnail
-        ? { label: n.label || n.screen_id, ...n, showScreenshots, tourId, color, isEntry, status, tooltip }
-        : {
-            // Compact text card — used both for "Hide Screenshots" mode and
-            // for nodes that have no captured UI (they'd be empty frames otherwise).
-            label: (
-              <span title={tooltip} style={{ display: 'block', width: '100%' }}>
-                {prioBadge}
-                {n.label || n.screen_id}
-              </span>
-            ),
-            ...n,
-            showScreenshots, tourId, color, isEntry, status, tooltip,
-          },
-      position: { x: (pos?.x || 0) - nodeW / 2, y: (pos?.y || 0) - nodeH / 2 },
-      type: useThumbnail ? 'screenshotNode' : 'default',
-      style: useThumbnail ? undefined : {
-        // Fragment nodes get a subtle indigo tint + rounded look inside their host
-        background: isSystem ? '#f5f3ff'
-                  : isSystemTriggered ? '#fef3c7'        // amber tint for system-only
-                  : isFragment ? '#eef2ff'               // indigo tint for fragments
-                  : isActivity ? '#f8fafc'               // very light gray for activity hosts
-                  : '#fff',
-        color: '#0a0a0a',
-        border: isSystem ? '2px dashed #8b5cf6'
-              : isEntry  ? '2px solid #8b5cf6'
-              : isSystemTriggered ? '1.5px dashed #d97706' // amber dashed
-              : isFragment ? `1px solid #6366f1`         // indigo border
-              : isActivity && !isDeclared ? `2px solid ${STATUS_BORDER[status] || '#64748b'}` // thicker for activity host
-              : isDeclared ? `1px dashed ${STATUS_BORDER[status]}`
-              : `1px solid ${STATUS_BORDER[status] || '#d4d4d4'}`,
-        borderRadius: isFragment ? '12px' : '8px',
-        padding: '10px 14px',
-        fontSize: isFragment ? '11px' : '12px',
-        fontFamily: "'Inter', sans-serif",
-        fontWeight: 500,
-        width: isFragment ? nodeW - 40 : nodeW,   // fragments a bit smaller
-        cursor: 'pointer',
-        borderLeft: `4px solid ${color}`,
-        opacity: prioOpacity,
+      data: {
+        label: n.label || n.screen_id,
+        prioBadge,
+        screen_purpose: n.screen_purpose,
+        screen_id: n.screen_id,
+        isSystem, isSystemTriggered, isFragment, isActivity,
+        prioOpacity, STATUS_BORDER,
+        showScreenshots, tourId, color, isEntry, status, tooltip,
+        ...n
       },
+      position: { x: (pos?.x || 0) - nodeW / 2, y: (pos?.y || 0) - nodeH / 2 },
+      type: useThumbnail ? 'screenshotNode' : 'customTextNode',
     });
   }
 
   // Simplified 4-group palette — easier to read at a glance
   const STYLE_BY_KIND: Record<string, { stroke: string; dash?: string; width: number; showLabel?: boolean }> = {
-    // Group A: confirmed transitions (solid blue family)
-    navigate:       { stroke: '#2563eb', width: 1.35, showLabel: true },
-    two_hop:        { stroke: '#6d28d9', width: 1.25, showLabel: true },
-    // contains 는 구조관계 (Activity ↔ Fragment) — 라벨 끄고 점선만으로 표현
-    // (이전: 81/113 엣지가 contains 라 fragment_transaction 라벨 도배되던 문제 해소)
-    contains:       { stroke: '#0ea5e9', width: 1.0, dash: '3,5', showLabel: false },
-    // Group B: entry/external (green family)
-    launcher:       { stroke: '#16a34a', width: 1.7, showLabel: true },
-    intent_filter:  { stroke: '#16a34a', width: 1.1, dash: '4,2', showLabel: true },
-    pending_intent: { stroke: '#65a30d', width: 1.1, dash: '5,3', showLabel: true },
-    // Group C: weak / inferred (gray, no label)
-    static_ref:     { stroke: '#cbd5e1', width: 0.8, dash: '2,4', showLabel: false },
-    global:         { stroke: '#9ca3af', width: 1.0, dash: '2,3', showLabel: false },
-    // Group D: reversals / overlays (amber/orange)
-    overlay:        { stroke: '#f59e0b', width: 1.5, dash: '3,3', showLabel: true },
-    back:           { stroke: '#d4d4d4', width: 1.0, dash: '6,4', showLabel: false },
+    // Group A: 기본 흐름 (차분한 무채색 계열)
+    navigate:       { stroke: '#334155', width: 2.0, showLabel: true },
+    contains:       { stroke: '#94a3b8', width: 1.5, showLabel: false },
+    // Group B: 외부/특수 진입점 (눈에 띄는 포인트 컬러)
+    launcher:       { stroke: '#dc2626', width: 2.5, showLabel: true }, // 강렬한 빨강
+    intent_filter:  { stroke: '#059669', width: 2.5, showLabel: true }, // 에메랄드
+    pending_intent: { stroke: '#7c3aed', width: 2.5, showLabel: true }, // 보라색
+    // Group C: 오버레이 및 특수 전이
+    overlay:        { stroke: '#ea580c', width: 2.0, showLabel: true }, // 주황색
+    two_hop:        { stroke: '#2563eb', width: 2.0, showLabel: true }, // 파란색
+    // Group D: 기타 약한 신호 (연한 회색)
+    static_ref:     { stroke: '#cbd5e1', width: 1.5, showLabel: false },
+    global:         { stroke: '#cbd5e1', width: 1.5, showLabel: false },
+    back:           { stroke: '#fca5a5', width: 1.5, showLabel: false }, // 연한 붉은색
   };
 
   // raw trigger 식별자를 사람이 읽기 좋게 매핑.
@@ -351,7 +326,7 @@ function buildLayout(
   return { nodes: flowNodes, edges: flowEdges };
 }
 
-const nodeTypes = { screenshotNode: ScreenshotNode };
+const nodeTypes = { screenshotNode: ScreenshotNode, customTextNode: CustomTextNode };
 const edgeTypes = { floating: FloatingEdge };
 type GraphMode = 'flow' | 'structure' | 'diagnostics' | 'custom';
 type ActionBounds = { left: number; top: number; right: number; bottom: number; label?: string };
@@ -421,8 +396,8 @@ export function ScreenMapView({
   const [showScreenshots, setShowScreenshots] = useState(false);
   const [showEdgeLabels, setShowEdgeLabels] = useState(false);
   const [edgeFiltersOpen, setEdgeFiltersOpen] = useState(false);
-  const [taskPlannerOpen, setJourneyPlannerOpen] = useState(false);
   const [graphMode, setGraphMode] = useState<GraphMode>('flow');
+  const [spacingScale, setSpacingScale] = useState(1.0);
   const [internalEdgeData, setInternalEdgeData] = useState<any | null>(null);
   const isControlled = externalEdgeData !== undefined;
   const selectedEdgeData = isControlled ? externalEdgeData : internalEdgeData;
@@ -434,6 +409,7 @@ export function ScreenMapView({
   const [highlightedPath, setHighlightedPath] = useState<{ nodes: Set<string>; edges: Set<string> } | null>(null);
   const [planFocus, setPlanFocus] = useState(false);
   const [pathInfo, setPathInfo] = useState<string>('');
+  const [taskPlannerOpen, setJourneyPlannerOpen] = useState(false);
   // Natural-language task planning (Claude-powered)
   const [taskInput, setTaskInput] = useState('');
   const [planBusy, setPlanBusy] = useState(false);
@@ -536,21 +512,8 @@ export function ScreenMapView({
   //   별모양 만들어 시각적 노이즈. toolbar 의 chip 클릭으로 보이게 가능.
   //   static_ref / global 도 정적 분석 부산물 — 같은 이유.
   const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(
-    new Set(['contains', 'static_ref', 'global'])
+    new Set()
   );
-  const applyMode = useCallback((mode: Exclude<GraphMode, 'custom'>) => {
-    setGraphMode(mode);
-    if (mode === 'flow') {
-      setHiddenKinds(new Set(['contains', 'static_ref', 'global']));
-      setShowEdgeLabels(false);
-    } else if (mode === 'structure') {
-      setHiddenKinds(new Set(['static_ref', 'global']));
-      setShowEdgeLabels(false);
-    } else {
-      setHiddenKinds(new Set(['contains']));
-      setShowEdgeLabels(true);
-    }
-  }, []);
   const filteredEdges = useMemo(
     () => graph.edges.filter((e: any) => {
       if (!filteredNodeIds.has(e.from) || !filteredNodeIds.has(e.to)) return false;
@@ -602,25 +565,63 @@ export function ScreenMapView({
     // Tag the nodes array with entry_node_id so buildLayout can highlight it
     const taggedNodes: any = filteredNodes.slice();
     taggedNodes.entry_node_id = graph.entry_node;
-    return buildLayout(taggedNodes, filteredEdges, showScreenshots, showEdgeLabels, openEdgeDetail, tourId);
-  }, [filteredNodes, filteredEdges, showScreenshots, showEdgeLabels, openEdgeDetail, tourId, graph.entry_node]);
+    return buildLayout(taggedNodes, filteredEdges, showScreenshots, showEdgeLabels, openEdgeDetail, tourId, spacingScale);
+  }, [filteredNodes, filteredEdges, showScreenshots, showEdgeLabels, openEdgeDetail, tourId, graph.entry_node, spacingScale]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(layout.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(layout.edges);
 
   // Apply path highlighting to nodes and edges
   const styledNodes = useMemo(() => {
-    if (!highlightedPath) return layout.nodes;
-    return layout.nodes.map((n) => {
-      const onPath = highlightedPath.nodes.has(n.id);
-      if (!onPath) return { ...n, style: { ...n.style, opacity: 0.3 } };
-      return { ...n, style: { ...n.style, border: '3px solid #dc2626', opacity: 1 } };
-    });
-  }, [layout.nodes, highlightedPath]);
+    if (highlightedPath) {
+      return layout.nodes.map((n) => {
+        const onPath = highlightedPath.nodes.has(n.id);
+        if (!onPath) return { ...n, style: { ...n.style, opacity: 0.3 } };
+        return { ...n, style: { ...n.style, border: '3px solid #dc2626', opacity: 1 } };
+      });
+    }
+    if (selectedNodeId) {
+      const connectedNodes = new Set<string>([selectedNodeId]);
+      layout.edges.forEach(e => {
+        if (e.source === selectedNodeId) connectedNodes.add(e.target);
+        if (e.target === selectedNodeId) connectedNodes.add(e.source);
+      });
+      return layout.nodes.map((n) => {
+        const isConnected = connectedNodes.has(n.id);
+        if (!isConnected) return { ...n, style: { ...n.style, opacity: 0.3 } };
+        const isSelected = n.id === selectedNodeId;
+        return { ...n, style: { ...n.style, opacity: 1, ...(isSelected ? { boxShadow: '0 0 0 3px #3b82f6' } : {}) } };
+      });
+    }
+    return layout.nodes;
+  }, [layout.nodes, highlightedPath, layout.edges, selectedNodeId]);
 
   const styledEdges = useMemo(() => {
     const selectedEdgeId = selectedEdgeData?.edgeId || '';
-    const withSelected = (edgeList: Edge[]) => edgeList.map((e) => {
+    if (highlightedPath) {
+      return layout.edges.map((e) => {
+        const onPath = highlightedPath.edges.has(e.id);
+        if (!onPath) return { ...e, style: { ...e.style, opacity: 0.15 } };
+        return {
+          ...e,
+          style: { ...e.style, stroke: '#dc2626', strokeWidth: 3, opacity: 1 },
+          markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#dc2626' },
+          animated: true,
+        };
+      });
+    }
+    if (selectedNodeId) {
+      return layout.edges.map((e) => {
+        const isConnected = e.source === selectedNodeId || e.target === selectedNodeId;
+        if (!isConnected) return { ...e, style: { ...e.style, opacity: 0.15 } };
+        return {
+          ...e,
+          style: { ...e.style, stroke: '#3b82f6', strokeWidth: 3, opacity: 1 },
+          markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#3b82f6' },
+        };
+      });
+    }
+    return layout.edges.map((e) => {
       if (e.id !== selectedEdgeId) return e;
       return {
         ...e,
@@ -628,18 +629,7 @@ export function ScreenMapView({
         markerEnd: { type: MarkerType.ArrowClosed, width: 15, height: 15, color: '#111827' },
       };
     });
-    if (!highlightedPath) return withSelected(layout.edges);
-    return layout.edges.map((e) => {
-      const onPath = highlightedPath.edges.has(e.id);
-      if (!onPath) return { ...e, style: { ...e.style, opacity: 0.15 } };
-      return {
-        ...e,
-        style: { ...e.style, stroke: '#dc2626', strokeWidth: 3, opacity: 1 },
-        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#dc2626' },
-        animated: true,
-      };
-    });
-  }, [layout.edges, highlightedPath, selectedEdgeData]);
+  }, [layout.edges, highlightedPath, selectedEdgeData, selectedNodeId]);
 
   useEffect(() => { setNodes(styledNodes); }, [styledNodes, setNodes]);
   useEffect(() => { setEdges(styledEdges); }, [styledEdges, setEdges]);
@@ -651,16 +641,20 @@ export function ScreenMapView({
         // Shift+click = set path target → find path
         findPath(pathSource, node.id);
       } else {
-        // Normal click = select node + set as path source
-        onNodeSelect(node.data);
-        setSelectedEdgeData(null);
-        setPathSource(node.id);
-        setHighlightedPath(null);
-        setPlanFocus(false);
-        setPathInfo('Shift+click another node for path');
+        if (selectedNodeId === node.id) {
+          onNodeSelect(null);
+          setPathSource(null);
+        } else {
+          onNodeSelect(node.data);
+          setSelectedEdgeData(null);
+          setPathSource(node.id);
+          setHighlightedPath(null);
+          setPlanFocus(false);
+          setPathInfo('Shift+click another node for path');
+        }
       }
     },
-    [onNodeSelect, pathSource, findPath]
+    [onNodeSelect, pathSource, findPath, selectedNodeId]
   );
 
   const downloadKG = useCallback(() => {
@@ -678,7 +672,7 @@ export function ScreenMapView({
   return (
     <>
     {/* Task navigator sits below search/filter and stays closed by default. */}
-    <div style={{ position: 'absolute', top: 62, left: 16, zIndex: 30 }}>
+    <div style={{ position: 'absolute', top: 220, left: 16, zIndex: 30 }}>
       {!taskPlannerOpen ? (
         <button
           type="button"
@@ -795,7 +789,10 @@ export function ScreenMapView({
       nodes={nodes} edges={edges}
       onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
       onNodeClick={onNodeClick} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
-      onPaneClick={() => setSelectedEdgeData(null)}
+      onPaneClick={() => {
+        setSelectedEdgeData(null);
+        onNodeSelect(null);
+      }}
       fitView minZoom={0.05} maxZoom={2}
       proOptions={{ hideAttribution: true }}
     >
@@ -803,6 +800,9 @@ export function ScreenMapView({
       <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#d4d4d4" />
       <Controls showInteractive={false} style={{ border: '1px solid #e5e5e5', borderRadius: '8px', overflow: 'hidden' }} />
       <MiniMap
+        position="top-left"
+        pannable
+        zoomable
         nodeColor={(n) => CATEGORY_COLOR[(n.data as any)?.functional_category || 'other'] || '#9ca3af'}
         maskColor="rgba(0,0,0,0.06)"
         style={{ border: '1px solid #e5e5e5', borderRadius: '8px', overflow: 'hidden' }}
@@ -814,13 +814,18 @@ export function ScreenMapView({
           maxWidth: 'min(68vw, 960px)', justifyContent: 'flex-end',
         }}>
           <div style={{
-            display: 'inline-flex', gap: 2, padding: 3,
+            display: 'inline-flex', gap: 6, padding: '3px 8px',
             background: 'rgba(255,255,255,0.95)',
             border: '1px solid #e5e5e5', borderRadius: 8,
+            alignItems: 'center'
           }}>
-            <ModeBtn active={graphMode === 'flow'} onClick={() => applyMode('flow')}>Flow</ModeBtn>
-            <ModeBtn active={graphMode === 'structure'} onClick={() => applyMode('structure')}>Structure</ModeBtn>
-            <ModeBtn active={graphMode === 'diagnostics'} onClick={() => applyMode('diagnostics')}>Diagnostics</ModeBtn>
+            <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-gray)' }}>Spacing</span>
+            <input 
+              type="range" min="0.5" max="2.5" step="0.1" 
+              value={spacingScale} 
+              onChange={(e) => setSpacingScale(parseFloat(e.target.value))} 
+              style={{ width: '80px', cursor: 'pointer' }}
+            />
           </div>
           <PanelBtn active={showScreenshots} onClick={() => setShowScreenshots(!showScreenshots)}>
             {showScreenshots ? 'Screenshots On' : 'Screenshots Off'}
@@ -1007,9 +1012,15 @@ function EdgeDetailPanel({
           fontSize: 12,
           lineHeight: 1.5,
         }}>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
-            <Badge>{kind}</Badge>
-            <Badge>{edgeData.confidence || 'unknown'}</Badge>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ color: 'var(--color-gray)', fontSize: 10, fontWeight: 600 }}>간선 타입:</span>
+              <Badge>{kind}</Badge>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ color: 'var(--color-gray)', fontSize: 10, fontWeight: 600 }}>탐색 방식:</span>
+              <Badge>{edgeData.confidence || 'unknown'}</Badge>
+            </div>
           </div>
           <div><strong>동작:</strong> {action}</div>
           {actionDetail && (

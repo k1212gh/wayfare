@@ -25,7 +25,7 @@
   .legend { font-size: 13px; color: #57606a; margin-bottom: 18px; line-height: 1.6; }
 </style></head><body>
 <h1>Coalesce 정책 Ablation — 시계 vs 메가커피</h1>
-<div class="ts">생성 2026-05-12 13:47</div>
+<div class="ts">생성 2026-05-12 15:03</div>
 
 <div class="legend">
   <strong>실험 의도</strong> — 같은 매칭 정책이 두 종류 앱 (a11y 풍부한 native vs 빈약한 webview)
@@ -65,10 +65,10 @@
         <div class="card">
           <h2>☕ 메가커피 앱</h2>
           <div class="meta">
-            <div><span class="k">잡 ID</span><span class="v">432b611e</span></div>
+            <div><span class="k">잡 ID</span><span class="v">fd901ab1</span></div>
             <div><span class="k">패키지</span><span class="v">co.kr.waldlust.megacoffee</span></div>
-            <div><span class="k">캡처 수</span><span class="v">326</span></div>
-            <div><span class="k">activity 종류</span><span class="v">4</span></div>
+            <div><span class="k">캡처 수</span><span class="v">139</span></div>
+            <div><span class="k">activity 종류</span><span class="v">2</span></div>
           </div>
           <h3>신호 가용성</h3>
           <table class="signals">
@@ -81,7 +81,7 @@
           <h3>정책별 canonical 수 + 압축률</h3>
           <table>
             <tr><th>정책</th><th>canonical 수</th><th>압축률</th><th></th></tr>
-            <tr><td>L1_only</td><td class="num">55</td><td class="num">83.1%</td><td><div class="bar" style="width:166px;background:#bc4c00"></div></td></tr><tr><td>L2_only</td><td class="num">26</td><td class="num">92.0%</td><td><div class="bar" style="width:184px;background:#bc4c00"></div></td></tr><tr><td>L3_only</td><td class="num">2</td><td class="num">99.4%</td><td><div class="bar" style="width:198px;background:#bc4c00"></div></td></tr><tr><td>L1+L2</td><td class="num">26</td><td class="num">92.0%</td><td><div class="bar" style="width:184px;background:#bc4c00"></div></td></tr><tr><td>L1+L2+L3</td><td class="num">2</td><td class="num">99.4%</td><td><div class="bar" style="width:198px;background:#bc4c00"></div></td></tr><tr><td>L1_authoritative</td><td class="num">55</td><td class="num">83.1%</td><td><div class="bar" style="width:166px;background:#bc4c00"></div></td></tr>
+            <tr><td>L1_only</td><td class="num">43</td><td class="num">69.1%</td><td><div class="bar" style="width:138px;background:#bc4c00"></div></td></tr><tr><td>L2_only</td><td class="num">28</td><td class="num">79.9%</td><td><div class="bar" style="width:159px;background:#bc4c00"></div></td></tr><tr><td>L3_only</td><td class="num">2</td><td class="num">98.6%</td><td><div class="bar" style="width:197px;background:#bc4c00"></div></td></tr><tr><td>L1+L2</td><td class="num">28</td><td class="num">79.9%</td><td><div class="bar" style="width:159px;background:#bc4c00"></div></td></tr><tr><td>L1+L2+L3</td><td class="num">2</td><td class="num">98.6%</td><td><div class="bar" style="width:197px;background:#bc4c00"></div></td></tr><tr><td>L1_authoritative</td><td class="num">43</td><td class="num">69.1%</td><td><div class="bar" style="width:138px;background:#bc4c00"></div></td></tr>
           </table>
         </div>
         
@@ -104,7 +104,7 @@
               <th class="num">🕐 시계<br><span class="sub">marginal (vs L1_only)</span></th>
               <th class="num">☕ 메가커피<br><span class="sub">marginal (vs L1_only)</span></th>
             </tr>
-            <tr><td><b>L1_only</b></td><td class="num">65.8%</td><td class="num">83.1%</td><td class="num" style="color:#1a7f37;font-weight:600">(baseline)</td><td class="num" style="color:#1a7f37;font-weight:600">(baseline)</td></tr><tr><td><b>L2_only</b></td><td class="num">85.3%</td><td class="num">92.0%</td><td class="num" style="color:#bc4c00;font-weight:600">+19.5%p</td><td class="num" style="color:#bc4c00;font-weight:600">+8.9%p</td></tr><tr><td><b>L3_only</b></td><td class="num">99.3%</td><td class="num">99.4%</td><td class="num" style="color:#bc4c00;font-weight:600">+33.5%p</td><td class="num" style="color:#bc4c00;font-weight:600">+16.3%p</td></tr><tr><td><b>L1+L2</b></td><td class="num">85.7%</td><td class="num">92.0%</td><td class="num" style="color:#bc4c00;font-weight:600">+19.9%p</td><td class="num" style="color:#bc4c00;font-weight:600">+8.9%p</td></tr><tr><td><b>L1+L2+L3</b></td><td class="num">99.3%</td><td class="num">99.4%</td><td class="num" style="color:#bc4c00;font-weight:600">+33.5%p</td><td class="num" style="color:#bc4c00;font-weight:600">+16.3%p</td></tr><tr><td><b>L1_authoritative</b></td><td class="num">65.8%</td><td class="num">83.1%</td><td class="num" style="color:#1a7f37;font-weight:600">+0.0%p</td><td class="num" style="color:#1a7f37;font-weight:600">+0.0%p</td></tr>
+            <tr><td><b>L1_only</b></td><td class="num">65.8%</td><td class="num">69.1%</td><td class="num" style="color:#1a7f37;font-weight:600">(baseline)</td><td class="num" style="color:#1a7f37;font-weight:600">(baseline)</td></tr><tr><td><b>L2_only</b></td><td class="num">85.3%</td><td class="num">79.9%</td><td class="num" style="color:#bc4c00;font-weight:600">+19.5%p</td><td class="num" style="color:#bc4c00;font-weight:600">+10.8%p</td></tr><tr><td><b>L3_only</b></td><td class="num">99.3%</td><td class="num">98.6%</td><td class="num" style="color:#1a7f37;font-weight:600">+33.5%p</td><td class="num" style="color:#1a7f37;font-weight:600">+29.5%p</td></tr><tr><td><b>L1+L2</b></td><td class="num">85.7%</td><td class="num">79.9%</td><td class="num" style="color:#bc4c00;font-weight:600">+19.9%p</td><td class="num" style="color:#bc4c00;font-weight:600">+10.8%p</td></tr><tr><td><b>L1+L2+L3</b></td><td class="num">99.3%</td><td class="num">98.6%</td><td class="num" style="color:#1a7f37;font-weight:600">+33.5%p</td><td class="num" style="color:#1a7f37;font-weight:600">+29.5%p</td></tr><tr><td><b>L1_authoritative</b></td><td class="num">65.8%</td><td class="num">69.1%</td><td class="num" style="color:#1a7f37;font-weight:600">+0.0%p</td><td class="num" style="color:#1a7f37;font-weight:600">+0.0%p</td></tr>
           </table>
           <p class="note">
             <strong>해석</strong> — L2/L3 의 marginal 이 시계에서만 크면 그 신호가 native a11y 풍부 앱에서

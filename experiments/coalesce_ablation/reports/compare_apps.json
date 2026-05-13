@@ -30,29 +30,29 @@
     }
   },
   "mega": {
-    "tour_id": "432b611e",
+    "tour_id": "fd901ab1",
     "app_label": "mega",
     "package_name": "co.kr.waldlust.megacoffee",
-    "n_screens": 326,
-    "activities_found": 4,
+    "n_screens": 139,
+    "activities_found": 2,
     "per_policy_canonicals": {
-      "L1_only": 55,
-      "L2_only": 26,
+      "L1_only": 43,
+      "L2_only": 28,
       "L3_only": 2,
-      "L1+L2": 26,
+      "L1+L2": 28,
       "L1+L2+L3": 2,
-      "L1_authoritative": 55
+      "L1_authoritative": 43
     },
     "per_policy_reduction": {
-      "L1_only": 0.831,
-      "L2_only": 0.92,
-      "L3_only": 0.994,
-      "L1+L2": 0.92,
-      "L1+L2+L3": 0.994,
-      "L1_authoritative": 0.831
+      "L1_only": 0.691,
+      "L2_only": 0.799,
+      "L3_only": 0.986,
+      "L1+L2": 0.799,
+      "L1+L2+L3": 0.986,
+      "L1_authoritative": 0.691
     },
     "fingerprint_stats": {
-      "n_screens": 326,
+      "n_screens": 139,
       "l1_coverage": 1.0,
       "l2_coverage": 1.0,
       "l3_coverage": 1.0,

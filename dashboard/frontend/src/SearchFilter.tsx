@@ -10,7 +10,7 @@ export function SearchFilter({ onSearch, onFilterCategory, categories }: SearchF
   return (
     <div style={{
       position: 'absolute',
-      top: '16px',
+      top: '170px',
       left: '16px',
       zIndex: 10,
       display: 'flex',

@@ -555,36 +555,60 @@ function UploadStrip({
       onClick={onClick}
       style={{
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 16,
-        border: `1.5px dashed ${dragOver ? 'var(--color-primary)' : 'var(--color-border)'}`,
-        borderRadius: 8,
-        padding: '14px 16px',
+        justifyContent: 'center',
+        gap: 12,
+        border: `2px dashed ${dragOver ? '#4338ca' : 'var(--color-border)'}`,
+        borderRadius: 12,
+        padding: '32px 16px',
         cursor: 'pointer',
-        background: dragOver ? '#fff7ed' : '#fcfcfc',
-        marginBottom: 22,
-        transition: 'border-color 0.15s, background 0.15s',
+        background: dragOver ? '#eef2ff' : '#fafafa',
+        marginBottom: 24,
+        transition: 'all 0.2s ease',
+      }}
+      onMouseEnter={(e) => {
+        if (!dragOver) {
+          e.currentTarget.style.borderColor = '#c7d2fe';
+          e.currentTarget.style.background = '#f5f7ff';
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (!dragOver) {
+          e.currentTarget.style.borderColor = 'var(--color-border)';
+          e.currentTarget.style.background = '#fafafa';
+        }
       }}
     >
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 700 }}>
-          {uploading ? 'Uploading APK...' : 'Upload APK'}
+      <div style={{
+        width: 48, height: 48, borderRadius: '50%', background: dragOver ? '#c7d2fe' : '#e5e5e5',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 4, transition: 'all 0.2s'
+      }}>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={dragOver ? '#4338ca' : '#737373'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="17 8 12 3 7 8"></polyline>
+          <line x1="12" y1="3" x2="12" y2="15"></line>
+        </svg>
+      </div>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: dragOver ? '#4338ca' : 'var(--color-black)' }}>
+          {uploading ? 'Uploading APK...' : 'Click to Upload or Drag APKs here'}
         </div>
-        <div style={{ fontSize: 11, color: 'var(--color-gray)', marginTop: 2 }}>
-          Drop APKs here or choose single/split APK files.
+        <div style={{ fontSize: 12, color: 'var(--color-gray)', marginTop: 4 }}>
+          Choose single base.apk or multiple split APK files.
         </div>
       </div>
       <span style={{
-        flexShrink: 0,
-        padding: '6px 12px',
+        marginTop: 4,
+        padding: '8px 16px',
         borderRadius: 6,
         background: 'var(--color-black)',
         color: 'var(--color-white)',
-        fontSize: 11,
-        fontWeight: 700,
+        fontSize: 12,
+        fontWeight: 600,
+        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
       }}>
-        Browse
+        Browse Files
       </span>
     </div>
   );
