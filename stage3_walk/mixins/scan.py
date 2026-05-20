@@ -173,6 +173,8 @@ class ScanMixin:
 
             tmp_png = png_path.with_name(f"scan_{idx:04d}.t{step}.png")
             try:
+                from .capture import _dismiss_ime_if_shown
+                _dismiss_ime_if_shown(self.device_serial)
                 subprocess.run(
                     ["adb", "-s", self.device_serial, "shell",
                      "screencap -p /sdcard/sa_scan.png"],

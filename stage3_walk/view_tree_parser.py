@@ -45,6 +45,7 @@ def parse_ui_xml(xml_path: Path) -> list[dict]:
             my_idx = len(views)
             views.append({
                 "resource_id": rid_raw.split("/")[-1] if "/" in rid_raw else rid_raw,
+                "package": attrs.get("package", ""),
                 "class": short_cls,
                 "parent_class": parent_class_full,
                 "parent_index": parent_idx,

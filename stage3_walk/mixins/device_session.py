@@ -36,6 +36,20 @@ class DeviceSessionMixin:
         "android.permission.BLUETOOTH_CONNECT",
         "android.permission.BLUETOOTH_SCAN",
         "android.permission.NEARBY_WIFI_DEVICES",
+        # Phone-related — Banapresso onboarding blocked at "manage phone calls"
+        # dialog because none of these were pre-granted. Adding them lets
+        # 한국 commerce/login apps that gate on phone identity get past intro.
+        "android.permission.CALL_PHONE",
+        "android.permission.READ_PHONE_STATE",
+        "android.permission.READ_PHONE_NUMBERS",
+        # Calendar / SMS / activity-recognition often surface during signup
+        # too — pre-granting is cheap and harmless if app doesn't declare them.
+        "android.permission.WRITE_CALENDAR",
+        "android.permission.READ_CALENDAR",
+        "android.permission.SEND_SMS",
+        "android.permission.RECEIVE_SMS",
+        "android.permission.READ_SMS",
+        "android.permission.ACTIVITY_RECOGNITION",
     )
 
     # ───── Emulator / device probing ──────────────────────────────

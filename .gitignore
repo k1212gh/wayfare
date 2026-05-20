@@ -39,3 +39,6 @@ Thumbs.db
 
 # Ad-hoc dumpsys / adb dump captures at repo root
 /tmp_*.txt
+
+# adb bugreport archives at repo root
+/bugreport-*.zip

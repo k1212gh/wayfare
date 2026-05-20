@@ -18,6 +18,41 @@ from .. import signature_stabilizer, view_tree_parser
 
 logger = logging.getLogger(__name__)
 
+# Soft IME packages we want to keep out of screenshots + UI dumps.
+# When EditText gains focus the IME pops up on top of the activity — without
+# explicit dismissal, screencap and uiautomator dump both pick it up, which
+# pollutes pHash coalesce (same screen w/wo keyboard → false split) and Vision
+# labeling (Claude reads "keyboard input screen" → form/dialog inflation).
+_IME_PKG_PREFIXES: tuple[str, ...] = (
+    "com.google.android.inputmethod",        # Gboard
+    "com.android.inputmethod",               # AOSP / emulator default
+    "com.samsung.android.honeyboard",        # Samsung Honey Board
+    "com.sec.android.inputmethod",           # legacy Samsung
+    "com.swiftkey",                          # SwiftKey
+    "com.touchtype.swiftkey",
+    "com.LGE.AppBox",                        # LG
+)
+
+
+def _dismiss_ime_if_shown(device_serial: str) -> None:
+    """Hide the soft keyboard before a screenshot, but only if it's actually
+    shown — avoids stray KEYCODE_ESCAPE on activities that bind it."""
+    try:
+        probe = subprocess.run(
+            ["adb", "-s", device_serial, "shell",
+             "dumpsys input_method | grep mInputShown"],
+            capture_output=True, timeout=3,
+        )
+        if b"mInputShown=true" not in (probe.stdout or b""):
+            return
+        subprocess.run(
+            ["adb", "-s", device_serial, "shell", "input keyevent 111"],
+            capture_output=True, timeout=3,
+        )  # KEYCODE_ESCAPE — closes IME only, no nav side effect
+        time.sleep(0.3)  # IME hide animation
+    except Exception:
+        pass
+
 
 class CaptureMixin:
     """UI/screenshot capture for the walk main loop."""
@@ -116,6 +151,10 @@ class CaptureMixin:
         (self.output_dir / "states").mkdir(exist_ok=True)
 
         try:
+            # Soft IME would otherwise occlude the bottom of screenshots and
+            # show up as inputmethod views in the XML — both poison coalesce.
+            _dismiss_ime_if_shown(self.device_serial)
+
             # UI dump via uiautomator2 (no idle-state requirement — works on
             # animated screens that the CLI `uiautomator dump` can't handle:
             # live clocks, rotating banner ads, autoplay video thumbnails,
@@ -140,6 +179,15 @@ class CaptureMixin:
                            capture_output=True, timeout=15)
 
             views = self._parse_ui_xml(raw_xml)
+            # Drop IME overlay views — dismiss above handles the common case,
+            # but if XML dump raced ahead of the IME hide animation it can
+            # still contain InputMethod nodes. Filtering here keeps the
+            # structural hash stable across keyboard transitions.
+            if views:
+                views = [
+                    v for v in views
+                    if not (v.get("package", "") or "").startswith(_IME_PKG_PREFIXES)
+                ]
 
             # Get current activity + top fragment. Spotify-class apps under load
             # can take 10+ seconds to respond to dumpsys, so use a generous timeout.
