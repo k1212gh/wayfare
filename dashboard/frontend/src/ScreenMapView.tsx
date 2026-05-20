@@ -21,6 +21,7 @@ import { CATEGORY_COLOR, EDGE_KIND_DESC } from './graph/colors';
 import { FloatingEdge } from './graph/FloatingEdge';
 import { ScreenshotNode } from './graph/ScreenshotNode';
 import { CustomTextNode } from './graph/CustomTextNode';
+import { NODE_SIZES, NODE_SIZE_LABEL, NodeSize } from './graph/nodeSize';
 
 interface ScreenMapViewProps {
   graph: { entry_node: string; nodes: any[]; edges: any[] };
@@ -62,15 +63,17 @@ function buildLayout(
   onOpenEdge: (edgeData: any) => void,
   tourId: string,
   spacingScale: number = 1.0,
+  nodeSize: NodeSize = 'md',
 ) {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
-  const nodeW = showScreenshots ? 180 : 200;
-  const nodeH = showScreenshots ? 320 : 56;
-  g.setGraph({ 
-    rankdir: 'TB', 
-    nodesep: (showScreenshots ? 40 : 40) * spacingScale, 
-    ranksep: (showScreenshots ? 100 : 70) * spacingScale 
+  const sizeDims = NODE_SIZES[nodeSize];
+  const nodeW = showScreenshots ? sizeDims.screenshot.w : sizeDims.text.w;
+  const nodeH = showScreenshots ? sizeDims.screenshot.sectionH : sizeDims.text.h;
+  g.setGraph({
+    rankdir: 'TB',
+    nodesep: sizeDims.dagre.nodesep * spacingScale,
+    ranksep: sizeDims.dagre.ranksep * spacingScale,
   });
 
   const flowNodes: Node[] = [];
@@ -216,6 +219,7 @@ function buildLayout(
         isSystem, isSystemTriggered, isFragment, isActivity,
         prioOpacity, STATUS_BORDER,
         showScreenshots, tourId, color, isEntry, status, tooltip,
+        nodeSize,
         ...n
       },
       position: { x: (pos?.x || 0) - nodeW / 2, y: (pos?.y || 0) - nodeH / 2 },
@@ -223,22 +227,26 @@ function buildLayout(
     });
   }
 
-  // Simplified 4-group palette — easier to read at a glance
+  // Semantic-grouped palette. Same meaning class → same hue family:
+  //  • Navigation (direct + helper) = cool deep (slate / indigo)
+  //  • External entry (user/URL/system) = warm red-rose family (clearly "외부 진입")
+  //  • Special transitions (overlay/back) = own accents
+  //  • Structural = slate fade (300/400/500 — three clear tiers)
   const STYLE_BY_KIND: Record<string, { stroke: string; dash?: string; width: number; showLabel?: boolean }> = {
-    // Group A: 기본 흐름 (차분한 무채색 계열)
-    navigate:       { stroke: '#334155', width: 2.0, showLabel: true },
-    contains:       { stroke: '#94a3b8', width: 1.5, showLabel: false },
-    // Group B: 외부/특수 진입점 (눈에 띄는 포인트 컬러)
-    launcher:       { stroke: '#dc2626', width: 2.5, showLabel: true }, // 강렬한 빨강
-    intent_filter:  { stroke: '#059669', width: 2.5, showLabel: true }, // 에메랄드
-    pending_intent: { stroke: '#7c3aed', width: 2.5, showLabel: true }, // 보라색
-    // Group C: 오버레이 및 특수 전이
-    overlay:        { stroke: '#ea580c', width: 2.0, showLabel: true }, // 주황색
-    two_hop:        { stroke: '#2563eb', width: 2.0, showLabel: true }, // 파란색
-    // Group D: 기타 약한 신호 (연한 회색)
-    static_ref:     { stroke: '#cbd5e1', width: 1.5, showLabel: false },
-    global:         { stroke: '#cbd5e1', width: 1.5, showLabel: false },
-    back:           { stroke: '#fca5a5', width: 1.5, showLabel: false }, // 연한 붉은색
+    // Navigation (cool deep)
+    navigate:       { stroke: '#1e293b', width: 2.0, showLabel: true },  // slate-800 — primary
+    two_hop:        { stroke: '#4338ca', width: 2.2, showLabel: true },  // indigo-700 — 진한 sibling
+    // External entry (warm red-rose family — read as one group)
+    launcher:       { stroke: '#dc2626', width: 2.5, showLabel: true },  // red-600 — 앱 직접 실행
+    intent_filter:  { stroke: '#ef4444', width: 2.5, showLabel: true },  // red-500 — 딥링크
+    pending_intent: { stroke: '#f43f5e', width: 2.5, showLabel: true },  // rose-500 — 시스템 트리거
+    // Special transitions
+    overlay:        { stroke: '#f59e0b', width: 2.0, showLabel: true },  // amber-500 — popup
+    back:           { stroke: '#71717a', width: 1.5, showLabel: false }, // zinc-500 — system back
+    // Structural — three-tier slate fade
+    contains:       { stroke: '#64748b', width: 1.3, showLabel: false }, // slate-500
+    static_ref:     { stroke: '#94a3b8', width: 1.2, showLabel: false }, // slate-400
+    global:         { stroke: '#cbd5e1', width: 1.2, showLabel: false }, // slate-300
   };
 
   // raw trigger 식별자를 사람이 읽기 좋게 매핑.
@@ -398,6 +406,7 @@ export function ScreenMapView({
   const [edgeFiltersOpen, setEdgeFiltersOpen] = useState(false);
   const [graphMode, setGraphMode] = useState<GraphMode>('flow');
   const [spacingScale, setSpacingScale] = useState(1.0);
+  const [nodeSize, setNodeSize] = useState<NodeSize>('md');
   const [internalEdgeData, setInternalEdgeData] = useState<any | null>(null);
   const isControlled = externalEdgeData !== undefined;
   const selectedEdgeData = isControlled ? externalEdgeData : internalEdgeData;
@@ -565,19 +574,31 @@ export function ScreenMapView({
     // Tag the nodes array with entry_node_id so buildLayout can highlight it
     const taggedNodes: any = filteredNodes.slice();
     taggedNodes.entry_node_id = graph.entry_node;
-    return buildLayout(taggedNodes, filteredEdges, showScreenshots, showEdgeLabels, openEdgeDetail, tourId, spacingScale);
-  }, [filteredNodes, filteredEdges, showScreenshots, showEdgeLabels, openEdgeDetail, tourId, graph.entry_node, spacingScale]);
+    return buildLayout(taggedNodes, filteredEdges, showScreenshots, showEdgeLabels, openEdgeDetail, tourId, spacingScale, nodeSize);
+  }, [filteredNodes, filteredEdges, showScreenshots, showEdgeLabels, openEdgeDetail, tourId, graph.entry_node, spacingScale, nodeSize]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(layout.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(layout.edges);
 
   // Apply path highlighting to nodes and edges
+  // Match the inner card's border-radius so boxShadow rings stay rounded.
+  const radiusFor = (n: Node): number =>
+    n.type === 'screenshotNode' ? 10 : ((n.data as any)?.isFragment ? 12 : 8);
+
   const styledNodes = useMemo(() => {
     if (highlightedPath) {
       return layout.nodes.map((n) => {
         const onPath = highlightedPath.nodes.has(n.id);
         if (!onPath) return { ...n, style: { ...n.style, opacity: 0.3 } };
-        return { ...n, style: { ...n.style, border: '3px solid #dc2626', opacity: 1 } };
+        return {
+          ...n,
+          style: {
+            ...n.style,
+            boxShadow: '0 0 0 3px #dc2626',
+            borderRadius: `${radiusFor(n)}px`,
+            opacity: 1,
+          },
+        };
       });
     }
     if (selectedNodeId) {
@@ -590,7 +611,15 @@ export function ScreenMapView({
         const isConnected = connectedNodes.has(n.id);
         if (!isConnected) return { ...n, style: { ...n.style, opacity: 0.3 } };
         const isSelected = n.id === selectedNodeId;
-        return { ...n, style: { ...n.style, opacity: 1, ...(isSelected ? { boxShadow: '0 0 0 3px #3b82f6' } : {}) } };
+        return {
+          ...n,
+          style: {
+            ...n.style,
+            opacity: 1,
+            boxShadow: isSelected ? '0 0 0 3px #3b82f6' : '0 0 0 2px rgba(59,130,246,0.5)',
+            borderRadius: `${radiusFor(n)}px`,
+          },
+        };
       });
     }
     return layout.nodes;
@@ -601,11 +630,12 @@ export function ScreenMapView({
     if (highlightedPath) {
       return layout.edges.map((e) => {
         const onPath = highlightedPath.edges.has(e.id);
-        if (!onPath) return { ...e, style: { ...e.style, opacity: 0.15 } };
+        if (!onPath) return { ...e, style: { ...e.style, opacity: 0.12 } };
+        // Preserve original kind color; emphasize via thicker stroke + flow animation.
+        const baseW = (e.style?.strokeWidth as number) || 2;
         return {
           ...e,
-          style: { ...e.style, stroke: '#dc2626', strokeWidth: 3, opacity: 1 },
-          markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#dc2626' },
+          style: { ...e.style, strokeWidth: baseW + 2, opacity: 1 },
           animated: true,
         };
       });
@@ -613,11 +643,11 @@ export function ScreenMapView({
     if (selectedNodeId) {
       return layout.edges.map((e) => {
         const isConnected = e.source === selectedNodeId || e.target === selectedNodeId;
-        if (!isConnected) return { ...e, style: { ...e.style, opacity: 0.15 } };
+        if (!isConnected) return { ...e, style: { ...e.style, opacity: 0.12 } };
+        const baseW = (e.style?.strokeWidth as number) || 2;
         return {
           ...e,
-          style: { ...e.style, stroke: '#3b82f6', strokeWidth: 3, opacity: 1 },
-          markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#3b82f6' },
+          style: { ...e.style, strokeWidth: baseW + 1.5, opacity: 1 },
         };
       });
     }
@@ -793,7 +823,7 @@ export function ScreenMapView({
         setSelectedEdgeData(null);
         onNodeSelect(null);
       }}
-      fitView minZoom={0.05} maxZoom={2}
+      fitView fitViewOptions={{ minZoom: 0.6, padding: 0.1 }} minZoom={0.15} maxZoom={3}
       proOptions={{ hideAttribution: true }}
     >
       <PanToSelected selectedId={selectedNodeId} nodes={nodes} />
@@ -820,12 +850,38 @@ export function ScreenMapView({
             alignItems: 'center'
           }}>
             <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-gray)' }}>Spacing</span>
-            <input 
-              type="range" min="0.5" max="2.5" step="0.1" 
-              value={spacingScale} 
-              onChange={(e) => setSpacingScale(parseFloat(e.target.value))} 
+            <input
+              type="range" min="0.5" max="2.5" step="0.1"
+              value={spacingScale}
+              onChange={(e) => setSpacingScale(parseFloat(e.target.value))}
               style={{ width: '80px', cursor: 'pointer' }}
             />
+          </div>
+          <div style={{
+            display: 'inline-flex', gap: 4, padding: '3px 6px',
+            background: 'rgba(255,255,255,0.95)',
+            border: '1px solid #e5e5e5', borderRadius: 8,
+            alignItems: 'center'
+          }}>
+            <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-gray)', marginRight: 2 }}>Size</span>
+            {(['sm','md','lg'] as NodeSize[]).map((s) => (
+              <button
+                key={s}
+                onClick={() => setNodeSize(s)}
+                style={{
+                  padding: '2px 8px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  background: nodeSize === s ? '#171717' : 'transparent',
+                  color: nodeSize === s ? '#fff' : '#525252',
+                  border: '1px solid ' + (nodeSize === s ? '#171717' : '#d4d4d4'),
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                }}
+              >
+                {NODE_SIZE_LABEL[s]}
+              </button>
+            ))}
           </div>
           <PanelBtn active={showScreenshots} onClick={() => setShowScreenshots(!showScreenshots)}>
             {showScreenshots ? 'Screenshots On' : 'Screenshots Off'}

@@ -1,10 +1,12 @@
 import React from 'react';
 import { Handle, Position } from '@xyflow/react';
 import { InstantTooltip } from './InstantTooltip';
+import { NODE_SIZES, NodeSize } from './nodeSize';
 
 export function CustomTextNode({ data }: { data: any }) {
   const { color, isEntry, status, tooltip, prioBadge, screen_purpose, label, screen_id, isSystem, isSystemTriggered, isFragment, isActivity, prioOpacity } = data;
-  const nodeW = 200;
+  const nodeSize: NodeSize = (data.nodeSize as NodeSize) || 'md';
+  const nodeW = NODE_SIZES[nodeSize].text.w;
   
   return (
     <div title={tooltip} style={{

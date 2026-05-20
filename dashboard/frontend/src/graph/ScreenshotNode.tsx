@@ -1,12 +1,15 @@
 import React, { useState } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import { InstantTooltip } from './InstantTooltip';
+import { NODE_SIZES, NodeSize } from './nodeSize';
 
 export function ScreenshotNode({ data }: { data: any }) {
   const color = data.color || '#9ca3af';
   const screenshotUrl = `/api/tours/${data.tourId}/screenshot/${data.screen_id}`;
   const [imgError, setImgError] = useState(false);
   const status: string = data.status || 'resolved';
+  const nodeSize: NodeSize = (data.nodeSize as NodeSize) || 'md';
+  const dims = NODE_SIZES[nodeSize].screenshot;
   const STATUS_DOT: Record<string, string> = {
     declared: '#cbd5e1',
     probed:   '#3b82f6',
@@ -25,14 +28,14 @@ export function ScreenshotNode({ data }: { data: any }) {
     <InstantTooltip text={data.tooltip || ''}>
     <div
       style={{
-        width: 180, background: '#fff', border: '1px solid #d4d4d4',
+        width: dims.w, background: '#fff', border: '1px solid #d4d4d4',
         borderRadius: '10px', overflow: 'hidden', cursor: 'pointer',
         borderTop: `3px solid ${color}`,
         boxShadow: data.isEntry ? `0 0 0 2px ${STATUS_DOT.entry}` : undefined,
       }}
     >
       <Handle id="t" type="target" position={Position.Top} style={{ opacity: 0, pointerEvents: 'none' }} />
-      <div style={{ height: 320, background: '#f5f5f5', overflow: 'hidden', position: 'relative' }}>
+      <div style={{ height: dims.sectionH, background: '#f5f5f5', overflow: 'hidden', position: 'relative' }}>
         {!imgError ? (
           <img src={screenshotUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center', background: '#000' }}
             onError={() => setImgError(true)} />

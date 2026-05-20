@@ -1,21 +1,34 @@
 /** Per-functional-category node accent color (left border of each node).
- *  Keep in sync with the API's ScreenMap schema enum (see stage6_screenmap/screenmap_serializer). */
+ *  Keep in sync with the API's ScreenMap schema enum (see stage6_screenmap/screenmap_serializer).
+ *
+ *  Palette philosophy: muted Tailwind 500-series base with strongest hues
+ *  assigned to the highest-frequency categories observed in recent tours
+ *  (list / detail / form / dialog). `other` stays slate-400 — it's a
+ *  catch-all and shouldn't grab attention away from typed categories.
+ */
 export const CATEGORY_COLOR: Record<string, string> = {
-  home: '#2563eb',
-  login: '#dc2626',
-  auth: '#be123c',
-  settings: '#7c3aed',
-  search: '#059669',
-  list: '#0891b2',
-  detail: '#d97706',
-  content_detail: '#d97706',
-  dialog: '#f59e0b',
-  media: '#0d9488',
-  form: '#e11d48',
-  profile: '#4f46e5',
-  navigation: '#6b7280',
-  entry: '#8b5cf6',
-  other: '#9ca3af',
+  // High-frequency (40+ in recent 3 tours) — vivid, distinct hues
+  list:           '#3b82f6',  // blue-500
+  detail:         '#f59e0b',  // amber-500
+  form:           '#ec4899',  // pink-500
+  dialog:         '#f97316',  // orange-500
+
+  // Mid-frequency
+  settings:       '#8b5cf6',  // violet-500
+  auth:           '#ef4444',  // red-500
+  search:         '#06b6d4',  // cyan-500
+  home:           '#10b981',  // emerald-500
+  media:          '#14b8a6',  // teal-500
+
+  // Less common / contextual
+  login:          '#dc2626',  // red-600 — deeper than auth so the two coexist
+  profile:        '#6366f1',  // indigo-500
+  content_detail: '#d97706',  // amber-600 — sibling of detail
+  navigation:     '#64748b',  // slate-500
+  entry:          '#7c3aed',  // violet-600
+
+  // Catch-all
+  other:          '#94a3b8',  // slate-400 (muted)
 };
 
 /** Hover-tooltip copy for each edge `kind`. Rendered by FloatingEdge. */

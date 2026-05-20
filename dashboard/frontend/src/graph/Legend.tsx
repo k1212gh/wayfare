@@ -31,24 +31,24 @@ export function Legend() {
   }, [collapsed]);
 
   const edgeItems = [
-    { color: '#334155', label: 'Navigate — 일반 화면 전환',
+    { color: '#1e293b', label: 'Navigate — 일반 화면 전환',
       tip: '두 Activity 사이의 일반적인 화면 이동(startActivity). 가장 신뢰도 높고 기본이 되는 엣지입니다.' },
-    { color: '#94a3b8', label: 'Contains — 구조 포함',
-      tip: '같은 Activity 내에서 Fragment가 포함되거나 교체됨. 화면 전환이 아닌 내부 구조 관계입니다.' },
+    { color: '#4338ca', label: 'Two-hop — 헬퍼 클래스 경유',
+      tip: '난독화된 헬퍼 클래스를 한 번 거쳐서 실행되는 화면 전환 경로입니다.' },
     { color: '#dc2626', label: 'Launcher — 앱 런처 진입',
       tip: '앱 아이콘을 터치해 실행할 때 들어오는 최초 진입점입니다.' },
-    { color: '#059669', label: 'Intent-filter — 딥링크 진입',
+    { color: '#ef4444', label: 'Intent-filter — 딥링크 진입',
       tip: '웹 브라우저나 외부 앱의 특정 URL 스킴/액션을 통해 직접 진입하는 경로입니다.' },
-    { color: '#7c3aed', label: 'PendingIntent — 시스템 진입',
+    { color: '#f43f5e', label: 'PendingIntent — 시스템 진입',
       tip: '알림(Notification), 위젯 등 시스템 측에서 실행되는 진입점입니다.' },
-    { color: '#ea580c', label: 'Overlay — 다이얼로그',
+    { color: '#f59e0b', label: 'Overlay — 다이얼로그',
       tip: '현재 화면 위에 덮이는 AlertDialog / BottomSheet. 배경 화면은 유지됩니다.' },
-    { color: '#2563eb', label: 'Two-hop — 헬퍼 클래스 경유',
-      tip: '난독화된 헬퍼 클래스를 한 번 거쳐서 실행되는 화면 전환 경로입니다.' },
-    { color: '#cbd5e1', label: 'Static/Global — 공통 참조',
-      tip: '드로어 메뉴, 하단 네비게이션 바 등 여러 곳에서 공통으로 참조되는 연결선입니다.' },
-    { color: '#fca5a5', label: 'Back — 뒤로 가기',
+    { color: '#71717a', label: 'Back — 뒤로 가기',
       tip: '시스템 뒤로가기 키(KEYCODE_BACK) 동작으로 발생하는 전환입니다.' },
+    { color: '#64748b', label: 'Contains — 구조 포함',
+      tip: '같은 Activity 내에서 Fragment가 포함되거나 교체됨. 화면 전환이 아닌 내부 구조 관계입니다.' },
+    { color: '#94a3b8', label: 'Static/Global — 공통 참조',
+      tip: '드로어 메뉴, 하단 네비게이션 바 등 여러 곳에서 공통으로 참조되는 연결선입니다.' },
   ];
 
   const statusItems = [
@@ -65,10 +65,10 @@ export function Legend() {
   ];
 
   const categoryItems = [
-    { color: '#2563eb', label: 'Activity — 일반 화면', tip: '일반적인 안드로이드 Activity 화면 (파란색 포인트)' },
-    { color: '#7c3aed', label: 'Fragment — 부분 화면', tip: 'Activity 내부의 Fragment 화면 (보라색 포인트)' },
-    { color: '#d97706', label: 'Dialog / Overlay — 팝업', tip: '현재 화면 위에 겹쳐서 표시되는 다이얼로그나 바텀시트 (주황색 포인트)' },
-    { color: '#16a34a', label: 'System / Entry — 진입점', tip: '위젯, 알림, 딥링크 등을 통해 진입하는 외부 허브 노드 (초록색 포인트)' },
+    { color: '#3b82f6', label: 'Activity — 일반 화면', tip: '일반적인 안드로이드 Activity 화면 (파란색 포인트)' },
+    { color: '#8b5cf6', label: 'Fragment — 부분 화면', tip: 'Activity 내부의 Fragment 화면 (보라색 포인트)' },
+    { color: '#f97316', label: 'Dialog / Overlay — 팝업', tip: '현재 화면 위에 겹쳐서 표시되는 다이얼로그나 바텀시트 (주황색 포인트)' },
+    { color: '#10b981', label: 'System / Entry — 진입점', tip: '위젯, 알림, 딥링크 등을 통해 진입하는 외부 허브 노드 (초록색 포인트)' },
   ];
 
   const priorityItems = [
