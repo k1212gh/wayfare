@@ -1,4 +1,21 @@
-"""Analyze res/layout/*.xml to extract clickable elements and UI structure."""
+"""Analyze res/layout/*.xml to extract clickable elements and UI structure.
+
+STATUS (2026-05-14): UNUSED — zero callers in the current pipeline.
+
+Not wired up because:
+  - Input requires a decompiled res/ dir. Raw APK contains binary AXML; the
+    ET parser below can't read it. Only decompiler.py produces text XML, and
+    that module is also unused.
+  - Dynamic uiautomator already captures the same info live (view_tree_parser.py)
+    with accurate visibility/inflate handling that static XML can't see.
+  - The `activities` parameter is declared but never used in the body —
+    activity↔layout binding (setContentView / R.layout.X) was never
+    implemented, so layout dicts have no activity to attach to.
+
+Removal candidate. If revived, also: (a) enable decompiler.py (apktool),
+(b) add a setContentView pattern to dex_transitions.py, (c) gate execution
+to framework=='xml' (Compose/Flutter/RN have no layout XMLs).
+"""
 
 import logging
 from pathlib import Path

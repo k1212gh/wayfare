@@ -1,4 +1,16 @@
-"""APK decompilation using apktool."""
+"""APK decompilation using apktool.
+
+STATUS (2026-05-14): UNUSED — zero callers in the current pipeline.
+
+Originally intended to produce res/, smali/, decoded AndroidManifest.xml for
+downstream modules. No longer needed because:
+  - Manifest:   androguard decodes binary AXML in-memory (manifest_parser.py)
+  - DEX:        dexdump parses .dex directly (dex_transitions.py) — ~10x faster
+  - res/layout: only consumer was layout_analyzer.py (sibling, also unused)
+
+Removal candidate. If revived, pair with layout_analyzer.py and add a
+setContentView DEX pattern for activity↔layout binding (see that file).
+"""
 
 import shutil
 import subprocess
