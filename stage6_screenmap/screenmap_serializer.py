@@ -91,6 +91,7 @@ def _serialize_node(node: dict) -> dict:
                 "intent_filters", "intent_actions", "intent_categories",
                 "parent_activity", "fragment_name",
                 "capture_priority", "capture_reason",
+                "is_external_lib", "external_lib_source", "is_plumbing",
                 "primary_affordances", "fragment"):
         if opt in node:
             out[opt] = node[opt]

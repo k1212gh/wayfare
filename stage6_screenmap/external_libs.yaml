@@ -1,0 +1,81 @@
+# External Android SDK package prefixes.
+# Activities matching these prefixes are NOT considered part of the host app's
+# user-facing screen set when no screenshot was captured.
+#
+# Behavior:
+#   - is_external_lib flag is always set when prefix matches.
+#   - If screenshot_ref is empty -> capture_priority lowered to C
+#     (or B for the plumbing+external combo, see activity_classifier.py).
+#   - If screenshot_ref exists -> A is preserved (the user actually saw it).
+#
+# Add new prefixes here when a new SDK shows up in dynamic_unreachable A nodes.
+# Format: list of {prefix, name} dicts. `name` is for log/debug only.
+
+external_lib_prefixes:
+  # Google
+  - prefix: com.google.android.gms.
+    name: Google Play Services
+  - prefix: com.google.android.libraries.
+    name: Google Libraries (Places, Licenses, Social, ...)
+  - prefix: com.google.firebase.
+    name: Firebase
+  - prefix: com.google.ar.
+    name: Google ARCore
+
+  # AndroidX surfaces that are SDK-owned, not app-owned
+  - prefix: androidx.credentials.
+    name: AndroidX Credentials (Play Services)
+  - prefix: androidx.browser.
+    name: AndroidX Browser / Custom Tabs
+
+  # Korean OAuth / Messaging SDKs
+  - prefix: com.kakao.sdk.
+    name: Kakao SDK
+  - prefix: com.kakao.usermgmt.
+    name: Kakao UserMgmt
+  - prefix: com.navercorp.nid.
+    name: Naver NID OAuth
+  - prefix: com.naver.maps.
+    name: Naver Maps
+  - prefix: com.nhn.android.
+    name: Naver Android
+  - prefix: com.skt.tmap.
+    name: SKT TMap
+
+  # Marketing / Push / Analytics
+  - prefix: com.braze.
+    name: Braze
+  - prefix: com.appboy.
+    name: Appboy (legacy Braze)
+  - prefix: com.appsflyer.
+    name: AppsFlyer
+  - prefix: com.adjust.sdk.
+    name: Adjust
+  - prefix: com.amplitude.
+    name: Amplitude
+  - prefix: com.mixpanel.
+    name: Mixpanel
+
+  # Crash / Monitoring
+  - prefix: io.sentry.
+    name: Sentry
+  - prefix: com.crashlytics.
+    name: Crashlytics
+
+  # Cross-platform runtime
+  - prefix: io.flutter.
+    name: Flutter
+  - prefix: com.facebook.react.
+    name: React Native (Meta)
+
+  # Misc
+  - prefix: com.facebook.
+    name: Facebook SDK
+  - prefix: com.unity3d.
+    name: Unity
+  - prefix: com.bumptech.glide.
+    name: Glide
+  - prefix: com.airbnb.lottie.
+    name: Lottie
+  - prefix: com.zxing.
+    name: ZXing barcode
