@@ -78,6 +78,64 @@ def _phash_distance(h1: str | None, h2: str | None) -> int:
         return 999
 
 
+# ─── Tier L: 학습형 쌍 분류기 (COALESCE_LEARNED=1) ────────────────
+# 근거: arXiv 2606.16650 (2026) — 임계값형 추상화보다 학습형 쌍 분류기가
+# 모델 기반 크롤러 커버리지 최고. 가중치 파일이 없거나 env 가 꺼져 있으면
+# 완전히 비활성 (기존 Tier 0/A/1/2 그대로).
+_learned_cache: dict = {"loaded": False, "clf": None}
+
+
+def _reset_learned_cache() -> None:
+    _learned_cache["loaded"] = False
+    _learned_cache["clf"] = None
+
+
+def _learned_classifier():
+    import os
+    if os.environ.get("COALESCE_LEARNED", "").lower() not in ("1", "true", "yes"):
+        return None
+    if not _learned_cache["loaded"]:
+        _learned_cache["loaded"] = True
+        try:
+            from .pair_classifier import load_default
+            _learned_cache["clf"] = load_default()
+            if _learned_cache["clf"] is None:
+                logger.info("[coalesce] COALESCE_LEARNED set but no weights file — Tier L inactive")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[coalesce] learned classifier load failed: %s", e)
+            _learned_cache["clf"] = None
+    return _learned_cache["clf"]
+
+
+def _node_repr(n: dict) -> dict:
+    """ScreenMap 노드 → pair_features 입력 dict."""
+    ph = _compute_phash(n.get("screenshot_ref") or "") or ""
+    widgets = n.get("widgets") or []
+    return {
+        "structural_hash": n.get("structure_str", "") or "",
+        "perceptual_hash": ph,
+        "activity": n.get("activity", "") or "",
+        "label": n.get("label", "") or "",
+        "title_text": n.get("title_text", "") or "",
+        "widget_count": len(widgets) if isinstance(widgets, list) else None,
+        "screenshot_md5": n.get("screenshot_md5", "") or "",
+    }
+
+
+def _learned_verdict(clf, a: dict, b: dict) -> bool | None:
+    """True/False = 분류기 확신, None = 애매 → 기존 tier 로 진행."""
+    import os
+    from .pair_classifier import pair_features
+    hi = float(os.environ.get("COALESCE_LEARNED_HI", "0.7"))
+    lo = float(os.environ.get("COALESCE_LEARNED_LO", "0.2"))
+    prob = clf.predict_proba(pair_features(_node_repr(a), _node_repr(b)))
+    if prob >= hi:
+        return True
+    if prob <= lo:
+        return False
+    return None
+
+
 _LABEL_NOISE = re.compile(r"[\s\-_/(),.·—:]+")
 
 
@@ -163,6 +221,13 @@ def _is_mergeable(
     md5_b = b.get("screenshot_md5", "") or ""
     if md5_a and md5_b and md5_a == md5_b:
         return True
+
+    # Tier L (2026-09-12): 학습형 쌍 분류기 — 확신 구간이면 즉시 결정, 애매하면 기존 tier.
+    _clf = _learned_classifier()
+    if _clf is not None:
+        _verdict = _learned_verdict(_clf, a, b)
+        if _verdict is not None:
+            return _verdict
 
     # Tier A: pHash visual merge (strongest evidence).
     # Lenient threshold for infinite-scroll feed pairs: Instagram-like screens

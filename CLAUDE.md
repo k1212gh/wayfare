@@ -86,3 +86,13 @@ PYTHONPATH=. python -m pytest -q
 2. .env 파일 존재 + 키 유효성 (PLACEHOLDER 체크)
 3. pip / npm 패키지 설치 상태
 4. 디바이스 연결 상태
+
+## 실험 플래그 (2026-09-12, 브랜치 exp/paper-techniques — 기본 off, 롤백: `git checkout baseline-v0`)
+| env | 기법 | 근거 논문 |
+|---|---|---|
+| `WALK_FRONTIER=1` | 앱 전역 미탐색 액션 큐 + 관측 그래프 최단경로 복귀 (`stage3_walk/frontier.py`) | LLM-Explorer, MobiCom 2025 |
+| `TARPIT_LLM_ESCAPE=1` (+API 키, `TARPIT_BUDGET` 기본 20) | 막힌 화면에서 텍스트 위젯 목록으로 LLM 탈출 액션 문의 (`stage3_walk/tarpit_escaper.py`) | UI Tarpit Escaping, arXiv 2604.06763 |
+| `COALESCE_LEARNED=1` (+`pair_classifier_weights.json`) | Stage 6 병합에 학습형 쌍 분류기 Tier L (`stage6_screenmap/pair_classifier.py`) | arXiv 2606.16650 |
+
+- A/B 실측: `PYTHONPATH=. python scripts/ab_walk_megacoffee.py --device <serial> --pull-from-device co.kr.waldlust.megacoffee`
+- 분류기 학습: `PYTHONPATH=. python scripts/train_pair_classifier.py` (workspace 상태 파일 + experiments 라벨 필요)

@@ -171,6 +171,31 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         )
         self._stall_detector = StallDetector()
 
+        # ── 논문 기법 (2026-09-12 실험, env 로 on/off — baseline 은 전부 off) ──
+        # Frontier: LLM-Explorer (MobiCom 2025) 의 앱 전역 미탐색 큐 + 관측 그래프
+        # 최단경로 복귀. 현재 화면 미시도 소진 시 Back/soft-restart 대신 사용.
+        self.frontier = None
+        if os.environ.get("WALK_FRONTIER", "").lower() in ("1", "true", "yes"):
+            from .frontier import Frontier
+            self.frontier = Frontier()
+            logger.info("[frontier] enabled (max_path_len=%d)", self.frontier.max_path_len)
+
+        # TarpitEscaper: UI Tarpit Escaping (arXiv 2604.06763) — 텍스트 위젯 목록으로
+        # LLM 에 탈출 액션 문의. vision 보다 싸고 좌표 오차 없음.
+        self.tarpit_escaper = None
+        if os.environ.get("TARPIT_LLM_ESCAPE", "").lower() in ("1", "true", "yes"):
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if api_key and "PLACEHOLDER" not in api_key:
+                try:
+                    from .tarpit_escaper import TarpitEscaper
+                    self.tarpit_escaper = TarpitEscaper(api_key=api_key)
+                    logger.info("[tarpit] escaper enabled (budget=%d, model=%s)",
+                                self.tarpit_escaper.budget, self.tarpit_escaper.model)
+                except Exception as e:
+                    logger.warning("[tarpit] init failed: %s — disabled", e)
+            else:
+                logger.warning("[tarpit] TARPIT_LLM_ESCAPE set but ANTHROPIC_API_KEY missing")
+
     def run(self) -> dict:
         """Run the smart walk loop."""
         import subprocess
@@ -1067,6 +1092,18 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                     event_count += 1
                     self.wait_for_stable(timeout=2.0)
                     continue
+                # Frontier (LLM-Explorer): 현재 화면 미시도 소진 → 앱 전역에서 미시도
+                # 액션이 남은 가장 가까운 화면으로 '아는 길' 따라 이동. Back 보다 먼저.
+                nav_events = self._try_frontier_navigation(state, canonical_id, event_count)
+                if nav_events is not None:
+                    event_count = nav_events
+                    self.stall_count = 0
+                    continue
+                # TarpitEscaper: 정제된 위젯 목록으로 LLM 에 탈출 액션 문의.
+                if self._try_tarpit_escape(state, canonical_id):
+                    self.stall_count = 0
+                    event_count += 1
+                    continue
                 # 2026-04-30: Vision-LLM fallback BEFORE press back.
                 # XML extractor 가 못 잡는 화면 (Compose/WebView/Flutter 또는 score
                 # 가중치 누적 stall — TimePicker OK 0회 같은) 에서 화면 보고
@@ -1129,6 +1166,10 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                 if untried:
                     actions = untried  # Use untried actions even if scored low
                 else:
+                    nav_events = self._try_frontier_navigation(state, canonical_id, event_count)
+                    if nav_events is not None:
+                        event_count = nav_events
+                        continue
                     logger.info("All %d actions tried on %s, backing out", len(actions), canonical_id)
                     if not self._press_back():
                         self._soft_restart(package, main_activity)
@@ -1195,6 +1236,10 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             else:
                 untried_top = [a for a in actions[:5] if a.get("desc", "") not in tried_set]
                 if not untried_top:
+                    nav_events = self._try_frontier_navigation(state, canonical_id, event_count)
+                    if nav_events is not None:
+                        event_count = nav_events
+                        continue
                     untried_top = actions[:3]
             # Round-robin by event count so each visit to the same state picks
             # a different top candidate.
@@ -1378,6 +1423,9 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                     self.action_target_diversity[
                         (prev_canonical, best.get("desc", ""))
                     ].add(new_canonical)
+                    fr = getattr(self, "frontier", None)
+                    if fr is not None:
+                        fr.observe_transition(prev_canonical, best.get("desc", ""), new_canonical)
 
         # Save results
         elapsed = time.time() - start_time
@@ -1513,6 +1561,9 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             })
 
         actions.sort(key=lambda a: a["score"], reverse=True)
+        fr = getattr(self, "frontier", None)
+        if fr is not None:
+            fr.observe_actions(canonical, actions)
         return actions
 
 
@@ -1824,6 +1875,141 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                             canonical, n_before, n_after)
         except Exception as e:
             logger.debug("[scroll-right] boundary detection skipped: %s", e)
+
+    # ─── 논문 기법: Frontier / TarpitEscaper (2026-09-12) ─────────────
+
+    def _canonicalize_screen(self, screen: dict) -> str:
+        """캡처된 화면에 canonical_id 부여 (메인 루프 step 6 과 동일 규칙)."""
+        fp = self.hasher.compute_fingerprint(
+            screen.get("views", []),
+            screen.get("activity", ""),
+            screen.get("screenshot_path", ""),
+        )
+        match = self.hasher.find_match(fp)
+        if match:
+            canonical = match
+        else:
+            canonical = f"screen_{len(self.hasher.known_fingerprints):03d}"
+            self.hasher.register(canonical, fp)
+            self.hash_stats["new_screens"] += 1
+            logger.info("  -> NEW screen: %s", canonical)
+        screen["canonical_id"] = canonical
+        screen["state_str"] = canonical
+        if fp.screenshot_md5:
+            screen["screenshot_md5"] = fp.screenshot_md5
+        return canonical
+
+    def _try_frontier_navigation(self, state: dict, canonical_id: str,
+                                 event_count: int) -> int | None:
+        """LLM-Explorer 식 앱 전역 미탐색 화면으로 '아는 길' 이동.
+
+        반환:
+          None  — 아무 액션도 실행하지 않음 (frontier 비활성 / 목표 없음 /
+                  첫 스텝 액션이 현재 캡처에 없음). 호출자는 기존 전략으로 진행.
+          int   — 실행한 이벤트를 반영한 새 event_count. 경로 중간에 이탈해도
+                  이미 움직였으므로 int 를 돌려주고 호출자는 continue 한다.
+        """
+        fr = getattr(self, "frontier", None)
+        if fr is None:
+            return None
+        blocked_descs = set(self.external_blacklist) | set(
+            getattr(self, "_learned_action_descs", set())
+        )
+        blocked_canon = set(getattr(self, "_permanent_blocked_canonicals", set()))
+        picked = fr.pick_target(canonical_id, self.tried_actions, blocked_descs, blocked_canon)
+        if not picked:
+            return None
+        target, path = picked
+        fr.stats["nav_attempts"] += 1
+        logger.info("[frontier] %s -> %s via %d step(s): %s",
+                    canonical_id, target, len(path),
+                    " > ".join((d or "?")[:24] for _, d, _ in path))
+
+        cur_state, cur_canonical = state, canonical_id
+        steps_done = 0
+        for frm, desc, expected in path:
+            if cur_canonical != frm:
+                break
+            actions = self._get_scored_actions(cur_state)
+            act = next((a for a in actions if a.get("desc") == desc), None)
+            if act is None:
+                logger.info("[frontier] action %r not visible on %s — abort", desc[:40], cur_canonical)
+                fr.mark_failure(target)
+                return event_count if steps_done else None
+            self.tried_actions[cur_canonical].add(desc)
+            self.action_history.append({
+                "canonical_id": cur_canonical, "desc": desc,
+                "event_desc": desc, "action": act.get("action", "click"),
+            })
+            self._execute_action(act, cur_state)
+            event_count += 1
+            steps_done += 1
+            fr.stats["nav_steps"] += 1
+            self.wait_for_stable(timeout=2.0)
+            if not getattr(self, "_allow_external", False):
+                self._check_app_bounds()
+            new_screen = self._capture_screen(event_count)
+            if not new_screen:
+                fr.mark_failure(target)
+                return event_count
+            new_canonical = self._canonicalize_screen(new_screen)
+            if new_canonical != cur_canonical:
+                self.transitions.append({
+                    "from_screen": cur_canonical, "to_screen": new_canonical,
+                    "event_type": act.get("action", "click"), "event_str": desc,
+                })
+                self.action_target_diversity[(cur_canonical, desc)].add(new_canonical)
+                fr.observe_transition(cur_canonical, desc, new_canonical)
+            if new_canonical != expected:
+                logger.info("[frontier] diverged at %s: expected %s, got %s",
+                            cur_canonical, expected, new_canonical)
+                fr.mark_failure(target)
+                return event_count
+            cur_state, cur_canonical = new_screen, new_canonical
+
+        if cur_canonical == target:
+            fr.stats["nav_success"] += 1
+            self.trap_stats["frontier_nav"] += 1
+            logger.info("[frontier] reached %s (%d untried left)", target,
+                        len(fr.untried(target, self.tried_actions.get(target, set()), blocked_descs)))
+            return event_count
+        fr.mark_failure(target)
+        return event_count if steps_done else None
+
+    def _try_tarpit_escape(self, state: dict, canonical_id: str) -> bool:
+        """정제된 위젯 목록을 LLM 에 보내 탈출 후보를 받고 첫 유효 후보를 탭."""
+        esc = getattr(self, "tarpit_escaper", None)
+        if esc is None:
+            return False
+        views = state.get("views", []) or []
+        if not views:
+            return False
+        tried = self.tried_actions.get(canonical_id, set())
+        recent = [h.get("desc", "") for h in self.action_history[-6:]]
+        try:
+            picks = esc.suggest(views, state.get("activity", ""), tried, recent,
+                                canonical_id=canonical_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[tarpit] suggest failed: %s", e)
+            return False
+        for pick in picks:
+            view = pick.get("view") or {}
+            desc = self.extractor.get_action_desc(view)
+            if desc in tried or desc in self.external_blacklist:
+                continue
+            action = {"action": "click", "view": view, "bounds": view.get("bounds", {}),
+                      "desc": desc, "score": 0.0}
+            logger.info("[tarpit] escape tap %r — %s", desc[:40], (pick.get("reason") or "")[:60])
+            self.tried_actions[canonical_id].add(desc)
+            self.action_history.append({
+                "canonical_id": canonical_id, "desc": desc,
+                "event_desc": desc, "action": "click",
+            })
+            self._execute_action(action, state)
+            self.trap_stats["tarpit_escape"] = self.trap_stats.get("tarpit_escape", 0) + 1
+            self.wait_for_stable(timeout=2.0)
+            return True
+        return False
 
     def _try_vision_fallback(self, state: dict, canonical_id: str) -> bool:
         """Vision LLM 으로 actionable element 추출 + tap. 성공 시 True.
@@ -2311,6 +2497,18 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                 },
             },
         }
+
+        # 논문 기법 통계 (env off 면 키 자체가 없음 → baseline walk.json 과 동일)
+        fr = getattr(self, "frontier", None)
+        if fr is not None:
+            result["stats"]["frontier"] = fr.summary(self.tried_actions)
+        esc = getattr(self, "tarpit_escaper", None)
+        if esc is not None:
+            result["stats"]["tarpit"] = {
+                "calls_used": esc.calls_used,
+                "budget": esc.budget,
+                "escapes": self.trap_stats.get("tarpit_escape", 0),
+            }
 
         # P0-15 (2026-05-07): walk 종료 직후 batch finalize.
         # Walk 중에는 fingerprint 가 lazy 로 계산돼 L1 으로 결정 안 된 캡처만
