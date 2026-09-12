@@ -400,3 +400,41 @@ def test_semantic_merge_never_touches_system_entry():
     }
     semantic_merge(screenmap)
     assert len(screenmap["screen_map"]["graph"]["nodes"]) == 2
+
+
+def test_phash_distance_returns_plain_int_for_json():
+    """2026-09-12: imagehash 의 차이는 numpy.int64 — 그대로 저장하면 json.dumps 실패."""
+    import json
+    pytest_imagehash = __import__("pytest").importorskip("imagehash")
+    from stage6_screenmap.semantic_merge import _phash_distance
+    d = _phash_distance("ff00ff00ff00ff00", "ff00ff00ff00ff01")
+    assert type(d) is int
+    json.dumps({"phash_distance": d})
+
+
+def test_placeholder_label_treated_as_empty(monkeypatch):
+    """2026-09-12: LLM 없이 builder 가 넣은 page_xxx 라벨은 병합 판정에서 빈 라벨."""
+    from stage6_screenmap import semantic_merge as sm
+    assert sm._real_label({"screen_id": "page_f76e5df9d158", "label": "page_f76e5df9d158"}) == ""
+    assert sm._real_label({"screen_id": "page_a", "label": "act_0d1874d56e83"}) == ""
+    assert sm._real_label({"screen_id": "page_a", "label": "매장 정보"}) == "매장 정보"
+    # 같은 pHash(=같은 screenshot_ref) + 자리표시 라벨 → Tier A 로 병합돼야 함
+    monkeypatch.setattr(sm, "_compute_phash", lambda p: "ff00ff00ff00ff00" if p else None)
+    monkeypatch.setattr(sm, "_phash_distance", lambda a, b: 0)
+    a = {"screen_id": "page_a", "label": "page_a", "activity": "Main", "structure_str": "s1", "screenshot_ref": "x.png"}
+    b = {"screen_id": "page_b", "label": "page_b", "activity": "Main", "structure_str": "s2", "screenshot_ref": "y.png"}
+    assert sm._is_mergeable(a, b, [], 0.85, 4) is True
+    # 진짜 라벨이 다르면 여전히 거부 (P0-9 가드 유지)
+    a2 = dict(a, label="주문 영수증"); b2 = dict(b, label="이벤트 상세")
+    assert sm._is_mergeable(a2, b2, [], 0.85, 4) is False
+
+
+def test_no_labels_never_merges_on_label_tiers(monkeypatch):
+    """2026-09-12: 라벨 없는 쌍은 Tier 1/2 로 병합되지 않는다 (빈 라벨 유사도 1.0 과병합 방지)."""
+    from stage6_screenmap import semantic_merge as sm
+    monkeypatch.setattr(sm, "_compute_phash", lambda p: {"x.png": "ff00ff00ff00ff00", "y.png": "00ff00ff00ff00ff"}.get(p))
+    monkeypatch.setattr(sm, "_phash_distance", lambda a, b: 0 if a == b else 32)
+    a = {"screen_id": "page_a", "label": "page_a", "activity": "Main", "structure_str": "s1", "screenshot_ref": "x.png"}
+    b = {"screen_id": "page_b", "label": "page_b", "activity": "Main", "structure_str": "s2", "screenshot_ref": "y.png"}
+    edges = [{"from": "page_a", "to": "z", "kind": "navigate"}, {"from": "page_b", "to": "w", "kind": "navigate"}]
+    assert sm._is_mergeable(a, b, edges, 0.85, 4) is False

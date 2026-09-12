@@ -73,7 +73,10 @@ def _phash_distance(h1: str | None, h2: str | None) -> int:
         return 999
     try:
         import imagehash
-        return imagehash.hex_to_hash(h1) - imagehash.hex_to_hash(h2)
+        # imagehash 의 `-` 는 numpy.int64 를 돌려준다. 이 값이 merged_from[].phash_distance 에
+        # 그대로 들어가면 json.dumps 가 "int64 is not JSON serializable" 로 실패해 병합 결과가
+        # 저장되지 않는다 (2026-09-12 메가커피 실측에서 발견). 순수 int 로 변환.
+        return int(imagehash.hex_to_hash(h1) - imagehash.hex_to_hash(h2))
     except Exception:
         return 999
 
@@ -134,6 +137,19 @@ def _learned_verdict(clf, a: dict, b: dict) -> bool | None:
     if prob <= lo:
         return False
     return None
+
+
+_PLACEHOLDER_LABEL = re.compile(r"^(page|act|screen|state|node)_[0-9a-f]{6,}$", re.IGNORECASE)
+
+
+def _real_label(n: dict) -> str:
+    """LLM 라벨이 없을 때 builder 는 label 자리에 screen_id (page_xxx) 를 넣는다.
+    그 자리표시를 진짜 라벨로 보면 pHash 0 인 동일 화면끼리도 "라벨이 명백히 다름" 으로
+    병합이 거부된다 (2026-09-12 메가커피 매장정보 3장). 자리표시는 빈 라벨로 취급."""
+    label = (n.get("label", "") or "").strip()
+    if not label or label == (n.get("screen_id") or "") or _PLACEHOLDER_LABEL.match(label):
+        return ""
+    return label
 
 
 _LABEL_NOISE = re.compile(r"[\s\-_/(),.·—:]+")
@@ -267,21 +283,27 @@ def _is_mergeable(
                     # (89% 압축) 으로 use_gift_voucher 회귀 발생.
                     # → label 명백히 다르면 (둘 다 있고 정규화 후 다름) Tier A 거부,
                     #   Tier 1/2 로 fallthrough 해서 라벨/엣지 검사.
-                    la_n = _normalize_label(a.get("label", ""))
-                    lb_n = _normalize_label(b.get("label", ""))
+                    la_n = _normalize_label(_real_label(a))
+                    lb_n = _normalize_label(_real_label(b))
                     if la_n and lb_n and la_n != lb_n:
                         pass  # Tier 1/2 로 진행 — 동일 라벨이면 거기서 merge
                     else:
                         return True
 
-    la = _normalize_label(a.get("label", ""))
-    lb = _normalize_label(b.get("label", ""))
+    la = _normalize_label(_real_label(a))
+    lb = _normalize_label(_real_label(b))
+
+    # 라벨이 한쪽이라도 없으면(LLM 미실행) Tier 1/2 는 판정 근거가 없다. _label_similarity 가
+    # 빈 라벨 쌍에 1.0 을 돌려줘 Tier 2 가 버킷 전체를 합쳐버리는 과병합(69→31) 방지.
+    # 라벨 없는 노드는 위의 Tier 0(md5) / A(pHash+구조) 로만 병합된다.
+    if not la or not lb:
+        return False
 
     # Tier 1: identical normalized labels → strongest label signal
     if la and lb and la == lb:
         return True
 
-    sim = _label_similarity(a.get("label", ""), b.get("label", ""))
+    sim = _label_similarity(_real_label(a), _real_label(b))
     if sim < threshold:
         return False
 
@@ -465,8 +487,8 @@ def semantic_merge(screenmap: dict, threshold: float = 0.85,
                 # 같은 activity + 같은 phash 라도 LLM 이 다른 라벨을 단 화면이면
                 # 다른 화면. 7fe3f44a 잡 회귀의 진짜 원인 (Tier A 가드 추가
                 # 후에도 여기서 합쳐졌음).
-                la_n = _normalize_label(a.get("label", ""))
-                lb_n = _normalize_label(b.get("label", ""))
+                la_n = _normalize_label(_real_label(a))
+                lb_n = _normalize_label(_real_label(b))
                 if la_n and lb_n and la_n != lb_n:
                     continue
                 # Cross-bucket pixel-identical merge

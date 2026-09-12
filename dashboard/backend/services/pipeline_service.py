@@ -373,6 +373,36 @@ def run_pipeline_sync(tour_id: str, device_serial: str = "", from_stage: int = 0
                     "LLM enrichment skipped (no valid ANTHROPIC_API_KEY) — "
                     "using wireframe ScreenMap as final output",
                 )
+                # 2026-09-12 (메가커피 실측): 중복 병합(D: md5/pHash/구조) 과 primitive /
+                # metadata refresh 는 LLM 이 필요 없는데 키 분기 안에만 있어서, 키 없는 실행은
+                # pHash 거리 0 인 동일 화면(WebView a11y 트리가 로딩 시점마다 157/211/210 뷰로
+                # 잡혀 L1 이 갈린 케이스) 3장이 그대로 노드 3개로 남았다. 라벨 없이도 Tier 0/A
+                # 는 동작하므로 키 없이도 병합 + refresh 를 돌린다. LLM vision tiebreaker 는 제외.
+                if os.environ.get("SEMANTIC_COALESCE", "1") != "0":
+                    try:
+                        from stage6_screenmap.semantic_merge import coalesce_file
+                        screenmap_path = config.output_dir / config.screenmap_output_filename
+                        threshold = float(os.environ.get("SEMANTIC_COALESCE_THRESHOLD", "0.85"))
+                        phash_thresh = int(os.environ.get("SEMANTIC_COALESCE_PHASH", "4"))
+                        coalesce_file(screenmap_path, threshold=threshold, phash_threshold=phash_thresh)
+                    except Exception as e:
+                        logger.warning("Semantic coalesce (no-LLM) failed (non-fatal): %s", str(e)[:200])
+                try:
+                    from stage6_screenmap.primitive_detector import detect_primitives_for_screenmap
+                    from stage6_screenmap.metadata_refresh import refresh_metadata
+                    screenmap_path = config.output_dir / config.screenmap_output_filename
+                    if screenmap_path.exists():
+                        screenmap_data = json.loads(screenmap_path.read_text(encoding="utf-8"))
+                        try:
+                            detect_primitives_for_screenmap(screenmap_data, tour_dir=WORKSPACE_ROOT / tour_id)
+                        except Exception as pe:
+                            logger.warning("primitive_detector (no-LLM) failed: %s", pe)
+                        refresh_metadata(screenmap_data, static_info=static_info)
+                        screenmap_path.write_text(
+                            json.dumps(screenmap_data, indent=2, ensure_ascii=False), encoding="utf-8",
+                        )
+                except Exception as e:
+                    logger.warning("metadata_refresh (no-LLM) failed: %s", e)
         else:
             # No device/walk → static-only ScreenMap from manifest activities
             update_stage("BUILDING_SCREENMAP")
