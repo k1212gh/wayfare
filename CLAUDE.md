@@ -41,10 +41,14 @@ GitHub: https://github.com/k1212gh/screenatlas
 
 ## 자주 사용하는 명령
 
-### 서버 시작
+### 서버 시작 (포트: 백엔드 8008 = vite 프록시 기본값 BACKEND_PORT, 프론트 5173)
 ```bash
-PYTHONPATH=. python -m uvicorn dashboard.backend.server:app --port 8000
-cd dashboard/frontend && npx vite --port 5173
+# 0) 로컬 LLM (Ollama, 별도 창) — 모델은 %USERPROFILE%\.ollama 에 있어 재부팅 후에도 유지
+%LOCALAPPDATA%\Programs\Ollama\ollama.exe serve
+# 1) 백엔드 — 이 PC 는 Windows 스토어 python 에 httpx 가 없으므로 의존성 설치된 venv 로 실행
+PYTHONPATH=. python -m uvicorn dashboard.backend.server:app --host 127.0.0.1 --port 8008
+# 2) 프론트 — --host 없으면 127.0.0.1 만 바인딩돼 localhost(IPv6) 접속이 거부됨
+cd dashboard/frontend && npx vite --port 5173 --host
 ```
 
 ### 테스트
@@ -64,7 +68,7 @@ PYTHONPATH=. python -m pytest -q
 ### /status — 현재 상태 한눈에
 1. git log --oneline -5
 2. git status
-3. 서버 상태 (8000, 5173 포트)
+3. 서버 상태 (8008, 5173 포트)
 4. ADB 디바이스 연결
 5. workspace/ 내 tour 목록 + 상태
 6. .env 설정 확인
