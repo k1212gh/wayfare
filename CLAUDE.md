@@ -2,7 +2,7 @@
 
 ## 프로젝트 개요
 APK를 입력받아 앱 화면 흐름을 Screen Map(화면 지도)으로 자동 추출하는 파이프라인.
-GitHub: https://github.com/YOUR_GITHUB_ID/screenatlas
+GitHub: https://github.com/k1212gh/screenatlas
 
 ## 용어 사전 (코드 식별자 ↔ 개념)
 | 식별자 | 개념 |

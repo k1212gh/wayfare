@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "MIT"}
 authors = [
-    {name = "YOUR_NAME"},
+    {name = "김건희"},
 ]
 
 # Runtime deps — single source of truth (requirements.txt has been retired).

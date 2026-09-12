@@ -4,7 +4,7 @@
 
 ```bash
 # 1. Clone
-git clone https://github.com/YOUR_GITHUB_ID/screenatlas.git
+git clone https://github.com/k1212gh/screenatlas.git
 cd screenatlas
 
 # 2. Setup (의존성 + .env + demo)
@@ -78,7 +78,7 @@ NOTION_TOKEN=ntn_your_token
 - `stage6_screenmap/__init__.py` — ScreenMap 생성 (edge injection)
 
 ### GitHub
-- Repo: https://github.com/YOUR_GITHUB_ID/screenatlas
+- Repo: https://github.com/k1212gh/screenatlas
 - Branch: `main`
 - 최근 커밋: 10개
 
