@@ -191,10 +191,15 @@ class CaptureMixin:
 
             # Get current activity + top fragment. Spotify-class apps under load
             # can take 10+ seconds to respond to dumpsys, so use a generous timeout.
+            # 2026-09-12: `dumpsys activity top` 은 기기의 모든 태스크 최상단 액티비티를
+            # 통째로 덤프한다 (Instagram/브라우저 등 사용자 앱이 뒤에 있으면 5초+, 190KB).
+            # `dumpsys activity <package>` 는 대상 앱만 (90ms, 12KB) 이고 activity /
+            # fragment 파싱 결과가 동일. 패키지를 모를 때만 기존 명령으로 폴백.
+            _pkg = getattr(self, "package", "") or ""
+            _dump_cmd = f"dumpsys activity {_pkg}" if _pkg else "dumpsys activity top"
             try:
                 activity_result = subprocess.run(
-                    ["adb", "-s", self.device_serial, "shell",
-                     "dumpsys activity top"],
+                    ["adb", "-s", self.device_serial, "shell", _dump_cmd],
                     capture_output=True, timeout=25,
                 )
             except subprocess.TimeoutExpired:
