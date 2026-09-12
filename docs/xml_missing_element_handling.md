@@ -1,6 +1,6 @@
 # XML 누락 요소 처리 정책
 
-이 문서는 ScreenAtlas 파이프라인에서 XML 입력의 **누락 요소(missing element/attribute)** 가 발생했을 때 각 모듈이 어떻게 동작하는지 정리한다. 대상 입력은 다음 네 종류다.
+이 문서는 Wayfare 파이프라인에서 XML 입력의 **누락 요소(missing element/attribute)** 가 발생했을 때 각 모듈이 어떻게 동작하는지 정리한다. 대상 입력은 다음 네 종류다.
 
 - `AndroidManifest.xml` (binary 또는 decoded)
 - `res/layout/*.xml` (정적 레이아웃 정의)
@@ -21,7 +21,7 @@
 
 ## 1. AndroidManifest 파서
 
-**파일**: [screenatlas/stage2_manifest/manifest_parser.py](../stage2_manifest/manifest_parser.py)
+**파일**: [wayfare/stage2_manifest/manifest_parser.py](../stage2_manifest/manifest_parser.py)
 
 binary APK는 androguard, decoded XML은 `xml.etree`로 처리하며 dispatch는 [L18-29](../stage2_manifest/manifest_parser.py#L18-L29) 에서 결정된다.
 
@@ -38,7 +38,7 @@ binary APK는 androguard, decoded XML은 `xml.etree`로 처리하며 dispatch는
 
 ## 2. 정적 레이아웃 분석기
 
-**파일**: [screenatlas/stage2_manifest/layout_analyzer.py](../stage2_manifest/layout_analyzer.py)
+**파일**: [wayfare/stage2_manifest/layout_analyzer.py](../stage2_manifest/layout_analyzer.py)
 
 `res/layout*/*.xml` 을 순회하며 clickable/input/scrollable 요소를 추출한다.
 
@@ -52,7 +52,7 @@ binary APK는 androguard, decoded XML은 `xml.etree`로 처리하며 dispatch는
 
 ## 3. uiautomator UI dump 파서
 
-**파일**: [screenatlas/stage3_walk/view_tree_parser.py](../stage3_walk/view_tree_parser.py)
+**파일**: [wayfare/stage3_walk/view_tree_parser.py](../stage3_walk/view_tree_parser.py)
 
 탐색 중 캡처된 view hierarchy XML을 flat list[dict]로 변환한다.
 
@@ -67,7 +67,7 @@ binary APK는 androguard, decoded XML은 `xml.etree`로 처리하며 dispatch는
 
 ## 4. DroidBot view dict 정리
 
-**파일**: [screenatlas/stage4_screens/view_tree_cleaner.py](../stage4_screens/view_tree_cleaner.py)
+**파일**: [wayfare/stage4_screens/view_tree_cleaner.py](../stage4_screens/view_tree_cleaner.py)
 
 이 단계는 이미 dict로 변환된 view를 정리하므로 XML 파싱은 없다. 하지만 누락 처리 정책은 일관되게 적용된다.
 

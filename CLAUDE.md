@@ -1,8 +1,8 @@
-# ScreenAtlas — Claude Code 프로젝트 설정
+# Wayfare — Claude Code 프로젝트 설정
 
 ## 프로젝트 개요
 APK를 입력받아 앱 화면 흐름을 Screen Map(화면 지도)으로 자동 추출하는 파이프라인.
-GitHub: https://github.com/k1212gh/screenatlas
+GitHub: https://github.com/k1212gh/wayfare
 
 ## 용어 사전 (코드 식별자 ↔ 개념)
 | 식별자 | 개념 |
@@ -128,8 +128,8 @@ PYTHONPATH=. python -m pytest -q
 - API: `GET/PUT /api/settings/llm`, `POST /api/settings/llm/test`, `POST /api/settings/llm/discover` (host 의 11434/1234/3000/8080 탐지)
 - 지원 서버: Ollama(`:11434/v1`), LM Studio(`:1234/v1`), Open WebUI(`:3000/api` + Bearer 키), 그 외 OpenAI 호환 (vLLM, llama.cpp)
 - 이 PC 에 Ollama 0.34 설치됨 (2026-09-12, winget). 서버: `%LOCALAPPDATA%\Programs\Ollama\ollama.exe serve`. 받아둔 모델: qwen3.5:9b, gemma4:12b, qwen2.5:7b-instruct, qwen2.5vl:7b, qwen2.5:3b
-- **모델 벤치 (docs/local_llm_benchmark.md, RTX 4070 SUPER 12GB)**: 후보 선택 정확도 qwen3.5:9b 87% > gemma4:12b 78% > qwen2.5:7b 57% > qwen2.5:3b 26%. 비전 12장 오답 qwen3.5 0 / gemma4 3 / qwen2.5vl 1. 속도 qwen3.5 0.37s/노드·6.6s/장, gemma4 는 3배 느림 → **기본 qwen3.5:9b** (5.5GB, 텍스트+비전 겸용). 3B 는 거의 전부 -1 이라 무의미.
-- Ollama 는 네이티브 `/api/chat` 자동 사용 (`llm_client.py`, `LLM_OLLAMA_NATIVE=0` 로 해제): `/v1` 경로는 thinking 모델(Qwen3.5/Gemma4)에 `think:false` 가 안 먹어 응답이 비고 10배 느림. 벤치 스크립트 `scripts/bench_local_labels.py`, 정답표 `docs/bench_gold_megacoffee.json`.
+- **모델 벤치 (docs/local_llm_benchmark.md, RTX 4070 SUPER 12GB, 2회)**: 후보 선택 lenient 정확도 1차/2차 — qwen3.5:9b 87%/74%, gemma4:12b 78%/82%, qwen2.5:7b 57%/56%, qwen2.5:3b 26% (무의미). 비전 오답 qwen3.5 0/0, gemma4 3/0. 속도 qwen3.5 가 텍스트 2.4~3배 빠름, 5.5GB → **기본 qwen3.5:9b**, 정확도 우선이면 gemma4:12b. 다음 개선은 모델 교체보다 Stage 4 후보 정제(아이콘 설명·알림 배너)와 오버레이 제목 후보.
+- Ollama 는 네이티브 `/api/chat` 자동 사용 (`llm_client.py`, `LLM_OLLAMA_NATIVE=0` 로 해제): `/v1` 경로는 thinking 모델(Qwen3.5/Gemma4)에 `think:false` 가 안 먹어 응답이 비고 10배 느림. 벤치 스크립트 `scripts/bench_local_labels.py`, 정답표 `docs/bench_gold_megacoffee*.json` (투어별).
 - 자유 라벨은 `LLM_PICK_ALLOW_FREE=1` 일 때만 (기본 고르기 전용). 피커는 generic 버튼·24자 초과·지점명(`\S{3,}점`) pick 을 거부.
 - 라벨 대체 체인(LLM 없이도): LLM 라벨 → 제목 텍스트 → 화면 첫 텍스트 후보 → 액티비티 짧은 이름. `label_source` 로 출처 기록.
 - 그래프 뷰 기본: 가로 흐름(LR), 구조 엣지(contains/static_ref/global) 숨김, 배지는 정보가 있을 때만.

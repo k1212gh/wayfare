@@ -12,7 +12,7 @@
      인접한 idx (sibling pattern). N>=3 이어야 list_view 인정.
   3. ScrollView 내부 같은 자식 패턴 (드물지만 exist).
 
-Caveats (screenatlas_phash_coalesce_caveats 메모리 참조):
+Caveats (wayfare_phash_coalesce_caveats 메모리 참조):
   - list_view 의 항목 detail 화면들은 가격/이름만 다른 noise. 단, 옵션
     선택 (size/temp) 은 진짜 다른 노드 — list_view 자식이라 해서 무조건
     합치지 말 것. detail 후 coalesce 은 structure_str + widgets 시그니처

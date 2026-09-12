@@ -1,6 +1,11 @@
-# ScreenAtlas
+# Wayfare
 
-APK를 입력받아 앱의 화면 흐름을 Screen Map으로 자동 추출하고 웹에서 시각화하는 로컬 자동화 툴.
+앱의 APK 를 올리면 연결된 기기에서 앱을 직접 돌아다니며 **화면과 화면 사이의 전환을 지도**(Screen Map)로 만들어 주는 로컬 도구입니다.
+정적 분석(manifest·DEX) → 기기 탐색(TapWalker) → 화면 군집화 → 지도 빌드 → 로컬 LLM 라벨링의 6단계 파이프라인과,
+결과를 탐색하는 웹 대시보드(프로젝트 / 흐름 지도 / 기기 / 모델)로 구성됩니다.
+
+- LLM 은 **로컬 모델 우선** — Ollama·LM Studio·Open WebUI 를 대시보드에서 골라 쓰고, 화면 이름은 화면에 실제로 보이는 텍스트 중에서 고릅니다 (`docs/local_llm_benchmark.md`).
+- 탐색은 프런티어 큐 + 경로 재생(LLM-Explorer 계열)으로 막힌 화면에서 되돌아 나옵니다 (`docs/walk_improvements_report.md`).
 
 ## 출처 / 참고
 
@@ -10,7 +15,7 @@ APK를 입력받아 앱의 화면 흐름을 Screen Map으로 자동 추출하고
 ## 디렉토리 구조
 
 ```
-screenatlas/
+wayfare/
 │
 ├── config.py                          # 설정 + .env 로딩
 ├── main.py                            # CLI 진입점 (run/resume/serve)
@@ -62,18 +67,20 @@ screenatlas/
 │   ├── touch_log.py                         #   Touch Log 스키마
 │   └── logger.py                      #   JSONL 트레이스 로거
 │
-├── dashboard/                            # ── 웹 시각화 ──
+├── dashboard/                            # ── 웹 대시보드 ──
 │   ├── backend/
-│   │   └── server.py                  #   FastAPI (15 endpoints)
-│   └── frontend/
-│       └── src/
-│           ├── App.tsx                #   라우팅 (Dashboard ↔ Graph)
-│           ├── Dashboard.tsx          #   APK 업로드 + Tour 관리 + 진행률
-│           ├── ScreenMapView.tsx          #   React Flow 그래프 (스크린샷/경로)
-│           ├── ScreenPanel.tsx         #   노드 상세 패널
-│           ├── SearchFilter.tsx       #   검색/카테고리 필터
-│           ├── main.tsx               #   엔트리포인트
-│           └── tokens.css             #   디자인 토큰 (Inter, 4색)
+│   │   ├── server.py                  #   FastAPI 진입점
+│   │   ├── api/                       #   tours · graph · upload · device · emulator · settings(LLM)
+│   │   └── services/pipeline_service.py
+│   └── frontend/src/
+│       ├── App.tsx                    #   해시 라우팅 (#/ · #/flow/<id> · #/devices · #/models)
+│       ├── app/                       #   AppState(폴링·액션) · Shell(레일+상단바) · icons
+│       ├── pages/                     #   ProjectsPage · FlowPage · DevicesPage · ModelsPage
+│       ├── dashboard/                 #   ProjectCard · DevicePicker · LiveDeviceMirror · types
+│       ├── ScreenMapView.tsx          #   React Flow 캔버스 (레이아웃·간선·경로·플래너)
+│       ├── ScreenPanel.tsx            #   우측 인스펙터 (스크린샷·설명·전환·UI 요소)
+│       ├── graph/                     #   노드/간선 컴포넌트 · 범례 · 팔레트(colors.ts)
+│       └── tokens.css                 #   Wayfare 디자인 시스템 (크림·포리스트 그린·호박)
 │
 ├── tests/
 │   └── test_pipeline.py               #   9개 통합 테스트
@@ -101,17 +108,26 @@ screenatlas/
 pip install -e .[dev]
 cd dashboard/frontend && npm install
 
-# 서버
-PYTHONPATH=. python -m uvicorn dashboard.backend.server:app --port 8000
-cd dashboard/frontend && npx vite --port 5173
+# 로컬 LLM (권장: Ollama + qwen3.5:9b, 12GB VRAM)
+ollama pull qwen3.5:9b
 
-# 브라우저: http://127.0.0.1:5173
+# 서버 (백엔드 8008, 프론트 5173)
+PYTHONPATH=. python -m uvicorn dashboard.backend.server:app --host 127.0.0.1 --port 8008
+cd dashboard/frontend && npx vite --port 5173 --host
+
+# 브라우저: http://localhost:5173  → 모델 탭에서 "서버 찾기" → 프로젝트 탭에서 APK 업로드 → 분석 시작
 ```
 
 ## 환경 설정 (.env)
 
 ```
-LLM_MODE=cli           # cli=Claude Code 로컬 | api=Anthropic API
-WALK_MODE=tap     # tap=TapWalker | droidbot=DroidBot
-CACHE_ENABLED=true     # 크로스앱 UI 패턴 캐싱
+LLM_MODE=openai                          # openai=로컬 OpenAI 호환 서버 | api=Claude API | off=LLM 없이
+LLM_BASE_URL=http://127.0.0.1:11434/v1   # Ollama(11434) · LM Studio(1234) · Open WebUI(3000/api)
+LLM_MODEL_SCREEN=qwen3.5:9b              # 텍스트(라벨 선택·플래너)
+LLM_MODEL_VISION=qwen3.5:9b              # 비전(스크린샷 라벨·탐색) — Qwen3.5/Gemma4 는 한 모델로 둘 다
+LLM_STAGE5_VISION=1                      # 스크린샷 라벨러도 실행
+WALK_FRONTIER=1                          # 프런티어 탐색 (권장 조합)
+WALK_FRONTIER_PREEMPT=3
+WALK_FRONTIER_REPOSITION=1
 ```
+대시보드의 **모델** 탭이 같은 값을 읽고 씁니다.

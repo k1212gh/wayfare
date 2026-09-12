@@ -12,8 +12,7 @@ Activity Classifier A/B/C, Stage 6 9-step ETL, 5-tier Coalesce Cascade,
 Manifest Scan with focus_mismatch tolerance, framework-aware view_tree_readers)
 are independently designed.
 
-Note: project shares its previous name with arXiv:2601.17418 ("ScreenAtlas")
-by coincidence; algorithms here are unrelated to that paper.
+Note: unrelated to arXiv:2601.17418 despite the similar topic.
 """
 
 import json

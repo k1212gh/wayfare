@@ -1,11 +1,11 @@
-# ScreenAtlas — 다른 기기에서 이어서 작업하기
+# Wayfare — 다른 기기에서 이어서 작업하기
 
 ## 빠른 시작 (새 기기)
 
 ```bash
 # 1. Clone
-git clone https://github.com/k1212gh/screenatlas.git
-cd screenatlas
+git clone https://github.com/k1212gh/wayfare.git
+cd wayfare
 
 # 2. Setup (의존성 + .env + demo)
 bash setup.sh        # Linux/Mac/Git Bash
@@ -78,7 +78,7 @@ NOTION_TOKEN=ntn_your_token
 - `stage6_screenmap/__init__.py` — ScreenMap 생성 (edge injection)
 
 ### GitHub
-- Repo: https://github.com/k1212gh/screenatlas
+- Repo: https://github.com/k1212gh/wayfare
 - Branch: `main`
 - 최근 커밋: 10개
 

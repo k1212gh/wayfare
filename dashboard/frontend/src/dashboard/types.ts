@@ -95,29 +95,30 @@ export interface EmulatorInfo {
 }
 
 export const STAGE_LABELS: Record<string, string> = {
-  UPLOADED: 'Uploaded',
-  PREPROCESSING: 'Preprocessing...',
-  STATIC_ANALYZING: 'Static analysis...',
-  STATIC_DONE: 'Static done',
-  WALKING: 'Walking app...',
-  WALK_DONE: 'Walk done',
-  PREPROCESSING_DATA: 'Cleaning data...',
-  CARDS_READY: 'Data ready',
-  LLM_ANALYZING: 'LLM analyzing...',
-  LLM_ANNOTATING: 'LLM enriching...',
-  ANALYSIS_DONE: 'Analysis done',
-  BUILDING_SCREENMAP: 'Building ScreenMap...',
-  SCREENMAP_GENERATED: 'ScreenMap ready (wireframe)',
-  ANNOTATED: 'Complete (with LLM)',
-  CANCELLED: 'Cancelled',
-  FAILED: 'Failed',
+  UPLOADED: '업로드됨',
+  PREPROCESSING: '준비 중…',
+  STATIC_ANALYZING: '정적 분석 중…',
+  STATIC_DONE: '정적 분석 완료',
+  WALKING: '기기 탐색 중…',
+  WALK_DONE: '탐색 완료',
+  PREPROCESSING_DATA: '화면 정리 중…',
+  CARDS_READY: '화면 정리 완료',
+  LLM_ANALYZING: 'LLM 분석 중…',
+  LLM_ANNOTATING: 'LLM 라벨링 중…',
+  ANALYSIS_DONE: '분석 완료',
+  BUILDING_SCREENMAP: '흐름 지도 생성 중…',
+  SCREENMAP_GENERATED: '지도 완성 (라벨 전)',
+  ANNOTATED: '완성',
+  CANCELLED: '취소됨',
+  FAILED: '실패',
 };
 
+/** 프레임워크 칩 색 — Wayfare 팔레트 (부드러운 배경 + 진한 글자). */
 export const FRAMEWORK_STYLE: Record<string, { bg: string; fg: string; label: string }> = {
-  'xml':          { bg: '#f1f5f9', fg: '#475569', label: 'XML' },
-  'compose':      { bg: '#dbeafe', fg: '#1d4ed8', label: 'Compose' },
-  'flutter':      { bg: '#cffafe', fg: '#0e7490', label: 'Flutter' },
-  'react-native': { bg: '#ede9fe', fg: '#6d28d9', label: 'RN' },
+  'xml':          { bg: 'var(--wf-surface-2)', fg: 'var(--wf-ink-2)', label: 'XML' },
+  'compose':      { bg: 'var(--wf-info-soft)', fg: 'var(--wf-info)', label: 'Compose' },
+  'flutter':      { bg: 'var(--wf-accent-soft)', fg: 'var(--wf-accent-ink)', label: 'Flutter' },
+  'react-native': { bg: '#EBE3F2', fg: '#5B3F7A', label: 'RN' },
 };
 
 export function isRunning(stage: string): boolean {

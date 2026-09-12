@@ -1,7 +1,7 @@
 _doc: |
   Phase B (2026-04-29) — DeskClock 5 task fixture.
 
-  원칙 (screenatlas_completeness_principle 메모리):
+  원칙 (wayfare_completeness_principle 메모리):
     "모든 화면 발견" = unbounded 라 평가 불가.
     "이 task 5개가 ScreenMap 노드만으로 step path 만들어지냐" = binary, decidable.
 

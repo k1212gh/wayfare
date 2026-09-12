@@ -7,7 +7,7 @@ Usage:
     python scripts/perf_compare_rn.py <tour_id>
     예) python scripts/perf_compare_rn.py 5ba3011d
 
-Output: reports/screenatlas_abcd_perf.html
+Output: reports/wayfare_abcd_perf.html
 """
 
 from __future__ import annotations
@@ -345,7 +345,7 @@ def main():
         sys.exit(1)
     after = collect_metrics(tour_id)
     html = render_html(after)
-    out = REPO / "reports" / "screenatlas_abcd_perf.html"
+    out = REPO / "reports" / "wayfare_abcd_perf.html"
     out.parent.mkdir(exist_ok=True)
     out.write_text(html, encoding="utf-8")
     print(f"Wrote {out} ({len(html):,} bytes)")

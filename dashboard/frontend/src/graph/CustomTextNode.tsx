@@ -2,75 +2,43 @@ import React from 'react';
 import { Handle, Position } from '@xyflow/react';
 import { InstantTooltip } from './InstantTooltip';
 import { NODE_SIZES, NodeSize } from './nodeSize';
+import { STATUS_STYLE, PRIO_STYLE, CATEGORY_LABEL } from './colors';
 
+/** 스크린샷이 없는 화면(선언만 된 Activity, 시스템 진입 등) — 텍스트 카드. */
 export function CustomTextNode({ data }: { data: any }) {
-  const { color, isEntry, status, tooltip, prioBadge, screen_purpose, label, screen_id, isSystem, isSystemTriggered, isFragment, isActivity, prioOpacity } = data;
-  const nodeSize: NodeSize = (data.nodeSize as NodeSize) || 'md';
-  const nodeW = NODE_SIZES[nodeSize].text.w;
-  
+  const { color, isEntry, status, tooltip, label, screen_id, isSystem, isSystemTriggered, isFragment, prioOpacity } = data;
+  const nodeW = NODE_SIZES[(data.nodeSize as NodeSize) || 'md'].text.w;
+  const st = STATUS_STYLE[status];
+  const showStatus = st && !['probed', 'resolved', 'enriched'].includes(status);
+  const prio: string = data.capture_priority || '';
+  const pr = PRIO_STYLE[prio];
+  const cat: string = data.functional_category || '';
+  const cls = ['wf-node-text', isFragment ? 'fragment' : '', isSystem || isSystemTriggered ? 'system' : ''].filter(Boolean).join(' ');
+
   return (
-    <div title={tooltip} style={{
-        background: isSystem ? '#f5f3ff'
-                  : isSystemTriggered ? '#fef3c7'
-                  : isFragment ? '#eef2ff'
-                  : isActivity ? '#f8fafc'
-                  : '#fff',
-        color: '#0a0a0a',
-        border: '1px solid #d4d4d4',
-        borderTop: `3px solid ${color}`,
-        boxShadow: `0 2px 4px rgba(0,0,0,0.05)`,
-        borderRadius: isFragment ? '12px' : '8px',
-        padding: '10px 14px',
-        fontSize: isFragment ? '11px' : '12px',
-        fontFamily: "'Inter', sans-serif",
-        fontWeight: 500,
-        width: isFragment ? nodeW - 40 : nodeW,
-        cursor: 'pointer',
-        opacity: prioOpacity,
-    }}>
-      <Handle type="target" position={data.rankdir === 'LR' ? Position.Left : Position.Top} style={{ opacity: 0, pointerEvents: 'none' }} />
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', width: '100%', gap: '4px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', width: '100%', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', overflow: 'hidden' }}>
-            {prioBadge}
-            <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {label || screen_id}
-            </span>
+    <InstantTooltip text={tooltip || ''}>
+      <div className={cls} style={{
+        width: isFragment ? nodeW - 30 : nodeW, borderLeftColor: color || 'var(--wf-ink-3)', opacity: prioOpacity,
+        boxShadow: isEntry ? '0 0 0 3px var(--wf-info-soft), 0 0 0 4px var(--wf-info)' : undefined,
+      }}>
+        <Handle type="target" position={data.rankdir === 'LR' ? Position.Left : Position.Top} style={{ opacity: 0, pointerEvents: 'none' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          {pr && prio !== 'A' && <span className="wf-mini-badge" title={`${pr.label} — ${pr.desc}`} style={{ background: pr.bg, color: '#FFFCF5', flexShrink: 0 }}>{prio}</span>}
+          <span className="t" style={{ flex: 1 }}>{label || screen_id}</span>
+        </div>
+        {data.subLabel && <div className="s">{data.subLabel}</div>}
+        {(showStatus || (cat && cat !== 'other')) && (
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 5 }}>
+            {showStatus && (
+              <span className="wf-mini-badge" title={st.desc} style={{ background: `${st.color}22`, color: st.color }}>
+                <span className="wf-dot" style={{ width: 5, height: 5, background: st.color }} />{st.label}
+              </span>
+            )}
+            {cat && cat !== 'other' && <span className="wf-mini-badge" style={{ background: color, color: '#FFFCF5' }}>{CATEGORY_LABEL[cat] || cat}</span>}
           </div>
-        </div>
-        {data.subLabel && (
-          <span style={{ fontSize: '9px', color: '#9ca3af', fontFamily: "'JetBrains Mono', monospace", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
-            {data.subLabel}
-          </span>
         )}
-        {((status && !['probed', 'resolved', 'enriched'].includes(status)) || (data.functional_category && data.functional_category !== 'other')) && (
-        <div style={{ display: 'flex', gap: '6px', marginTop: '2px', flexWrap: 'wrap', alignItems: 'center' }}>
-          {status && !['probed', 'resolved', 'enriched'].includes(status) && (
-            <div style={{
-              padding: '2px 6px', fontSize: '9px', fontWeight: 600,
-              background: `${data.STATUS_BORDER?.[status] || '#9ca3af'}1A`, 
-              color: data.STATUS_BORDER?.[status] || '#9ca3af', borderRadius: '4px',
-              display: 'inline-flex', alignItems: 'center', gap: '4px', maxWidth: '100%',
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', 
-              border: `1px solid ${data.STATUS_BORDER?.[status] || '#9ca3af'}4D`
-            }} title={`Status: ${status}`}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: data.STATUS_BORDER?.[status] || '#9ca3af' }} />
-              {status.toUpperCase()}
-            </div>
-          )}
-          {data.functional_category && data.functional_category !== 'other' && (
-          <span style={{
-            padding: '2px 6px', fontSize: '9px', fontWeight: 600, borderRadius: '4px',
-            background: color, color: '#fff', flexShrink: 0,
-            display: 'inline-flex', alignItems: 'center', border: `1px solid ${color}`
-          }}>
-            {data.functional_category.toUpperCase()}
-          </span>
-          )}
-        </div>
-        )}
+        <Handle type="source" position={data.rankdir === 'LR' ? Position.Right : Position.Bottom} style={{ opacity: 0, pointerEvents: 'none' }} />
       </div>
-      <Handle type="source" position={data.rankdir === 'LR' ? Position.Right : Position.Bottom} style={{ opacity: 0, pointerEvents: 'none' }} />
-    </div>
+    </InstantTooltip>
   );
 }

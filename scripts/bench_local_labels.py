@@ -227,13 +227,19 @@ def run_vision(config, base_nodes: dict, limit: int) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tour", required=True)
-    ap.add_argument("--models", nargs="+", required=True, help='"text|vision" 형식, 비전 생략 가능')
+    ap.add_argument("--tour", default="")
+    ap.add_argument("--models", nargs="+", default=[], help='"text|vision" 형식, 비전 생략 가능')
     ap.add_argument("--base-url", default="http://127.0.0.1:11434/v1")
     ap.add_argument("--vision-limit", type=int, default=12)
     ap.add_argument("--skip-vision", action="store_true")
-    ap.add_argument("--gold", default="", help="정답 JSON (기본: workspace/bench_gold_<tour앞부분>.json 탐색)")
+    ap.add_argument("--gold", default="", help="정답 JSON (기본: workspace/ 또는 docs/ 에 bench_gold_*.json 이 하나면 자동)")
+    ap.add_argument("--rescore", default="", help="이미 만든 결과 JSON 을 --gold 로 다시 채점해 md 재생성")
     args = ap.parse_args()
+    if args.rescore:
+        rescore(Path(args.rescore), Path(args.gold) if args.gold else None)
+        return
+    if not args.tour or not args.models:
+        ap.error("--tour 와 --models 가 필요합니다 (--rescore 가 아니면)")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S")
 
     from config import PipelineConfig
@@ -302,6 +308,28 @@ def main() -> None:
     (WORKSPACE / f"bench_labels_{ts}.md").write_text(md, encoding="utf-8")
     print(md)
     print(f"\nreport: {WORKSPACE / f'bench_labels_{ts}.md'}")
+
+
+def rescore(report_path: Path, gold_path: Path | None) -> None:
+    """결과 JSON 의 저장된 pick 을 새 gold 로 다시 채점하고 md 를 다시 쓴다 (LLM 재실행 없음)."""
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if gold_path is None or not gold_path.exists():
+        raise SystemExit("--gold 경로가 필요합니다")
+    gold = json.loads(gold_path.read_text(encoding="utf-8"))
+    report["gold"] = gold
+    src = WORKSPACE / report["tour"]
+    base_map = src / "output" / "screen_map.before_llm.bench.json"
+    base_nodes = load_nodes(base_map)
+    for m in report["models"]:
+        pk = m.get("pick") or {}
+        if pk.get("picks") is not None:
+            pk["score"] = score_picks(pk["picks"], gold, base_nodes)
+    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    md = render_md(report, base_nodes)
+    md_path = report_path.with_suffix(".md")
+    md_path.write_text(md, encoding="utf-8")
+    print(md)
+    print("rescored:", md_path)
 
 
 def _mark_done(name: str) -> None:

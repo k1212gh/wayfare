@@ -1,6 +1,6 @@
 """ViewTreeChain — Framework 1차 분기 + Universal Vision Fallback.
 
-원칙 (screenatlas_completeness_principle 메모리):
+원칙 (wayfare_completeness_principle 메모리):
   한 앱 안에 framework 가 mixed (Mattermost 메인 RN + OAuth WebView). framework
   label 만으로는 부족 — per-screen 분석 가능성으로 분기.
 
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 class ViewTreeChain:
     """Per-screen quality 결정 + vision fallback orchestration.
 
-    primary_reader 는 screenatlas 의 기존 XMLViewTreeReader / framework 별 변종.
+    primary_reader 는 wayfare 의 기존 XMLViewTreeReader / framework 별 변종.
     vision_tapper 는 VisionTapper (vision_tapper.py). 둘 다 None 가능 —
     fallback 안 쓰면 quality check 만 활용.
     """

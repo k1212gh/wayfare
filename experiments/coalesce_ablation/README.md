@@ -33,7 +33,7 @@ experiments/coalesce_ablation/
 ### 1. 합성 케이스 — ground truth 명확, 즉시 비교
 
 ```
-cd screenatlas
+cd wayfare
 python -m experiments.coalesce_ablation.synthetic
 ```
 

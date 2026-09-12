@@ -1,13 +1,13 @@
 #!/bin/bash
-# ScreenAtlas — 새 기기 자동 셋업 스크립트
+# Wayfare — 새 기기 자동 셋업 스크립트
 # 사용법: git clone 후 이 스크립트 실행
-#   git clone https://github.com/k1212gh/screenatlas.git
-#   cd screenatlas
+#   git clone https://github.com/k1212gh/wayfare.git
+#   cd wayfare
 #   bash setup.sh
 
 set -e
 echo "========================================="
-echo " ScreenAtlas Setup"
+echo " Wayfare Setup"
 echo "========================================="
 
 # 1. Python 의존성

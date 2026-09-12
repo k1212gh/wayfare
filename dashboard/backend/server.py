@@ -1,4 +1,4 @@
-"""FastAPI server for the ScreenAtlas dashboard."""
+"""FastAPI server for the Wayfare dashboard."""
 
 import asyncio
 import json
@@ -33,7 +33,7 @@ if not logging.getLogger().handlers:
     for noisy in ("androguard", "androguard.core", "PIL", "httpx", "urllib3"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
-app = FastAPI(title="ScreenAtlas", version="0.2.0")
+app = FastAPI(title="Wayfare", version="0.2.0")
 
 
 @app.on_event("startup")

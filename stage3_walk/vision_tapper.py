@@ -1,6 +1,6 @@
 """Vision-LLM Clicker — XML extractor 가 분석 못 하는 화면의 fallback.
 
-원칙 (screenatlas_completeness_principle + phash_coalesce_caveats 메모리):
+원칙 (wayfare_completeness_principle + phash_coalesce_caveats 메모리):
   - score 가중치 누적의 본질적 한계 — Cycle 0~3 evidence 로 확정.
   - score 만으로 outside view 누르는 stall (TimePicker OK 0회 등) 못 풂.
   - Vision LLM 이 화면 보고 actionable element 좌표 추정 → click 으로 우회.

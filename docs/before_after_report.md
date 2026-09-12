@@ -1,6 +1,6 @@
 # BEFORE / AFTER 비교 보고서
 **작성일**: 2026-04-21
-**범위**: ScreenAtlas 전체 스택 — 정적 분석 + 동적 탐색 + ScreenMap 시각화
+**범위**: Wayfare 전체 스택 — 정적 분석 + 동적 탐색 + ScreenMap 시각화
 **테스트 APK**: MegaCoffee (`co.kr.waldlust.megacoffee`, 로그인 상태), Spotify (`com.spotify.music`, Premium)
 
 ---

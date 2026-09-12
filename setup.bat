@@ -1,9 +1,9 @@
 @echo off
-REM ScreenAtlas — Windows 자동 셋업
+REM Wayfare — Windows 자동 셋업
 REM 사용법: git clone 후 이 스크립트 실행
 
 echo =========================================
-echo  ScreenAtlas Setup (Windows)
+echo  Wayfare Setup (Windows)
 echo =========================================
 
 echo [1/5] Python dependencies...

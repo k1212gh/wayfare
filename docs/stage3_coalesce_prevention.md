@@ -1,6 +1,6 @@
 # Stage 3 중복 탐지/방지 정리
 
-이 문서는 ScreenAtlas의 **Stage 3 동적 탐색 단계**에 적용된 중복 탐지 및 중복 방문 방지 로직만 정리한다. Stage 6의 ScreenMap 노드 병합(`semantic_merge`, Vision LLM coalesce)은 별도 문서에서 다룬다.
+이 문서는 Wayfare의 **Stage 3 동적 탐색 단계**에 적용된 중복 탐지 및 중복 방문 방지 로직만 정리한다. Stage 6의 ScreenMap 노드 병합(`semantic_merge`, Vision LLM coalesce)은 별도 문서에서 다룬다.
 
 ## 목적
 

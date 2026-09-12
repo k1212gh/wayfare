@@ -99,7 +99,7 @@ def _build_completeness(
       - task_coverage: tests/fixtures/{app}.yaml 의 task 가 ScreenMap 에서 풀리는지.
         app_name 없거나 fixture 없으면 None.
 
-    원칙 (screenatlas_completeness_principle 메모리 참조):
+    원칙 (wayfare_completeness_principle 메모리 참조):
     "모든 화면 발견" 은 unbounded 라 불가능 → task scope 안에서만 정의.
     """
     declared: set[str] = set()
@@ -257,7 +257,7 @@ def refresh_metadata(
     # 4. completeness — 분리된 metric (Phase A 1번, 2026-04-29).
     # 3 namespace: manifest_reachability / overlay_count / task_coverage.
     # task_coverage 는 Phase B (fixture 도입) 후 실제 값 — app_name 추론.
-    # 정의는 screenatlas_completeness_principle 메모리 + _build_completeness() 참조.
+    # 정의는 wayfare_completeness_principle 메모리 + _build_completeness() 참조.
     resolved_app = app_name or _infer_app_name(md, static_info)
     md["completeness"] = _build_completeness(nodes, static_info, resolved_app)
 

@@ -1,7 +1,7 @@
 [project]
-name = "screenatlas"
+name = "wayfare"
 version = "0.3.0"
-description = "ScreenAtlas — APK → Screen Map pipeline (static analysis + dynamic walk + LLM annotation)."
+description = "Wayfare — APK → Screen Map pipeline (static analysis + dynamic walk + LLM annotation)."
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "MIT"}

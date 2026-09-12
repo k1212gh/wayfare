@@ -84,7 +84,7 @@ def run_stage4(config: PipelineConfig) -> None:
     # 2. Process screenshots
     process_screenshots(states, config.analysis_dir / "screens", config.screenshot_size)
 
-    # 3. Cluster states into pages (ScreenAtlas: structure_str grouping)
+    # 3. Cluster states into pages (Wayfare: structure_str grouping)
     pages = cluster_screens_to_pages(states, transitions)
 
     # 4. Build context units for LLM

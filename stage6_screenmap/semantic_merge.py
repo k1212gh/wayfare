@@ -255,7 +255,7 @@ def _is_mergeable(
     # diverge in pHash. Bump threshold to ~2× when both nodes are flagged as
     # infinite_scroll (Stage 6 _mark_infinite_scroll_nodes).
     #
-    # 2026-04-30 (Bug 2 fix — screenatlas_phash_coalesce_caveats 메모리 적용):
+    # 2026-04-30 (Bug 2 fix — wayfare_phash_coalesce_caveats 메모리 적용):
     # pHash 단독 coalesce 은 form/list/counter screens 의 false positive 위험.
     # 메가커피 35cbb9a4: 24 unique structure_str → 14 ScreenMap 노드 (10 손실).
     # 이벤트/공지/콘서트 화면이 pHash 거리 4 이내인데 structure 가 다름.

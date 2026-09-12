@@ -1,6 +1,6 @@
 @echo off
-REM ScreenAtlas — 서버 시작 (Windows)
-echo Starting ScreenAtlas servers...
+REM Wayfare — 서버 시작 (Windows)
+echo Starting Wayfare servers...
 
 REM .env 의 BACKEND_PORT 가 8008 이라 8000/8008 둘 다 정리
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr :8000 ^| findstr LISTEN') do taskkill /PID %%a /F 2>nul
@@ -16,10 +16,10 @@ if exist "%~dp0workspace\_backend.log" (
 
 REM Backend — stdout+stderr 을 파일로 redirect (이전 detached cmd 라 로그 사라짐)
 REM 2026-04-29: backend 재시작 후 진단/디버깅용 로그를 파일에 남김
-start "screenatlas-backend" /B cmd /c "cd /d %~dp0 && set PYTHONPATH=. && python -m uvicorn dashboard.backend.server:app --host 127.0.0.1 --port 8008 > workspace\_backend.log 2>&1"
+start "wayfare-backend" /B cmd /c "cd /d %~dp0 && set PYTHONPATH=. && python -m uvicorn dashboard.backend.server:app --host 127.0.0.1 --port 8008 > workspace\_backend.log 2>&1"
 
 REM Frontend
-start "screenatlas-frontend" /B cmd /c "cd /d %~dp0\dashboard\frontend && npx vite --host 127.0.0.1 --port 5173 > %~dp0workspace\_frontend.log 2>&1"
+start "wayfare-frontend" /B cmd /c "cd /d %~dp0\dashboard\frontend && npx vite --host 127.0.0.1 --port 5173 > %~dp0workspace\_frontend.log 2>&1"
 
 timeout /t 3 /nobreak >nul
 echo.

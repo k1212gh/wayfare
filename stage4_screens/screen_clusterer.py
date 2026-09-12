@@ -1,4 +1,4 @@
-"""Cluster DroidBot states into pages using structure_str (ScreenAtlas approach)."""
+"""Cluster DroidBot states into pages using structure_str (Wayfare approach)."""
 
 import hashlib
 import logging
@@ -157,7 +157,7 @@ def cluster_screens_to_pages(
 ) -> list[dict]:
     """Cluster states by structure_str into logical pages.
 
-    ScreenAtlas insight: Same UI structure (ignoring text content) = same "page".
+    Wayfare insight: Same UI structure (ignoring text content) = same "page".
     Multiple DroidBot states with different data but same layout become one page.
 
     Returns list of page dicts, each containing:

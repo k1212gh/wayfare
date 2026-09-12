@@ -1,343 +1,131 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Dashboard } from './Dashboard';
-import { ScreenMapView } from './ScreenMapView';
-import { ScreenPanel } from './ScreenPanel';
-import { SearchFilter } from './SearchFilter';
-import { Sidebar } from './Sidebar';
+import { AppStateProvider, useAppState } from './app/AppState';
+import { Shell, Page } from './app/Shell';
+import { ProjectsPage } from './pages/ProjectsPage';
+import { DevicesPage } from './pages/DevicesPage';
+import { ModelsPage } from './pages/ModelsPage';
+import { FlowPage, FlowTopRight } from './pages/FlowPage';
+import { DevicePicker } from './dashboard/DevicePicker';
+import { tourTitle } from './dashboard/tourTitle';
+import { IconArrowLeft } from './app/icons';
 
-type Page = 'dashboard' | 'graph';
+const PROGRESSING = ['WALKING', 'PREPROCESSING_DATA', 'CARDS_READY', 'BUILDING_SCREENMAP', 'LLM_ANNOTATING'];
 
 export default function App() {
-  const [page, setPage] = useState<Page>('dashboard');
+  return (
+    <AppStateProvider>
+      <Wayfare />
+    </AppStateProvider>
+  );
+}
+
+function parseHash(h: string): { seg: string; id?: string } {
+  const [seg, id] = h.replace(/^#\/?/, '').split('/');
+  return { seg, id };
+}
+
+function Wayfare() {
+  const { tours, runTour, stopTour } = useAppState();
+  // 초기 라우트는 렌더 시점의 해시로 정한다 (StrictMode 의 이중 effect 가 해시를 먼저 덮어쓰는 문제 회피)
+  const initial = useRef(parseHash(window.location.hash));
+  const [page, setPage] = useState<Page>(() => {
+    const s = initial.current.seg;
+    return s === 'devices' || s === 'models' ? s : 'projects';
+  });
+  const pendingFlowRef = useRef<string>(initial.current.seg === 'flow' && initial.current.id ? initial.current.id : '');
   const [activeTourId, setActiveTourId] = useState('');
   const [graphData, setGraphData] = useState<any>(null);
-  const [tourStage, setTourStage] = useState<string>('');
   const [selectedNode, setSelectedNode] = useState<any>(null);
   const [selectedEdgeData, setSelectedEdgeData] = useState<any | null>(null);
-  const [filterCategory, setFilterCategory] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  // Track a tour the user just Ran — once its wireframe is ready, auto-navigate
   const [pendingTourId, setPendingTourId] = useState('');
-  const alreadyNavigatedRef = useRef<Set<string>>(new Set());
+  const navigated = useRef<Set<string>>(new Set());
 
-  const openGraph = useCallback(async (tourId: string) => {
+  const activeTour = tours.find((t) => t.tour_id === activeTourId);
+  const tourStage = activeTour?.stage || '';
+
+  const openFlow = useCallback(async (tourId: string) => {
     try {
       const res = await fetch(`/api/tours/${tourId}/graph`);
-      if (!res.ok) {
-        console.error('Graph fetch failed:', res.status, await res.text());
-        alert(`Failed to load graph (${res.status})`);
-        return;
-      }
+      if (!res.ok) { alert(`지도를 불러오지 못했습니다 (${res.status})`); return; }
       const data = await res.json();
-      if (!data?.screen_map?.graph?.nodes) {
-        alert('Invalid graph data');
-        return;
-      }
-      setGraphData(data);
-      setActiveTourId(tourId);
-      setSelectedNode(null);
-      setPage('graph');
-    } catch (err) {
-      console.error('Graph fetch error:', err);
-      alert(`Error: ${err}`);
-    }
+      if (!data?.screen_map?.graph?.nodes) { alert('지도 데이터가 올바르지 않습니다'); return; }
+      setGraphData(data); setActiveTourId(tourId); setSelectedNode(null); setSelectedEdgeData(null); setPage('flow');
+    } catch (err) { alert(`오류: ${err}`); }
   }, []);
 
-  // When the user clicks Run on a tour card, register it.  Background poll
-  // then auto-navigates once the wireframe ScreenMap exists.
-  const handleRunStart = useCallback((tourId: string) => {
-    setPendingTourId(tourId);
-    alreadyNavigatedRef.current.delete(tourId);
-  }, []);
+  const handleRunStart = useCallback((tourId: string) => { setPendingTourId(tourId); navigated.current.delete(tourId); }, []);
 
-  // Background poll: auto-navigate when wireframe is ready for `pendingTourId`,
-  // and live-refresh the currently-displayed graph while walk is running.
+  // 해시 라우팅 — #/flow/<tourId>, #/devices, #/models. 새로고침해도 같은 화면으로.
+  useEffect(() => {
+    if (pendingFlowRef.current) { const id = pendingFlowRef.current; openFlow(id).finally(() => { pendingFlowRef.current = ''; }); }
+    const onChange = () => {
+      const { seg, id } = parseHash(window.location.hash);
+      if (seg === 'flow' && id) openFlow(id);
+      else if (seg === 'devices' || seg === 'models') setPage(seg);
+      else setPage('projects');
+    };
+    window.addEventListener('hashchange', onChange);
+    return () => window.removeEventListener('hashchange', onChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (pendingFlowRef.current) return;   // 초기 지도 열기가 끝날 때까지 해시를 건드리지 않는다
+    const want = page === 'flow' && activeTourId ? `#/flow/${activeTourId}` : page === 'projects' ? '#/' : `#/${page}`;
+    if (window.location.hash !== want) window.history.replaceState(null, '', want);
+  }, [page, activeTourId]);
+
+  // 실행 직후 지도(와이어프레임)가 생기면 자동으로 열고, 진행 중이면 3초마다 다시 읽는다.
   useEffect(() => {
     const tick = async () => {
-      // Auto-navigate pending tour
-      if (pendingTourId && !alreadyNavigatedRef.current.has(pendingTourId)) {
+      if (pendingTourId && !navigated.current.has(pendingTourId)) {
         try {
           const r = await fetch(`/api/tours/${pendingTourId}/graph`);
-          if (r.ok) {
-            // Graph exists (either wireframe from Stage 2.5 or full ScreenMap)
-            alreadyNavigatedRef.current.add(pendingTourId);
-            await openGraph(pendingTourId);
-            setPendingTourId('');
-          }
+          if (r.ok) { navigated.current.add(pendingTourId); await openFlow(pendingTourId); setPendingTourId(''); }
         } catch {}
       }
-
-      // Live-refresh while on the graph page: fetch tour state + re-fetch graph
-      if (page === 'graph' && activeTourId) {
+      if (page === 'flow' && activeTourId && PROGRESSING.includes(tourStage)) {
         try {
-          const jr = await fetch('/api/tours');
-          const jd = await jr.json();
-          const tour = (jd.tours || []).find((x: any) => x.tour_id === activeTourId);
-          if (tour) {
-            setTourStage(tour.stage || '');
-            // Re-fetch graph if tour is still progressing
-            if (['WALKING', 'PREPROCESSING_DATA', 'CARDS_READY', 'BUILDING_SCREENMAP',
-                 'LLM_ANNOTATING'].includes(tour.stage)) {
-              const gr = await fetch(`/api/tours/${activeTourId}/graph`);
-              if (gr.ok) {
-                const gd = await gr.json();
-                if (gd?.screen_map?.graph?.nodes) {
-                  setGraphData(gd);
-                }
-              }
-            }
-          }
+          const gr = await fetch(`/api/tours/${activeTourId}/graph`);
+          if (gr.ok) { const gd = await gr.json(); if (gd?.screen_map?.graph?.nodes) setGraphData(gd); }
         } catch {}
       }
     };
     const h = setInterval(tick, 3000);
-    tick();  // immediate
+    tick();
     return () => clearInterval(h);
-  }, [pendingTourId, page, activeTourId, openGraph]);
+  }, [pendingTourId, page, activeTourId, tourStage, openFlow]);
 
-  const stopActiveTour = useCallback(async () => {
-    if (!activeTourId) return;
-    if (!confirm('Stop walk and force-close the app on the device?')) return;
-    await fetch(`/api/tours/${activeTourId}/stop`, { method: 'POST' });
-  }, [activeTourId]);
-
-  const startWalkFromGraph = useCallback(async () => {
-    if (!activeTourId) return;
-    const res = await fetch(`/api/tours/${activeTourId}/run`, { method: 'POST' });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      alert(body.detail || `Run failed (${res.status})`);
-      return;
+  // 라벨링이 끝나면 한 번 더 읽어 최종 라벨을 반영
+  const prevStage = useRef(tourStage);
+  useEffect(() => {
+    if (page === 'flow' && activeTourId && prevStage.current !== tourStage && ['ANNOTATED', 'SCREENMAP_GENERATED'].includes(tourStage)) {
+      fetch(`/api/tours/${activeTourId}/graph`).then((r) => r.ok ? r.json() : null).then((gd) => { if (gd?.screen_map?.graph?.nodes) setGraphData(gd); }).catch(() => {});
     }
-    // Stage will switch to WALKING on next poll; live refresh already set up
-  }, [activeTourId]);
+    prevStage.current = tourStage;
+  }, [tourStage, page, activeTourId]);
 
-  const categories = graphData
-    ? [...new Set(graphData.screen_map.graph.nodes.map((n: any) => n.functional_category || 'other'))].sort() as string[]
-    : [];
+  const crumbs = page === 'flow' && activeTour
+    ? (<><button className="wf-btn ghost sm" onClick={() => setPage('projects')} style={{ marginLeft: -8 }}><IconArrowLeft size={14} /> 프로젝트</button><span className="sep">/</span><b className="wf-ellipsis">{graphData?.screen_map?.app_name || tourTitle(activeTour)}</b></>)
+    : page === 'projects' ? <b>프로젝트</b> : page === 'devices' ? <b>기기</b> : <b>모델</b>;
 
-  if (page === 'dashboard') {
-    return (
-      <>
-        <Sidebar
-          currentPage="dashboard"
-          activeTourId={activeTourId}
-          onGoDashboard={() => setPage('dashboard')}
-          onOpenGraph={openGraph}
-        />
-        <Dashboard onOpenGraph={openGraph} onRunStart={handleRunStart} />
-      </>
-    );
-  }
-
-  const isRunning = ['WALKING', 'PREPROCESSING_DATA', 'CARDS_READY',
-                     'BUILDING_SCREENMAP', 'LLM_ANNOTATING', 'PREPROCESSING',
-                     'STATIC_ANALYZING'].includes(tourStage);
-
-  // Two-tier coverage — separate "reachable" (exists) from "actionable"
-  // (has screenshot + UI elements, usable by MobileGPT-style agent). The
-  // gap between them = activities that need runtime JIT capture.
-  const coverageStats = (() => {
-    if (!graphData) return null;
-    const nodes = graphData.screen_map?.graph?.nodes || [];
-    let total = 0;
-    let reachable = 0;
-    let actionable = 0;
-    for (const n of nodes) {
-      if (n.screen_id === 'system:external_entry') continue;
-      total += 1;
-      const s = n.status || '';
-      if (s === 'enriched' || s === 'resolved' || s === 'partial' || s === 'unknown' || s === 'entry' || s === 'probed') reachable += 1;
-      if (n.screenshot_ref && (n.widgets?.length ?? 0) > 0) actionable += 1;
-    }
-    if (total === 0) return null;
-    return {
-      reachable, actionable, total,
-      reachPct: Math.round((reachable / total) * 100),
-      actPct: Math.round((actionable / total) * 100),
-    };
-  })();
-
-  const meta = graphData?.screen_map;
+  const topRight = page === 'flow'
+    ? <><FlowTopRight graphData={graphData} tourStage={tourStage} onStop={() => activeTourId && stopTour(activeTourId)} onStartWalk={async () => { if (activeTourId && await runTour(activeTourId)) handleRunStart(activeTourId); }} /><DevicePicker /></>
+    : <DevicePicker />;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'var(--font)' }}>
-      <Sidebar
-        currentPage="graph"
-        activeTourId={activeTourId}
-        onGoDashboard={() => setPage('dashboard')}
-        onOpenGraph={openGraph}
-      />
-      {/* Navbar */}
-      <header style={{
-        display: 'flex', alignItems: 'center', gap: '16px',
-        padding: '0 20px 0 60px', height: '48px',
-        borderBottom: '1px solid var(--color-border)', background: 'var(--color-white)', flexShrink: 0,
-      }}>
-        <button onClick={() => setPage('dashboard')} style={{
-          background: 'none', border: 'none', cursor: 'pointer',
-          fontSize: '13px', color: 'var(--color-gray)', padding: '4px 0',
-        }}>
-          &larr; Back
-        </button>
-        <div style={{ width: '1px', height: '20px', background: 'var(--color-border)' }} />
-        <span style={{ fontSize: '13px', fontWeight: 600 }}>
-          {meta?.app_name || 'Graph'}
-        </span>
-        {meta && (
-          <span style={{ fontSize: '11px', color: 'var(--color-gray)', fontFamily: 'var(--font-mono)' }}>
-            {meta.metadata.total_nodes}N / {meta.metadata.total_edges}E
-          </span>
-        )}
-        {/* Two-tier coverage: actionable (UI captured) vs reachable (exists) */}
-        {coverageStats && (
-          <div
-            title={
-              `Actionable: ${coverageStats.actionable} / ${coverageStats.total} (${coverageStats.actPct}%)\n` +
-              `  — MobileGPT 같은 AI 에이전트가 바로 사용 가능한 화면 (screenshot + UI elements 모두 확보)\n\n` +
-              `Reachable: ${coverageStats.reachable} / ${coverageStats.total} (${coverageStats.reachPct}%)\n` +
-              `  — adb am start로 확인된 도달 가능 activity (probed 포함)\n` +
-              `  — UI 캡처 없는 probed 노드는 에이전트 런타임에 JIT 캡처로 승격`
-            }
-            style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'help' }}
-          >
-            <div style={{
-              width: 90, height: 10, background: 'var(--color-border)',
-              borderRadius: 2, overflow: 'hidden', position: 'relative',
-            }}>
-              {/* Reachable (amber, background layer) */}
-              <div style={{
-                position: 'absolute', top: 0, left: 0, bottom: 0,
-                width: `${Math.max(2, coverageStats.reachPct)}%`,
-                background: '#fbbf24',
-                transition: 'width 0.3s ease',
-              }} />
-              {/* Actionable (green, overlay) */}
-              <div style={{
-                position: 'absolute', top: 0, left: 0, bottom: 0,
-                width: `${Math.max(2, coverageStats.actPct)}%`,
-                background: '#22c55e',
-                transition: 'width 0.3s ease',
-              }} />
-            </div>
-            <span style={{ fontSize: '11px', color: 'var(--color-gray)', fontFamily: 'var(--font-mono)' }}>
-              <strong style={{ color: '#22c55e' }}>{coverageStats.actionable}</strong>
-              {' / '}
-              <span style={{ color: '#b45309' }}>{coverageStats.reachable}</span>
-              {' / '}{coverageStats.total}
-              <span style={{ marginLeft: 4 }}>({coverageStats.actPct}% · {coverageStats.reachPct}%)</span>
-            </span>
-          </div>
-        )}
-        {/* Live tour status + Stop button — shown while walk is active */}
-        {isRunning && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginLeft: 'auto' }}>
-            <span style={{ fontSize: '11px', color: '#f97316', fontFamily: 'var(--font-mono)' }}>
-              <span style={{
-                display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
-                background: '#f97316', marginRight: 6, animation: 'pulse 1.2s ease-in-out infinite',
-              }} />
-              {tourStage} — live
-            </span>
-            <button
-              onClick={stopActiveTour}
-              style={{
-                padding: '5px 12px', fontSize: '11px', fontWeight: 600,
-                background: '#dc2626', color: '#fff', border: 'none',
-                borderRadius: '5px', cursor: 'pointer', fontFamily: 'var(--font)',
-              }}
-            >
-              Stop
-            </button>
-          </div>
-        )}
-        {!isRunning && tourStage && (
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '11px', color: 'var(--color-gray)', fontFamily: 'var(--font-mono)' }}>
-              {tourStage}
-            </span>
-            {/* Start/Re-run walk from inside the graph view */}
-            {['UPLOADED', 'FAILED', 'CANCELLED', 'SCREENMAP_GENERATED', 'ANNOTATED', 'STATIC_DONE'].includes(tourStage) && (
-              <button
-                onClick={startWalkFromGraph}
-                title={tourStage === 'SCREENMAP_GENERATED' || tourStage === 'ANNOTATED'
-                  ? '동적 탐색 재실행 — wireframe에 선언된 활동을 다시 방문합니다'
-                  : '동적 탐색 시작'}
-                style={{
-                  padding: '5px 12px', fontSize: '11px', fontWeight: 600,
-                  background: '#0a0a0a', color: '#fff', border: 'none',
-                  borderRadius: '5px', cursor: 'pointer', fontFamily: 'var(--font)',
-                }}
-              >
-                {tourStage === 'SCREENMAP_GENERATED' || tourStage === 'ANNOTATED' ? '▶ Re-walk' : '▶ Start walk'}
-              </button>
-            )}
-          </div>
-        )}
-      </header>
-
-      {/* Graph + Detail */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        <div style={{ flex: 1, position: 'relative', background: 'var(--color-surface)' }}>
-          <SearchFilter onSearch={setSearchQuery} onFilterCategory={setFilterCategory} categories={categories} />
-          {graphData && (
-            <ScreenMapView
-              graph={graphData.screen_map.graph}
-              onNodeSelect={setSelectedNode}
-              filterCategory={filterCategory}
-              searchQuery={searchQuery}
-              tourId={activeTourId}
-              appName={graphData.screen_map.app_name || graphData.screen_map.package_name}
-              selectedNodeId={selectedNode?.screen_id}
-              selectedEdgeData={selectedEdgeData}
-              onSelectedEdgeDataChange={setSelectedEdgeData}
-            />
-          )}
-        </div>
-        {selectedNode && (
-          <aside style={{
-            width: '320px', borderLeft: '1px solid var(--color-border)',
-            background: 'var(--color-white)', overflow: 'auto', flexShrink: 0,
-          }}>
-            <div style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '12px 16px', borderBottom: '1px solid var(--color-border)',
-            }}>
-              <span style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase' as const, color: 'var(--color-gray)', letterSpacing: '0.5px' }}>Detail</span>
-              <button onClick={() => setSelectedNode(null)} style={{
-                background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: 'var(--color-gray)',
-              }}>&times;</button>
-            </div>
-            <ScreenPanel
-              node={selectedNode}
-              tourId={activeTourId}
-              allNodes={graphData?.screen_map?.graph?.nodes || []}
-              allEdges={graphData?.screen_map?.graph?.edges || []}
-              onSelectNode={(nid: string) => {
-                const found = (graphData?.screen_map?.graph?.nodes || [])
-                  .find((n: any) => n.screen_id === nid);
-                if (found) setSelectedNode(found);
-              }}
-              onSelectEdge={(e: any) => {
-                const nodes = graphData?.screen_map?.graph?.nodes || [];
-                const src = nodes.find((n: any) => n.screen_id === e.from);
-                const tgt = nodes.find((n: any) => n.screen_id === e.to);
-                setSelectedEdgeData({
-                  edgeId: e.edge_id || `${e.from}-${e.to}`,
-                  kind: e.kind || (e.trigger_action === 'press_back' ? 'back' : 'navigate'),
-                  confidence: e.confidence || (e.source === 'walk' ? 'observed' : 'static_intent'),
-                  actionLabel: '',
-                  raw: e,
-                  sourceNode: src,
-                  targetNode: tgt,
-                  sourceLabel: src?.label || e.from,
-                  targetLabel: tgt?.label || e.to,
-                });
-              }}
-            />
-          </aside>
-        )}
-      </div>
-    </div>
+    <Shell page={page} onNavigate={setPage} activeTourId={activeTourId} onOpenFlow={openFlow} crumbs={crumbs} topRight={topRight} fill={page === 'flow'}>
+      {page === 'projects' && <ProjectsPage onOpenFlow={openFlow} onRunStart={handleRunStart} />}
+      {page === 'devices' && <DevicesPage />}
+      {page === 'models' && <ModelsPage />}
+      {page === 'flow' && (
+        <FlowPage
+          graphData={graphData} tourId={activeTourId} tourStage={tourStage}
+          selectedNode={selectedNode} onSelectNode={setSelectedNode}
+          selectedEdgeData={selectedEdgeData} onSelectedEdgeDataChange={setSelectedEdgeData}
+          onStop={() => activeTourId && stopTour(activeTourId)}
+          onStartWalk={async () => { if (activeTourId && await runTour(activeTourId)) handleRunStart(activeTourId); }}
+        />
+      )}
+    </Shell>
   );
 }

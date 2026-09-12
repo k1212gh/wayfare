@@ -1,6 +1,6 @@
 """Phase B (2026-04-29) — task fixture loader + ScreenMap feasibility matcher.
 
-원칙 (screenatlas_completeness_principle 메모리):
+원칙 (wayfare_completeness_principle 메모리):
   completeness 는 task scope 안에서만 정의 — "이 ScreenMap 가 task N개의 step path
   를 만들 수 있는 노드를 갖고 있나" 가 binary, decidable. "모든 화면 발견" 은
   unbounded 라 평가 불가.

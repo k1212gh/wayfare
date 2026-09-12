@@ -1,6 +1,6 @@
 """Pass 2 Walker — Stage 5 LLM 끝 후 재탐색.
 
-원칙 (screenatlas_completeness_principle 메모리):
+원칙 (wayfare_completeness_principle 메모리):
   Pass 1 (Stage 3) 가 quality fail 화면 만나면 즉시 vision 호출하지 않고
   state.needs_vision_in_revisit=True 마킹만 → ScreenMap node.is_provisional=True.
   Pass 2 가 ScreenMap 풍부해진 (LLM description / completeness) 상태에서

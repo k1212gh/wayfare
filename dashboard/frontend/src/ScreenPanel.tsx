@@ -1,4 +1,7 @@
 import React, { useEffect, useState } from 'react';
+import { CATEGORY_COLOR, CATEGORY_LABEL, STATUS_STYLE, edgeStyle } from './graph/colors';
+import { displayLabel, subLabel } from './graph/displayLabel';
+import { readableTriggerLabel } from './ScreenMapView';
 
 interface ScreenPanelProps {
   node: any;
@@ -6,11 +9,9 @@ interface ScreenPanelProps {
   allNodes?: any[];
   allEdges?: any[];
   onSelectNode?: (nid: string) => void;
-  /** 엣지 리스트 행 클릭 시 — 노드 이동 대신 엣지 detail 패널을 띄움. */
   onSelectEdge?: (edge: any) => void;
 }
 
-// 엣지 trigger 를 사람이 읽기 좋은 짧은 문구로
 function friendlyTrigger(e: any): string {
   const action: string = e.trigger_action || '';
   const elem: string = e.trigger_widget || '';
@@ -21,544 +22,185 @@ function friendlyTrigger(e: any): string {
   if (kind === 'overlay') return '오버레이';
   if (elem === 'fragment_transaction') return '포함 (Fragment)';
   if (elem.startsWith('reflection/')) return '정적 추론';
-  if (elem.startsWith('two_hop_')) return 'Helper 경유';
+  if (elem.startsWith('two_hop_')) return '헬퍼 경유';
   if (action === 'intent' && elem) return elem.split('.').pop() || elem;
-  if (elem) return elem.length > 28 ? elem.slice(0, 28) + '…' : elem;
+  if (elem) { const t = readableTriggerLabel(elem) || elem; return t.length > 26 ? t.slice(0, 26) + '…' : t; }
   return action || kind || '?';
 }
 
+/** 우측 인스펙터 — 선택한 화면의 스크린샷·설명·연결·UI 요소. */
 export function ScreenPanel({ node, tourId, allNodes = [], allEdges = [], onSelectNode, onSelectEdge }: ScreenPanelProps) {
   const [screenshotUrl, setScreenshotUrl] = useState('');
-
   useEffect(() => {
-    // 2026-05-03: declared 노드 (manifest wireframe — screenshot_ref 없음) 는 fetch 안 함.
-    // 백엔드의 Strategy 3 fallback (첫 PNG) 이 다른 노드 사진을 반환해서 사용자가
-    // 잘못된 화면 보던 회귀 차단.
-    if (tourId && node.screen_id && node.screenshot_ref) {
-      setScreenshotUrl(`/api/tours/${tourId}/screenshot/${node.screen_id}`);
-    } else {
-      setScreenshotUrl('');
-    }
+    setScreenshotUrl(tourId && node.screen_id && node.screenshot_ref ? `/api/tours/${tourId}/screenshot/${node.screen_id}` : '');
   }, [tourId, node.screen_id, node.screenshot_ref]);
 
-  // 노드 → 라벨 lookup
-  const labelFor = (sid: string): string => {
-    const n = allNodes.find((x) => x.screen_id === sid);
-    if (!n) return sid.slice(0, 14);
-    const lbl = n.label || '';
-    const act = (n.activity || '').split('.').pop();
-    return (lbl || act || sid).slice(0, 36);
-  };
-
-  // 노드 → screenshot URL (있을 때만). 연결 노드 thumbnail 미리보기.
-  // entry/declared 노드는 screenshot_ref 없어 undefined 반환.
-  const thumbFor = (sid: string): string | undefined => {
-    const n = allNodes.find((x) => x.screen_id === sid);
-    if (!n || !n.screenshot_ref) return undefined;
-    return `/api/tours/${tourId}/screenshot/${sid}`;
-  };
+  const nodeById = (sid: string) => allNodes.find((x) => x.screen_id === sid);
+  const labelFor = (sid: string) => { const n = nodeById(sid); return n ? displayLabel(n) : sid.slice(0, 14); };
+  const thumbFor = (sid: string) => { const n = nodeById(sid); return n?.screenshot_ref ? `/api/tours/${tourId}/screenshot/${sid}` : undefined; };
 
   const incoming = allEdges.filter((e) => e.to === node.screen_id);
   const outgoing = allEdges.filter((e) => e.from === node.screen_id);
   const hasUI = !!node.screenshot_ref || (node.widgets?.length ?? 0) > 0;
-  const status = node.status || '?';
+  const status = node.status || '';
+  const st = STATUS_STYLE[status];
+  const cat = node.functional_category || 'other';
+  const title = displayLabel(node);
+  const sub = subLabel(node, title);
 
   return (
-    <div style={{ padding: '20px', fontSize: '13px' }}>
-      {/* Title */}
-      <h3 style={{
-        fontSize: '16px',
-        fontWeight: 600,
-        letterSpacing: '-0.3px',
-        marginBottom: '8px',
-        lineHeight: 1.3,
-      }}>
-        {node.label || node.screen_id}
-      </h3>
-
-      {/* Tags */}
-      <div style={{ display: 'flex', gap: '6px', marginBottom: '20px', flexWrap: 'wrap' }}>
-        <Tag>{node.functional_category || 'other'}</Tag>
-        <Tag variant={node.confidence === 'high' ? 'default' : node.confidence === 'low' ? 'warn' : 'default'}>
-          {node.confidence || 'N/A'}
-        </Tag>
-        <Tag>{status}</Tag>
-        {!hasUI && <Tag variant="warn">no UI</Tag>}
+    <div>
+      <div style={{ marginBottom: 14 }}>
+        <div className="wf-display" style={{ fontSize: 20 }}>{title}</div>
+        {sub && <div className="wf-mono wf-faint" style={{ marginTop: 2 }}>{sub}</div>}
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 18 }}>
+        <span className="wf-chip" style={{ background: CATEGORY_COLOR[cat] || CATEGORY_COLOR.other, color: '#FFFCF5' }}>{CATEGORY_LABEL[cat] || cat}</span>
+        {st && <span className="wf-chip outline" title={st.desc}><span className="wf-dot" style={{ background: st.color }} />{st.label}</span>}
+        {node.confidence && <span className="wf-chip outline mono">신뢰도 {node.confidence}</span>}
+        {node.label_source && <span className="wf-chip outline mono" title="라벨 출처">{{ picked: '텍스트 선택', llm: 'LLM', fallback: '자동', candidate: '후보' }[node.label_source as string] || node.label_source}</span>}
+        {!hasUI && <span className="wf-chip amber">UI 없음</span>}
       </div>
 
-      {/* Purpose (한 줄 요약) */}
-      {node.screen_purpose && (
-        <Section title="Purpose">
-          <div style={{
-            padding: '8px 12px',
-            background: '#eef2ff',
-            border: '1px solid #c7d2fe',
-            borderRadius: '6px',
-            color: '#3730a3',
-            fontWeight: 600,
-            fontSize: '13px',
-            lineHeight: 1.5,
-          }}>
-            {node.screen_purpose}
-          </div>
-        </Section>
-      )}
-
-      {/* Description (LLM 풍부 설명) */}
-      {node.description && (
-        <Section title="Description">
-          <p style={{ color: 'var(--color-black)', lineHeight: 1.6, margin: 0 }}>
-            {node.description}
-          </p>
-        </Section>
-      )}
-
-      {/* Screenshot (Moved up as requested) */}
       {screenshotUrl && (
-        <Section title="Screenshot">
-          <img
-            src={screenshotUrl}
-            alt="Screen capture"
-            style={{
-              width: '100%',
-              borderRadius: '8px',
-              border: '1px solid var(--color-border)',
-            }}
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.display = 'none';
-            }}
-          />
+        <Section title="스크린샷">
+          <img src={screenshotUrl} alt="" style={{ width: '100%', borderRadius: 12, border: '1px solid var(--wf-border)', background: '#111' }}
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
         </Section>
       )}
-
-      {/* Entry hint — 어떻게 도달하나 */}
-      {node.entry_hint && (
-        <Section title="Entry hint">
-          <p style={{ color: 'var(--color-gray)', lineHeight: 1.5, margin: 0, fontStyle: 'italic' }}>
-            {node.entry_hint}
-          </p>
+      {node.screen_purpose && (
+        <Section title="이 화면에서 하는 일">
+          <div className="wf-callout accent" style={{ fontWeight: 600 }}>{node.screen_purpose}</div>
         </Section>
       )}
+      {node.description && <Section title="설명"><p style={{ lineHeight: 1.6, fontSize: 13 }}>{node.description}</p></Section>}
+      {node.entry_hint && <Section title="도달 방법"><p className="wf-muted" style={{ fontSize: 13, fontStyle: 'italic' }}>{node.entry_hint}</p></Section>}
 
-      {/* Data displayed */}
       {node.data_displayed?.length > 0 && (
-        <Section title="Data displayed">
-          <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: '4px' }}>
-            {node.data_displayed.map((d: string, i: number) => (
-              <span key={i} style={{
-                padding: '2px 8px', fontSize: '11px',
-                background: 'var(--color-bg-elev, #f5f5f5)',
-                border: '1px solid var(--color-border)',
-                borderRadius: '4px',
-              }}>{d}</span>
-            ))}
-          </div>
+        <Section title="표시되는 데이터">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{node.data_displayed.map((d: string, i: number) => <span key={i} className="wf-chip outline">{d}</span>)}</div>
         </Section>
       )}
-
-      {/* Primary affordances — 사용자가 누를 만한 것 */}
       {node.primary_affordances?.length > 0 && (
-        <Section title={`Primary actions (${node.primary_affordances.length})`}>
-          <ul style={{ margin: 0, paddingLeft: '18px', lineHeight: 1.6 }}>
-            {node.primary_affordances.map((a: string, i: number) => (
-              <li key={i} style={{ fontSize: '12px' }}>{a}</li>
-            ))}
-          </ul>
+        <Section title={`주요 동작 ${node.primary_affordances.length}`}>
+          <ul style={{ paddingLeft: 18, lineHeight: 1.7, fontSize: 13 }}>{node.primary_affordances.map((a: string, i: number) => <li key={i}>{a}</li>)}</ul>
+        </Section>
+      )}
+      {node.label_candidates?.length > 0 && (
+        <Section title="화면 텍스트 후보">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{node.label_candidates.slice(0, 8).map((c: string, i: number) => <span key={i} className={`wf-chip ${c === node.label ? 'accent' : 'outline'}`}>{c}</span>)}</div>
         </Section>
       )}
 
-      {/* Phase 2: Universal Primitives (input/toggle/selector/...) */}
-      {node.primitives && Object.keys(node.primitives).length > 0 && (
-        <Section title="Primitives (Phase 2)">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            {Object.entries(node.primitives).map(([type, items]: [string, any]) => (
-              <div key={type} style={{
-                padding: '6px 10px',
-                border: '1px solid var(--color-border)',
-                borderRadius: '6px',
-                fontSize: '11px',
-              }}>
-                <div style={{
-                  fontSize: '10px', fontWeight: 700, color: 'var(--color-gray)',
-                  textTransform: 'uppercase' as const, letterSpacing: '0.05em',
-                  marginBottom: '3px',
-                }}>{type} ({items.length})</div>
-                <div style={{ display: 'flex', flexDirection: 'column' as const, gap: '3px' }}>
-                  {items.slice(0, 8).map((it: any, i: number) => (
-                    <div key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: '10px' }}>
-                      <span style={{
-                        padding: '1px 6px', background: 'var(--color-bg-elev, #f5f5f5)',
-                        borderRadius: '3px',
-                      }} title={JSON.stringify(it, null, 2)}>
-                        {it.label || it.id || it.value_hint || it.kind}
-                      </span>
-                      {it.outcome_hint && (
-                        <span style={{
-                          marginLeft: '6px', fontSize: '10px',
-                          color: 'var(--color-gray)', fontStyle: 'italic',
-                          fontFamily: 'var(--font)',
-                        }}>
-                          → {it.outcome_hint}
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                  {items.length > 8 && (
-                    <span style={{ fontSize: '10px', color: 'var(--color-gray)' }}>
-                      +{items.length - 8}
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      {/* Outgoing — 어디로 갈 수 있나 (이 노드의 핵심 기능 정보) */}
       {outgoing.length > 0 && (
-        <Section title={`→ 나가는 엣지 (${outgoing.length})`}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {outgoing.map((e: any, i: number) => (
-              <EdgeRow
-                key={i}
-                trigger={friendlyTrigger(e)}
-                target={labelFor(e.to)}
-                kind={e.kind || 'navigate'}
-                outcome={e.outcome}
-                thumbnailUrl={thumbFor(e.to)}
-                onClick={onSelectEdge ? () => onSelectEdge(e) : undefined}
-              />
-            ))}
+        <Section title={`→ 나가는 전환 ${outgoing.length}`}>
+          <div className="wf-list" style={{ gap: 4 }}>
+            {outgoing.map((e: any, i: number) => <EdgeRow key={i} trigger={friendlyTrigger(e)} target={labelFor(e.to)} kind={e.kind || 'navigate'} outcome={e.outcome} thumbnailUrl={thumbFor(e.to)} onClick={onSelectEdge ? () => onSelectEdge(e) : undefined} />)}
           </div>
         </Section>
       )}
-
-      {/* Incoming — 어디서 도착하나 */}
       {incoming.length > 0 && (
-        <Section title={`← 들어오는 엣지 (${incoming.length})`}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {incoming.map((e: any, i: number) => (
-              <EdgeRow
-                key={i}
-                trigger={friendlyTrigger(e)}
-                target={labelFor(e.from)}
-                kind={e.kind || 'navigate'}
-                direction="in"
-                thumbnailUrl={thumbFor(e.from)}
-                onClick={onSelectEdge ? () => onSelectEdge(e) : undefined}
-              />
-            ))}
+        <Section title={`← 들어오는 전환 ${incoming.length}`}>
+          <div className="wf-list" style={{ gap: 4 }}>
+            {incoming.map((e: any, i: number) => <EdgeRow key={i} trigger={friendlyTrigger(e)} target={labelFor(e.from)} kind={e.kind || 'navigate'} direction="in" thumbnailUrl={thumbFor(e.from)} onClick={onSelectEdge ? () => onSelectEdge(e) : undefined} />)}
           </div>
         </Section>
       )}
 
-      {/* Activity */}
-      <Section title="Activity">
-        <code style={{
-          fontSize: '11px',
-          fontFamily: 'var(--font-mono)',
-          color: 'var(--color-gray)',
-          wordBreak: 'break-all' as const,
-        }}>
-          {node.activity || 'N/A'}
-        </code>
-      </Section>
-
-      {/* Params */}
-      {node.params && (node.params.inputs?.length > 0 || node.params.outputs?.length > 0) && (
-        <Section title="Parameters">
-          {node.params.inputs?.length > 0 && (
-            <ParamRow label="IN" items={node.params.inputs} />
-          )}
-          {node.params.outputs?.length > 0 && (
-            <ParamRow label="OUT" items={node.params.outputs} />
-          )}
-        </Section>
-      )}
-
-      {/* Elements */}
-      {node.widgets?.length > 0 && (
-        <Section title={`Elements (${node.widgets.length})`}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {node.widgets.map((elem: any, i: number) => (
-              <div
-                key={i}
-                style={{
-                  padding: '8px 10px',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: '6px',
-                  fontSize: '12px',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{
-                    fontFamily: 'var(--font-mono)',
-                    fontWeight: 500,
-                    fontSize: '11px',
-                  }}>
-                    {elem.id || 'unnamed'}
-                  </span>
-                  <span style={{
-                    fontSize: '10px',
-                    color: 'var(--color-gray)',
-                    fontFamily: 'var(--font-mono)',
-                  }}>
-                    {elem.type}
-                  </span>
+      {node.primitives && Object.keys(node.primitives).length > 0 && (
+        <Section title="입력 요소">
+          <div className="wf-list" style={{ gap: 6 }}>
+            {Object.entries(node.primitives).map(([type, items]: [string, any]) => (
+              <div key={type} className="wf-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
+                <div className="wf-eyebrow">{type} · {items.length}</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {items.slice(0, 8).map((it: any, i: number) => (
+                    <span key={i} className="wf-chip outline mono" title={JSON.stringify(it, null, 2)}>{it.label || it.id || it.value_hint || it.kind}{it.outcome_hint ? ` → ${it.outcome_hint}` : ''}</span>
+                  ))}
+                  {items.length > 8 && <span className="wf-faint">+{items.length - 8}</span>}
                 </div>
-                {elem.role && (
-                  <div style={{ color: 'var(--color-gray)', fontSize: '11px', marginTop: '2px' }}>
-                    {elem.role}
-                  </div>
-                )}
               </div>
             ))}
           </div>
         </Section>
       )}
 
-      {/* Option Groups (sprint 2026-04-27) — radio/checkbox/stepper/dropdown */}
       {node.chip_groups?.length > 0 && (
-        <Section title={`Option Groups (${node.chip_groups.length})`}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <Section title={`선택 그룹 ${node.chip_groups.length}`}>
+          <div className="wf-list" style={{ gap: 6 }}>
             {node.chip_groups.map((g: any, i: number) => (
-              <div
-                key={i}
-                style={{
-                  padding: '10px 12px',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: '8px',
-                  background: 'var(--color-bg-elev)',
-                  fontSize: '12px',
-                }}
-              >
-                <div style={{
-                  display: 'flex', justifyContent: 'space-between',
-                  alignItems: 'baseline', marginBottom: '6px',
-                }}>
-                  <span style={{ fontWeight: 600 }}>
-                    {g.group_id || `group_${i}`}
-                  </span>
-                  <span style={{
-                    fontSize: '10px', color: 'var(--color-gray)',
-                    fontFamily: 'var(--font-mono)',
-                  }}>
-                    {g.type}{g.required ? ' · required' : ''}
-                  </span>
+              <div key={i} className="wf-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <b>{g.group_id || `group_${i}`}</b>
+                  <span className="wf-mono wf-faint">{g.type}{g.required ? ' · 필수' : ''}</span>
                 </div>
                 {g.type === 'stepper' ? (
-                  <div style={{
-                    display: 'flex', alignItems: 'center', gap: '6px',
-                    fontFamily: 'var(--font-mono)', fontSize: '11px',
-                  }}>
-                    <span style={{ padding: '2px 8px', border: '1px solid var(--color-border)', borderRadius: '4px' }}>
-                      − {g.minus_widget}
-                    </span>
-                    <span style={{ padding: '2px 8px', background: 'var(--color-border)', borderRadius: '4px' }}>
-                      {g.display_widget || '…'}
-                    </span>
-                    <span style={{ padding: '2px 8px', border: '1px solid var(--color-border)', borderRadius: '4px' }}>
-                      + {g.plus_widget}
-                    </span>
-                    <span style={{ marginLeft: 'auto', color: 'var(--color-gray)' }}>
-                      [{g.min ?? 1} – {g.max ?? 99}, default {g.default ?? 1}]
-                    </span>
+                  <div className="wf-mono" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <span className="wf-chip outline">− {g.minus_widget}</span><span className="wf-chip">{g.display_widget || '…'}</span><span className="wf-chip outline">+ {g.plus_widget}</span>
+                    <span className="wf-faint" style={{ marginLeft: 'auto' }}>[{g.min ?? 1}–{g.max ?? 99}, 기본 {g.default ?? 1}]</span>
                   </div>
                 ) : g.type === 'dropdown' ? (
-                  <div style={{ fontSize: '11px', color: 'var(--color-gray)', fontFamily: 'var(--font-mono)' }}>
-                    trigger → {g.trigger_widget}
-                  </div>
+                  <div className="wf-mono wf-faint">trigger → {g.trigger_widget}</div>
                 ) : (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                    {(g.options || []).map((opt: any, j: number) => (
-                      <span
-                        key={j}
-                        style={{
-                          padding: '3px 9px',
-                          border: '1px solid var(--color-border)',
-                          borderRadius: '12px',
-                          background: opt.selected_default
-                            ? 'var(--color-accent-bg, rgba(88,166,255,0.18))'
-                            : 'transparent',
-                          fontSize: '11px',
-                        }}
-                        title={opt.widget_id}
-                      >
-                        {opt.value}{opt.selected_default ? ' ✓' : ''}
-                      </span>
-                    ))}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {(g.options || []).map((opt: any, j: number) => <span key={j} className={`wf-chip ${opt.selected_default ? 'accent' : 'outline'}`} title={opt.widget_id}>{opt.value}{opt.selected_default ? ' ✓' : ''}</span>)}
                   </div>
                 )}
-                {g.detection && (
-                  <div style={{
-                    fontSize: '10px', color: 'var(--color-gray)',
-                    marginTop: '6px', fontFamily: 'var(--font-mono)',
-                  }}>
-                    {g.detection.method} · conf={g.detection.confidence}
-                  </div>
-                )}
+                {g.detection && <div className="wf-mono wf-faint">{g.detection.method} · conf={g.detection.confidence}</div>}
               </div>
             ))}
           </div>
         </Section>
       )}
 
-      {/* Infinite-scroll feed badge (sprint 2026-04-27) */}
       {node.infinite_scroll && (
-        <Section title="Infinite Scroll">
-          <div style={{
-            padding: '8px 12px', border: '1px solid var(--color-border)',
-            borderRadius: '6px', fontSize: '12px', background: 'var(--color-bg-elev)',
-          }}>
-            <span style={{ fontWeight: 600 }}>♾️ Feed/list screen</span>
-            <div style={{ fontSize: '11px', color: 'var(--color-gray)', marginTop: '4px' }}>
-              Activity nodes:{' '}
-              {node.scroll_metadata?.activity_node_count ?? '?'} ·
-              category match: {String(node.scroll_metadata?.category_match ?? false)}
-            </div>
+        <Section title="무한 스크롤">
+          <div className="wf-callout plain">피드/목록 화면 · 활동 노드 {node.scroll_metadata?.activity_node_count ?? '?'}</div>
+        </Section>
+      )}
+
+      {node.widgets?.length > 0 && (
+        <Section title={`UI 요소 ${node.widgets.length}`}>
+          <div className="wf-list" style={{ gap: 4 }}>
+            {node.widgets.map((el: any, i: number) => (
+              <div key={i} className="wf-row" style={{ justifyContent: 'space-between' }}>
+                <span className="wf-mono wf-ellipsis">{el.id || el.text || 'unnamed'}</span>
+                <span className="wf-mono wf-faint" style={{ flexShrink: 0 }}>{el.type}{el.role ? ` · ${el.role}` : ''}</span>
+              </div>
+            ))}
           </div>
         </Section>
       )}
 
+      <Section title="Activity">
+        <code className="wf-mono wf-muted" style={{ wordBreak: 'break-all' }}>{node.activity || 'N/A'}</code>
+        {node.params && (node.params.inputs?.length > 0 || node.params.outputs?.length > 0) && (
+          <div className="wf-mono wf-faint" style={{ marginTop: 6 }}>
+            {node.params.inputs?.length > 0 && <div>IN: {node.params.inputs.join(', ')}</div>}
+            {node.params.outputs?.length > 0 && <div>OUT: {node.params.outputs.join(', ')}</div>}
+          </div>
+        )}
+      </Section>
     </div>
   );
 }
-
-/* --- Sub-components --- */
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: '20px' }}>
-      <div style={{
-        fontSize: '13px',
-        fontWeight: 700,
-        color: 'var(--color-black)',
-        letterSpacing: '0.2px',
-        textTransform: 'uppercase' as const,
-        marginBottom: '10px',
-      }}>
-        {title}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function Tag({ children, variant = 'default' }: { children: React.ReactNode; variant?: 'default' | 'warn' }) {
-  return (
-    <span style={{
-      display: 'inline-block',
-      padding: '2px 8px',
-      fontSize: '11px',
-      fontWeight: 500,
-      fontFamily: 'var(--font-mono)',
-      border: `1px solid ${variant === 'warn' ? 'var(--color-primary)' : 'var(--color-border)'}`,
-      borderRadius: '4px',
-      color: variant === 'warn' ? 'var(--color-primary)' : 'var(--color-gray)',
-    }}>
-      {children}
-    </span>
-  );
+  return <div className="wf-insp-section"><div className="h">{title}</div>{children}</div>;
 }
 
 function EdgeRow({ trigger, target, kind, direction = 'out', outcome, onClick, thumbnailUrl }: {
-  trigger: string;
-  target: string;
-  kind: string;
-  direction?: 'in' | 'out';
-  outcome?: string;
-  onClick?: () => void;
-  thumbnailUrl?: string;  // 연결 노드의 screenshot — 작은 미리보기
+  trigger: string; target: string; kind: string; direction?: 'in' | 'out'; outcome?: string; onClick?: () => void; thumbnailUrl?: string;
 }) {
-  // kind 별 색상 — ScreenMapView 의 STYLE_BY_KIND 와 일치
-  const kindColor: Record<string, string> = {
-    navigate: '#2563eb', two_hop: '#6d28d9', contains: '#0ea5e9',
-    launcher: '#16a34a', intent_filter: '#16a34a', pending_intent: '#65a30d',
-    static_ref: '#cbd5e1', global: '#9ca3af',
-    overlay: '#f59e0b', back: '#94a3b8',
-  };
-  const c = kindColor[kind] || '#64748b';
+  const c = edgeStyle(kind).stroke;
   return (
-    <div
-      onClick={onClick}
-      style={{
-        display: 'flex', flexDirection: 'column', gap: '2px',
-        padding: '6px 9px',
-        border: '1px solid var(--color-border)',
-        borderRadius: '6px',
-        borderLeft: `3px solid ${c}`,
-        fontSize: '12px',
-        cursor: onClick ? 'pointer' : 'default',
-        background: 'var(--color-white)',
-      }}
-      onMouseEnter={(e) => onClick && (e.currentTarget.style.background = 'var(--color-bg-elev, #f8fafc)')}
-      onMouseLeave={(e) => onClick && (e.currentTarget.style.background = 'var(--color-white)')}
-      title={`kind: ${kind}${outcome ? '\n→ ' + outcome : ''}`}
-    >
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: thumbnailUrl ? '40px 90px 1fr' : '90px 1fr',
-        gap: '8px',
-        alignItems: 'center',
-      }}>
-        {thumbnailUrl && (
-          <img
-            src={thumbnailUrl}
-            alt=""
-            loading="lazy"
-            style={{
-              width: '40px', height: '60px', objectFit: 'cover',
-              borderRadius: '3px', border: '1px solid var(--color-border)',
-              background: '#f5f5f5',
-            }}
-            onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden'; }}
-          />
-        )}
-        <span style={{
-          color: c, fontWeight: 600, fontSize: '11px',
-          fontFamily: 'var(--font-mono)',
-          whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis' as const,
-        }}>
-          {trigger}
-        </span>
-        <span style={{
-          color: 'var(--color-black)',
-          whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis' as const,
-        }}>
-          {direction === 'in' ? '← ' : '→ '}{target}
-        </span>
+    <div className={`wf-row${onClick ? ' clickable' : ''}`} onClick={onClick} style={{ borderLeft: `3px solid ${c}`, flexDirection: 'column', alignItems: 'stretch', gap: 2 }} title={`${edgeStyle(kind).label}${outcome ? '\n→ ' + outcome : ''}`}>
+      <div style={{ display: 'grid', gridTemplateColumns: thumbnailUrl ? '36px 100px 1fr' : '100px 1fr', gap: 8, alignItems: 'center' }}>
+        {thumbnailUrl && <img className="wf-thumb" src={thumbnailUrl} alt="" loading="lazy" onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden'; }} />}
+        <span className="wf-ellipsis" style={{ color: c, fontWeight: 700, fontSize: 11.5 }}>{trigger}</span>
+        <span className="wf-ellipsis">{direction === 'in' ? '← ' : '→ '}{target}</span>
       </div>
-      {/* P2.2: edge.outcome — LLM 추정 결과 */}
-      {outcome && (
-        <div style={{
-          fontSize: '10.5px', color: 'var(--color-gray)',
-          paddingLeft: '98px', fontStyle: 'italic',
-          whiteSpace: 'normal' as const, lineHeight: 1.4,
-        }}>
-          ∵ {outcome}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ParamRow({ label, items }: { label: string; items: string[] }) {
-  return (
-    <div style={{ display: 'flex', gap: '8px', alignItems: 'baseline', marginBottom: '4px' }}>
-      <span style={{
-        fontSize: '10px',
-        fontWeight: 600,
-        fontFamily: 'var(--font-mono)',
-        color: 'var(--color-gray)',
-        width: '28px',
-        flexShrink: 0,
-      }}>
-        {label}
-      </span>
-      <span style={{ fontSize: '12px', fontFamily: 'var(--font-mono)' }}>
-        {items.join(', ')}
-      </span>
+      {outcome && <div className="wf-faint" style={{ fontSize: 11, fontStyle: 'italic', paddingLeft: thumbnailUrl ? 44 : 0 }}>∵ {outcome}</div>}
     </div>
   );
 }

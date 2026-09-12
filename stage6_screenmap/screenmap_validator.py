@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 
 def validate_graph(graph: dict) -> dict:
-    """Run all spec validations + ScreenAtlas transition consistency.
+    """Run all spec validations + Wayfare transition consistency.
 
     Returns a validation report with issues and summary.
     """

@@ -1,4 +1,4 @@
-"""Integration tests for ScreenAtlas pipeline components."""
+"""Integration tests for Wayfare pipeline components."""
 
 import json
 

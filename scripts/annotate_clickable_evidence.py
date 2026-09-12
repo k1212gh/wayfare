@@ -1,7 +1,7 @@
 """메가커피 캡처에 거짓 클릭 불가 영역을 박스+라벨로 표시하고 민감정보를 마스킹.
 
 산출물:
-  screenatlas/reports/clickable_evidence/
+  wayfare/reports/clickable_evidence/
     01_home_bottom_tabs.png      — 홈 화면, 하단 탭 4개 + 메가오더
     02_home_quickorder.png       — 홈 화면, 퀵오더 진입 카드
     03_payment_options.png       — 결제 화면, 포장방식/결제수단
@@ -20,8 +20,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-ROOT = Path("screenatlas/workspace/432b611e/dynamic/raw")
-OUT = Path("screenatlas/reports/clickable_evidence")
+ROOT = Path("wayfare/workspace/432b611e/dynamic/raw")
+OUT = Path("wayfare/reports/clickable_evidence")
 OUT.mkdir(parents=True, exist_ok=True)
 
 FONT_PATH = "C:/Windows/Fonts/malgun.ttf"  # 맑은 고딕

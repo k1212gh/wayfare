@@ -1,4 +1,4 @@
-"""CLI entry point for ScreenAtlas pipeline."""
+"""CLI entry point for Wayfare pipeline."""
 
 import argparse
 import logging
@@ -67,8 +67,8 @@ def cmd_serve(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="screenatlas",
-        description="ScreenAtlas — APK → Screen Map pipeline (static + TapWalker + LLM)",
+        prog="wayfare",
+        description="Wayfare — APK → Screen Map pipeline (static + TapWalker + LLM)",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
