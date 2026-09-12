@@ -36,20 +36,20 @@ interface TestResult {
   elapsed_ms?: number;
 }
 
-const PRESETS: Record<string, { base_url: string; model_screen: string; model_vision: string; hint: string }> = {
-  ollama: {
-    base_url: 'http://192.168.0.10:11434/v1',
-    model_screen: 'qwen2.5:7b-instruct',
-    model_vision: 'qwen2.5vl:7b',
-    hint: 'Ollama: 다른 PC 에서 OLLAMA_HOST=0.0.0.0 ollama serve 후 ollama pull qwen2.5:7b-instruct',
-  },
-  lmstudio: {
-    base_url: 'http://192.168.0.10:1234/v1',
-    model_screen: 'qwen2.5-7b-instruct',
-    model_vision: 'qwen2.5-vl-7b-instruct',
-    hint: 'LM Studio: Developer 탭 → Server 시작, "Serve on Local Network" 켜기',
-  },
+type Provider = 'ollama' | 'lmstudio' | 'openwebui' | 'custom';
+
+/** 셋 다 OpenAI 호환 chat/completions — 주소와 인증만 다르다. */
+const PROVIDERS: Record<Provider, { name: string; port: number; path: string; needsKey: boolean; model: string; vision: string; hint: string }> = {
+  ollama: { name: 'Ollama', port: 11434, path: '/v1', needsKey: false, model: 'qwen2.5:7b-instruct', vision: 'qwen2.5vl:7b',
+    hint: '다른 PC: OLLAMA_HOST=0.0.0.0 으로 서버 실행, ollama pull qwen2.5:7b-instruct (비전: qwen2.5vl:7b)' },
+  lmstudio: { name: 'LM Studio', port: 1234, path: '/v1', needsKey: false, model: 'qwen2.5-7b-instruct', vision: 'qwen2.5-vl-7b-instruct',
+    hint: 'Developer 탭 → Server 시작, "Serve on Local Network" 켜고 모델을 로드해 두세요' },
+  openwebui: { name: 'Open WebUI', port: 3000, path: '/api', needsKey: true, model: 'qwen2.5:7b-instruct', vision: 'qwen2.5vl:7b',
+    hint: 'Settings → Account → API Keys 에서 키 발급 후 아래 API 키에 입력 (Docker 기본 포트 3000, 직접 실행은 8080)' },
+  custom: { name: '직접 입력', port: 8000, path: '/v1', needsKey: false, model: '', vision: '', hint: 'OpenAI 호환 서버라면 무엇이든 (vLLM, llama.cpp server 등)' },
 };
+
+interface Found { provider: string; port: number; base_url: string; needs_key: boolean; status: number; models: string[]; vision_models: string[]; hint?: string }
 
 const inputStyle: React.CSSProperties = {
   width: '100%', padding: '7px 10px', fontSize: 13, border: '1px solid var(--color-border)',
@@ -72,6 +72,11 @@ export function LLMSettings() {
   const [busy, setBusy] = useState<'save' | 'test' | null>(null);
   const [test, setTest] = useState<TestResult | null>(null);
   const [msg, setMsg] = useState('');
+  const [provider, setProvider] = useState<Provider>('ollama');
+  const [host, setHost] = useState('127.0.0.1');
+  const [found, setFound] = useState<Found[] | null>(null);
+  const [models, setModels] = useState<string[]>([]);
+  const [discovering, setDiscovering] = useState(false);
 
   const load = async () => {
     try {
@@ -81,6 +86,14 @@ export function LLMSettings() {
       setCur(d);
       setMode(((d.mode as string) === 'cli' ? 'api' : d.mode) as Mode);
       setBaseUrl(d.base_url || '');
+      try {
+        if (d.base_url) {
+          const u = new URL(d.base_url);
+          setHost(u.hostname);
+          const hit = (Object.keys(PROVIDERS) as Provider[]).find((k) => k !== 'custom' && String(PROVIDERS[k].port) === u.port);
+          setProvider(hit || 'custom');
+        }
+      } catch { /* keep defaults */ }
       setModelScreen(d.model_screen || '');
       setModelVision(d.model_vision || '');
       setTimeoutS(d.timeout ?? '');
@@ -119,10 +132,39 @@ export function LLMSettings() {
     finally { setBusy(null); }
   };
 
-  const applyPreset = (k: string) => {
-    const p = PRESETS[k];
-    setMode('openai'); setBaseUrl(p.base_url); setModelScreen(p.model_screen); setModelVision(p.model_vision);
+  const applyProvider = (k: Provider, h?: string) => {
+    const p = PROVIDERS[k];
+    setProvider(k); setMode('openai');
+    setBaseUrl(`http://${h || host}:${p.port}${p.path}`);
+    if (!modelScreen) setModelScreen(p.model);
+    if (!modelVision) setModelVision(p.vision);
     setMsg(p.hint);
+  };
+
+  const discover = async () => {
+    setDiscovering(true); setFound(null); setMsg('');
+    try {
+      const r = await fetch('/api/settings/llm/discover', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host, api_key: apiKey || undefined }) });
+      const d = await r.json();
+      const list: Found[] = d.found || [];
+      setFound(list);
+      if (!list.length) { setMsg(`${host} 에서 Ollama(11434) · LM Studio(1234) · Open WebUI(3000/8080) 를 찾지 못했습니다`); return; }
+      const best = list.find((f) => f.models.length) || list[0];
+      applyFound(best);
+    } catch (e: any) { setMsg(`탐지 실패: ${e.message || e}`); }
+    finally { setDiscovering(false); }
+  };
+
+  const applyFound = (f: Found) => {
+    const k = (f.provider in PROVIDERS ? f.provider : 'custom') as Provider;
+    setProvider(k); setMode('openai'); setBaseUrl(f.base_url); setModels(f.models);
+    if (f.models.length) {
+      const pick = f.models.find((m) => !PROVIDERS.ollama.vision.includes(m) && !f.vision_models.includes(m)) || f.models[0];
+      setModelScreen(pick);
+      if (f.vision_models.length) setModelVision(f.vision_models[0]);
+    }
+    setMsg(f.hint || `${PROVIDERS[k].name} 발견 · 모델 ${f.models.length}개${f.models.length ? '' : ' (모델을 먼저 받아 두세요)'}`);
   };
 
   const statusDot = cur?.configured ? '#22c55e' : '#f59e0b';
@@ -156,19 +198,35 @@ export function LLMSettings() {
 
           {mode === 'openai' && (
             <>
-              <div style={{ display: 'flex', gap: 6, fontSize: 12, color: 'var(--color-gray)', alignItems: 'center', flexWrap: 'wrap' }}>
-                프리셋:
-                <button onClick={() => applyPreset('ollama')} style={presetBtn}>Ollama</button>
-                <button onClick={() => applyPreset('lmstudio')} style={presetBtn}>LM Studio</button>
-                <span>· 다른 PC 의 IP 로 base URL 을 바꾸세요. 이 PC 라면 127.0.0.1</span>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                {(Object.keys(PROVIDERS) as Provider[]).map((k) => (
+                  <button key={k} onClick={() => applyProvider(k)} style={{
+                    ...presetBtn, fontWeight: provider === k ? 700 : 400,
+                    borderColor: provider === k ? 'var(--color-black)' : 'var(--color-border)',
+                  }}>{PROVIDERS[k].name}</button>
+                ))}
+                <span style={{ fontSize: 12, color: 'var(--color-gray)', marginLeft: 6 }}>서버 PC 주소</span>
+                <input style={{ ...inputStyle, width: 170 }} value={host} onChange={(e) => setHost(e.target.value)} placeholder="192.168.0.10" />
+                <button onClick={discover} disabled={discovering} style={ghostBtn}>{discovering ? '찾는 중…' : '찾기'}</button>
+                <span style={{ fontSize: 12, color: 'var(--color-gray)' }}>이 PC 는 127.0.0.1</span>
               </div>
+              {found && found.length > 0 && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 12 }}>
+                  {found.map((f) => (
+                    <button key={f.base_url} onClick={() => applyFound(f)} style={{ ...presetBtn, background: f.base_url === baseUrl ? '#ecfdf5' : '#fff' }}>
+                      {PROVIDERS[(f.provider in PROVIDERS ? f.provider : 'custom') as Provider].name} · :{f.port} · 모델 {f.models.length}개{f.needs_key && f.status !== 200 ? ' · 키 필요' : ''}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
                 <div><label style={labelStyle}>Base URL (…/v1)</label>
                   <input style={inputStyle} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="http://192.168.0.10:11434/v1" /></div>
-                <div><label style={labelStyle}>텍스트 모델 (라벨 선택·플래너)</label>
-                  <input style={inputStyle} value={modelScreen} onChange={(e) => setModelScreen(e.target.value)} placeholder="qwen2.5:7b-instruct" /></div>
+                <div><label style={labelStyle}>텍스트 모델 (라벨 선택·플래너){models.length ? ` · 탐지 ${models.length}개` : ''}</label>
+                  <input style={inputStyle} list="llm-models" value={modelScreen} onChange={(e) => setModelScreen(e.target.value)} placeholder="qwen2.5:7b-instruct" /></div>
                 <div><label style={labelStyle}>비전 모델 (선택 · 스크린샷 라벨/탐색)</label>
-                  <input style={inputStyle} value={modelVision} onChange={(e) => setModelVision(e.target.value)} placeholder="qwen2.5vl:7b" /></div>
+                  <input style={inputStyle} list="llm-models" value={modelVision} onChange={(e) => setModelVision(e.target.value)} placeholder="qwen2.5vl:7b" /></div>
+                <datalist id="llm-models">{models.map((m) => <option key={m} value={m} />)}</datalist>
                 <div><label style={labelStyle}>API 키 (서버가 요구할 때만{cur?.api_key_masked ? ` · 현재 ${cur.api_key_masked}` : ''})</label>
                   <input style={inputStyle} type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="비우면 유지" /></div>
                 <div><label style={labelStyle}>타임아웃(초) — 로컬 모델은 600 권장</label>

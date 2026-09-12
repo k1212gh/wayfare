@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -38,18 +39,25 @@ MAX_CANDIDATES = 8
 MAX_NEW_LABEL = 14
 _PLACEHOLDER = re.compile(r"^(page|act|screen|state|node)_[0-9a-f]{6,}$", re.IGNORECASE)
 
+# 자유 라벨(pick=-1) 허용 여부 — 기본 off. 3B 급 로컬 모델은 자유 라벨에서 "메뉴 메뉴", "취소" 같은
+# 잡음을 만든다 (2026-09-12 메가커피 실측). 기본은 후보 중 '고르기만' 하고, 못 고르면 대체 라벨 유지.
+ALLOW_FREE_LABEL = os.environ.get("LLM_PICK_ALLOW_FREE", "").lower() in ("1", "true", "yes")
+_GENERIC = {"이전", "뒤로", "닫기", "취소", "확인", "새로고침", "추가", "더보기", "전체", "홈", "메뉴", "검색",
+            "back", "close", "cancel", "ok", "confirm", "refresh", "add", "more", "home", "menu", "search"}
+
 _SYSTEM_PROMPT = (
     "You name screens of an Android app for a screen-flow map.\n"
     "For each screen you get: id, activity, and a numbered list of texts that are actually "
-    "visible on that screen (top of screen first).\n"
-    "Pick the ONE candidate that best serves as the screen's title (what a user would call this "
-    "screen). Prefer a page title / header over buttons, prices, dates or list items. "
-    "If no candidate is a sensible title, use pick=-1 and give a short label (Korean, ≤12 chars) "
-    "that describes the screen from the visible texts only — never invent features.\n"
+    "visible on that screen, ordered top-to-bottom (the first ones are the header area).\n"
+    "Pick the ONE candidate that is the screen's title — the page header a user would call this "
+    "screen by (e.g. 매장 정보, 결제, 장바구니, 주문내역).\n"
+    "Never pick: store/branch names, product names, prices, dates, counts, promotional sentences, "
+    "list rows, or generic buttons (이전/닫기/취소/확인/더보기). "
+    "When the first candidate already looks like a header, keep pick=0. "
+    "If truly none is a title, answer pick=-1.\n"
     "Also classify functional_category as one of: " + ", ".join(CATEGORY_ENUM) + ".\n\n"
-    "Respond with strict JSON only:\n"
-    '{"nodes": [{"id": "<screen id>", "pick": <int>, "label": "<only when pick=-1>", '
-    '"category": "<enum>"}]}'
+    "Respond with strict JSON only (an object with a nodes array):\n"
+    '{"nodes": [{"id": "<screen id>", "pick": <int>, "category": "<enum>"}]}'
 )
 
 
@@ -79,10 +87,19 @@ def _build_batch_prompt(batch: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _apply(batch: list[dict], resp: dict) -> int:
+def _apply(batch: list[dict], resp) -> int:
     by_id = {n["screen_id"]: n for n in batch}
     applied = 0
-    for item in (resp.get("nodes") or []):
+    # 작은 모델은 {"nodes":[...]} 대신 [...] 나 {"<id>": {...}} 로 답하기도 한다.
+    if isinstance(resp, list):
+        items = resp
+    elif isinstance(resp, dict) and isinstance(resp.get("nodes"), list):
+        items = resp["nodes"]
+    elif isinstance(resp, dict):
+        items = [dict(v, id=k) for k, v in resp.items() if isinstance(v, dict)]
+    else:
+        items = []
+    for item in items:
         if not isinstance(item, dict):
             continue
         n = by_id.get(str(item.get("id", "")))
@@ -91,12 +108,17 @@ def _apply(batch: list[dict], resp: dict) -> int:
         cands = [str(c) for c in (n.get("label_candidates") or [])][:MAX_CANDIDATES]
         pick = item.get("pick")
         label = ""
+        if isinstance(pick, str) and pick.strip().lstrip("-").isdigit():
+            pick = int(pick)
         if isinstance(pick, int) and 0 <= pick < len(cands):
-            label = cands[pick].strip()
-            n["label_source"] = "picked"
-        elif pick == -1 or pick is None:
+            chosen = cands[pick].strip()
+            # 모델이 골랐어도 버튼 문구/긴 문장이면 신뢰하지 않고 대체 라벨 유지
+            if chosen.lower() not in _GENERIC and len(chosen) <= 24:
+                label = chosen
+                n["label_source"] = "picked"
+        elif (pick == -1 or pick is None) and ALLOW_FREE_LABEL:
             free = str(item.get("label") or "").strip()
-            if free and len(free) <= MAX_NEW_LABEL + 6:
+            if free and len(free) <= MAX_NEW_LABEL + 6 and free.lower() not in _GENERIC:
                 label = free[:MAX_NEW_LABEL]
                 n["label_source"] = "llm"
         if label:

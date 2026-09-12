@@ -196,11 +196,12 @@ def test_label_picker_applies_pick_and_free_label(tmp_path, monkeypatch):
     monkeypatch.setattr(lp, "_push_progress", lambda *_: None)
     monkeypatch.setattr(lp, "_raise_if_cancelled", lambda *_: None)
     stats = lp.pick_labels(cfg, client=client)
-    assert stats["targets"] == 2 and stats["applied"] == 2 and stats["batches"] == 1
+    assert stats["targets"] == 2 and stats["applied"] == 1 and stats["batches"] == 1
     saved = {n["screen_id"]: n for n in json.loads(path.read_text(encoding="utf-8"))["screen_map"]["graph"]["nodes"]}
     assert saved["page_a"]["label"] == "매장 정보" and saved["page_a"]["label_source"] == "picked"
     assert saved["page_a"]["functional_category"] == "list"
-    assert saved["page_b"]["label"] == "스탬프 적립 현황 페이지입니다"[:14] and saved["page_b"]["label_source"] == "llm"
+    # 자유 라벨은 기본 off → pick=-1 이면 기존 라벨 유지
+    assert saved["page_b"]["label"] == "page_b" and saved["page_b"].get("label_source") == "fallback"
     assert saved["page_c"]["label"] == "결제" and saved["page_c"]["functional_category"] == "form"
     # 프롬프트에 후보가 번호로 들어감, 대상 아닌 노드는 없음
     assert "[0] 매장 정보" in client.prompts[0] and "page_c" not in client.prompts[0]
@@ -310,3 +311,24 @@ def test_generic_button_texts_demoted():
                        _v(text="", y1=3000, y2=3088)]}
     assert _extract_title(state) == "매장 상세"
     assert extract_label_candidates(state)[:3] == ["매장 상세", "이전", "닫기"]
+
+
+def test_label_picker_accepts_list_response_and_rejects_generic(tmp_path, monkeypatch):
+    from stage5_annotate import label_picker as lp
+    cfg = _config(tmp_path)
+    monkeypatch.setattr(cfg.__class__, "tour_dir", property(lambda self: tmp_path))
+    monkeypatch.setattr(cfg.__class__, "output_dir", property(lambda self: tmp_path / "output"))
+    path = _screenmap(tmp_path, [
+        {"screen_id": "page_a", "label": "page_a", "label_source": "fallback", "label_candidates": ["이전", "주문내역"]},
+        {"screen_id": "page_b", "label": "page_b", "label_source": "fallback", "label_candidates": ["결제", "카드번호를 입력하고 다음 단계로 진행해 주세요"]},
+    ])
+    monkeypatch.setattr(lp, "_push_progress", lambda *_: None)
+    monkeypatch.setattr(lp, "_raise_if_cancelled", lambda *_: None)
+    # 배열 응답 + 문자열 pick + generic/긴 문장 선택
+    client = _PickClient([{"id": "page_a", "pick": "1", "category": "list"}, {"id": "page_b", "pick": 1, "category": "form"}])
+    stats = lp.pick_labels(cfg, client=client)
+    saved = {n["screen_id"]: n for n in json.loads(path.read_text(encoding="utf-8"))["screen_map"]["graph"]["nodes"]}
+    assert saved["page_a"]["label"] == "주문내역" and saved["page_a"]["label_source"] == "picked"
+    assert saved["page_b"]["label"] == "page_b"          # 긴 문장 선택은 거부 → 유지
+    assert saved["page_b"]["functional_category"] == "form"   # 카테고리는 반영
+    assert stats["applied"] == 1

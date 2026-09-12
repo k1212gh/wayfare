@@ -224,3 +224,79 @@ async def test_llm_settings(body: LLMTestBody | None = None):
         result = {"ok": False, "mode": mode, "error": "테스트할 공급자가 아닙니다 (off/cli)"}
     result["elapsed_ms"] = int((time.time() - t0) * 1000)
     return result
+
+
+# ─── 자동 탐지: IP 하나로 Ollama / LM Studio / Open WebUI 찾기 ────────────────
+# 셋 다 OpenAI 호환 chat/completions 를 제공하므로 클라이언트는 하나, 주소/인증만 다르다.
+#   Ollama     : http://host:11434/v1   (키 불필요; 네이티브 /api/tags 도 있음)
+#   LM Studio  : http://host:1234/v1    (키 불필요; Developer 탭 → Server, 로컬 네트워크 서빙 켜기)
+#   Open WebUI : http://host:3000/api   (Settings → Account → API Keys 의 Bearer 키 필요; 8080 도 흔함)
+PROVIDER_PROBES: list[dict] = [
+    {"provider": "ollama", "port": 11434, "base": "/v1", "models_path": "/v1/models", "needs_key": False},
+    {"provider": "lmstudio", "port": 1234, "base": "/v1", "models_path": "/v1/models", "needs_key": False},
+    {"provider": "openwebui", "port": 3000, "base": "/api", "models_path": "/api/models", "needs_key": True},
+    {"provider": "openwebui", "port": 8080, "base": "/api", "models_path": "/api/models", "needs_key": True},
+]
+_VISION_HINTS = ("vl", "vision", "llava", "minicpm-v", "moondream", "gemma3", "pixtral", "qwen2.5vl", "bakllava")
+_SAFE_HOST = re.compile(r"^[A-Za-z0-9.\-_\[\]:]{1,128}$")
+
+
+def _looks_vision(model_id: str) -> bool:
+    m = model_id.lower()
+    return any(h in m for h in _VISION_HINTS)
+
+
+class DiscoverBody(BaseModel):
+    host: str = "127.0.0.1"
+    api_key: str = ""          # Open WebUI 키 (있으면 모델 목록까지 조회)
+    extra_ports: list[int] = Field(default_factory=list)
+
+
+@router.post("/api/settings/llm/discover")
+async def discover_llm_servers(body: DiscoverBody):
+    """host 의 잘 알려진 포트를 동시에 찔러 떠 있는 로컬 LLM 서버와 모델 목록을 돌려준다."""
+    import asyncio
+    import httpx
+
+    host = body.host.strip() or "127.0.0.1"
+    if not _SAFE_HOST.match(host):
+        raise HTTPException(400, "host 형식이 올바르지 않습니다")
+    probes = list(PROVIDER_PROBES)
+    for port in body.extra_ports[:8]:
+        if 1 <= port <= 65535:
+            probes.append({"provider": "custom", "port": port, "base": "/v1", "models_path": "/v1/models", "needs_key": False})
+
+    async def probe(pr: dict) -> dict | None:
+        url = f"http://{host}:{pr['port']}{pr['models_path']}"
+        headers = {}
+        if body.api_key:
+            headers["Authorization"] = f"Bearer {body.api_key}"
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(2.5, connect=1.5)) as c:
+                r = await c.get(url, headers=headers)
+        except Exception:
+            return None
+        found = {"provider": pr["provider"], "port": pr["port"],
+                 "base_url": f"http://{host}:{pr['port']}{pr['base']}", "needs_key": pr["needs_key"],
+                 "status": r.status_code, "models": [], "vision_models": []}
+        if r.status_code == 200:
+            try:
+                data = r.json()
+                items = data.get("data") if isinstance(data, dict) else data
+                ids = [m.get("id", "") for m in (items or []) if isinstance(m, dict) and m.get("id")]
+                found["models"] = ids[:100]
+                found["vision_models"] = [m for m in ids if _looks_vision(m)][:20]
+            except Exception:
+                pass
+            # Ollama 는 /v1/models 가 'object: list' 로 오고 LM Studio 도 같으므로 포트로 구분한 provider 유지
+            return found
+        if r.status_code in (401, 403) and pr["needs_key"]:
+            found["hint"] = "API 키가 필요합니다 (Open WebUI: Settings → Account → API Keys)"
+            return found
+        return None
+
+    results = await asyncio.gather(*(probe(pr) for pr in probes))
+    found = [r for r in results if r]
+    # 같은 provider 가 두 포트에서 잡히면 모델이 있는 쪽 우선
+    found.sort(key=lambda f: (f["provider"], -len(f["models"])))
+    return {"host": host, "found": found, "probed_ports": sorted({pr["port"] for pr in probes})}

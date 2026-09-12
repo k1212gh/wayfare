@@ -144,9 +144,13 @@ def fallback_label(llm_label: str, unit: dict, activity_name: str, sid: str) -> 
     title = (unit.get("title_text") or "").strip()
     if title:
         return title
-    cands = unit.get("label_candidates") or []
+    cands = [str(c).strip() for c in (unit.get("label_candidates") or []) if str(c).strip()]
+    # 홍보 문장처럼 긴 후보는 건너뛰고 짧은 제목을 우선 (전부 길면 첫 후보라도 사용)
+    for c in cands:
+        if len(c) <= 24:
+            return c
     if cands:
-        return str(cands[0]).strip()
+        return cands[0][:24]
     short = short_activity_name(activity_name, unit.get("fragment") or unit.get("fragment_class") or "")
     return short or sid
 
