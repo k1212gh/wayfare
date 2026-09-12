@@ -178,7 +178,22 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         if os.environ.get("WALK_FRONTIER", "").lower() in ("1", "true", "yes"):
             from .frontier import Frontier
             self.frontier = Frontier()
-            logger.info("[frontier] enabled (max_path_len=%d)", self.frontier.max_path_len)
+            # v2 (2026-09-12 메가커피 baseline 관찰): WebView 화면에서 화면을 못 바꾸는
+            # inert 요소를 stall-escape 가 하나씩 강제 클릭하다 6연속 hard reset 으로 감.
+            # stall 이 N회 이상이면 inert 클릭 대신 frontier 이동을 먼저 시도.
+            # WALK_FRONTIER_PREEMPT=N (기본 0 = off, v1 과 동일).
+            try:
+                self._frontier_preempt = int(os.environ.get("WALK_FRONTIER_PREEMPT", "0"))
+            except ValueError:
+                self._frontier_preempt = 0
+            # v3 (2026-09-12 v2 관찰): 막 진입한 leaf 화면은 관측된 나가는 전이가 없어
+            # BFS 목표가 0 → 선점이 무력. LLM-Explorer 의 fault-tolerant path finder 처럼
+            # Back → 재실행으로 아는 화면에 선 뒤 목표를 재탐색. WALK_FRONTIER_REPOSITION=1.
+            self._frontier_reposition_on = os.environ.get(
+                "WALK_FRONTIER_REPOSITION", "").lower() in ("1", "true", "yes")
+            logger.info("[frontier] enabled (max_path_len=%d, preempt=%d, reposition=%s)",
+                        self.frontier.max_path_len, self._frontier_preempt,
+                        self._frontier_reposition_on)
 
         # TarpitEscaper: UI Tarpit Escaping (arXiv 2604.06763) — 텍스트 위젯 목록으로
         # LLM 에 탈출 액션 문의. vision 보다 싸고 좌표 오차 없음.
@@ -1070,6 +1085,17 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                 stall_untried = [a for a in stall_actions
                                  if a.get("desc", "") not in tried_set
                                  and a.get("desc", "") not in self.external_blacklist]
+                _preempt = getattr(self, "_frontier_preempt", 0)
+                if (getattr(self, "frontier", None) is not None and _preempt
+                        and self.stall_count >= _preempt):
+                    nav_events = self._try_frontier_navigation(
+                        state, canonical_id, event_count,
+                        reposition=getattr(self, "_frontier_reposition_on", False))
+                    if nav_events is not None:
+                        self.trap_stats["frontier_preempt"] += 1
+                        event_count = nav_events
+                        self.stall_count = 0
+                        continue
                 if stall_untried:
                     forced = stall_untried[self.stall_count % len(stall_untried)]
                     logger.info(
@@ -1900,7 +1926,7 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         return canonical
 
     def _try_frontier_navigation(self, state: dict, canonical_id: str,
-                                 event_count: int) -> int | None:
+                                 event_count: int, reposition: bool = False) -> int | None:
         """LLM-Explorer 식 앱 전역 미탐색 화면으로 '아는 길' 이동.
 
         반환:
@@ -1917,7 +1943,12 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         )
         blocked_canon = set(getattr(self, "_permanent_blocked_canonicals", set()))
         picked = fr.pick_target(canonical_id, self.tried_actions, blocked_descs, blocked_canon)
-        if not picked:
+        if not picked and reposition:
+            picked, state, canonical_id, event_count, moved = self._frontier_reposition(
+                state, canonical_id, event_count, blocked_descs, blocked_canon)
+            if not picked:
+                return event_count if moved else None
+        elif not picked:
             return None
         target, path = picked
         fr.stats["nav_attempts"] += 1
@@ -1975,6 +2006,57 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             return event_count
         fr.mark_failure(target)
         return event_count if steps_done else None
+
+    def _relaunch_keep_tried(self) -> None:
+        """HOME + am start. _soft_restart 와 달리 tried_actions 를 지우지 않는다 —
+        frontier 의 미시도 개념이 리셋되면 이미 다 눌러본 화면으로 다시 끌려간다."""
+        for cmd, to in ((["input", "keyevent", "KEYCODE_HOME"], 5),
+                        (["am", "start", "-n", f"{self.package}/{self.main_activity}"], 20)):
+            try:
+                subprocess.run(["adb", "-s", self.device_serial, "shell", *cmd],
+                               capture_output=True, timeout=to)
+            except subprocess.TimeoutExpired:
+                logger.warning("[frontier] relaunch step timed out: %s", cmd[0])
+            time.sleep(1.0)
+        time.sleep(1.5)
+
+    def _frontier_reposition(self, state: dict, canonical_id: str, event_count: int,
+                             blocked_descs: set, blocked_canon: set):
+        """현재 화면에서 갈 곳이 없을 때 Back → 재실행 순으로 아는 화면에 선 뒤 목표 재탐색.
+
+        반환: (picked|None, state, canonical_id, event_count, moved)
+        """
+        fr = self.frontier
+        moved = False
+        for step in ("back", "relaunch"):
+            if step == "back":
+                if not self._press_back():
+                    continue
+                fr.stats["reposition_back"] = fr.stats.get("reposition_back", 0) + 1
+            else:
+                self._relaunch_keep_tried()
+                fr.stats["reposition_relaunch"] = fr.stats.get("reposition_relaunch", 0) + 1
+            moved = True
+            event_count += 1
+            self.wait_for_stable(timeout=2.0)
+            new_screen = self._capture_screen(event_count)
+            if not new_screen:
+                continue
+            new_canonical = self._canonicalize_screen(new_screen)
+            if new_canonical != canonical_id:
+                self.transitions.append({
+                    "from_screen": canonical_id, "to_screen": new_canonical,
+                    "event_type": step, "event_str": step,
+                })
+            state, canonical_id = new_screen, new_canonical
+            # 이 화면의 액션을 frontier 에 등록 (처음 보는 화면일 수 있음)
+            self._get_scored_actions(state)
+            picked = fr.pick_target(canonical_id, self.tried_actions, blocked_descs, blocked_canon)
+            if picked:
+                logger.info("[frontier] repositioned via %s to %s — target found", step, canonical_id)
+                return picked, state, canonical_id, event_count, moved
+        logger.info("[frontier] reposition found no target (now at %s)", canonical_id)
+        return None, state, canonical_id, event_count, moved
 
     def _try_tarpit_escape(self, state: dict, canonical_id: str) -> bool:
         """정제된 위젯 목록을 LLM 에 보내 탈출 후보를 받고 첫 유효 후보를 탭."""

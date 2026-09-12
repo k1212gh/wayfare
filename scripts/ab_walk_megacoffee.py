@@ -20,6 +20,8 @@ TarpitEscaper 변형만 ANTHROPIC_API_KEY 필요 — 없으면 자동으로 건�
 변형 (--variants 로 선택, 기본 baseline,frontier):
     baseline          : 모든 기법 off (baseline-v0 와 동일 동작)
     frontier          : WALK_FRONTIER=1
+    frontier_v2       : WALK_FRONTIER=1 + WALK_FRONTIER_PREEMPT=3 (stall 3회면 inert 클릭 대신 이동)
+    frontier_v3       : v2 + WALK_FRONTIER_REPOSITION=1 (목표 없으면 Back/재실행 후 재탐색)
     frontier_tarpit   : WALK_FRONTIER=1 + TARPIT_LLM_ESCAPE=1 (API 키 필요)
     tarpit            : TARPIT_LLM_ESCAPE=1 만
 """
@@ -45,10 +47,13 @@ logger = logging.getLogger("ab_walk")
 VARIANTS: dict[str, dict[str, str]] = {
     "baseline": {},
     "frontier": {"WALK_FRONTIER": "1"},
+    "frontier_v2": {"WALK_FRONTIER": "1", "WALK_FRONTIER_PREEMPT": "3"},
+    "frontier_v3": {"WALK_FRONTIER": "1", "WALK_FRONTIER_PREEMPT": "3", "WALK_FRONTIER_REPOSITION": "1"},
     "tarpit": {"TARPIT_LLM_ESCAPE": "1"},
     "frontier_tarpit": {"WALK_FRONTIER": "1", "TARPIT_LLM_ESCAPE": "1"},
 }
-TECHNIQUE_FLAGS = ("WALK_FRONTIER", "TARPIT_LLM_ESCAPE", "COALESCE_LEARNED")
+TECHNIQUE_FLAGS = ("WALK_FRONTIER", "WALK_FRONTIER_PREEMPT", "WALK_FRONTIER_REPOSITION",
+                   "TARPIT_LLM_ESCAPE", "COALESCE_LEARNED")
 WORKSPACE = ROOT / "workspace"
 
 
@@ -196,6 +201,7 @@ def summarize(tour_id: str) -> dict:
     row["must_reach"] = f"{len(mr.get('hit', []))}/{mr.get('total', 0)}" if mr.get("total") else "-"
     fr = st.get("frontier") or {}
     row["nav_ok/att"] = f"{fr.get('nav_success', 0)}/{fr.get('nav_attempts', 0)}" if fr else "-"
+    row["repos"] = f"{fr.get('reposition_back', 0)}b/{fr.get('reposition_relaunch', 0)}r" if fr else "-"
     tp = st.get("tarpit") or {}
     row["tarpit"] = f"{tp.get('escapes', 0)} ({tp.get('calls_used', 0)} calls)" if tp else "-"
     return row
@@ -203,7 +209,7 @@ def summarize(tour_id: str) -> dict:
 
 def print_table(rows: list[dict]) -> None:
     cols = ["tour", "events", "screens", "raw", "activities", "transitions", "coverage",
-            "must_reach", "scr/min", "elapsed_s", "term", "auth_backoff", "nav_ok/att", "tarpit"]
+            "must_reach", "scr/min", "elapsed_s", "term", "auth_backoff", "nav_ok/att", "repos", "tarpit"]
     widths = {c: max(len(c), *(len(str(r.get(c, ""))) for r in rows)) for c in cols}
     line = " | ".join(c.ljust(widths[c]) for c in cols)
     print(line)

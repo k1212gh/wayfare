@@ -136,3 +136,60 @@ def test_tarpit_escape_false_when_disabled_or_empty():
     w = _walker(escaper=esc)
     assert w._try_tarpit_escape({"canonical_id": "A", "views": [_view("x")]}, "A") is False
     assert w._try_tarpit_escape({"canonical_id": "A", "views": []}, "A") is False
+
+
+# ─── v3: reposition (목표 없을 때 Back / 재실행 후 재탐색) ───────────
+
+def _walker_v3(capture_sequence, back_ok=True):
+    w = _walker(capture_sequence=capture_sequence)
+    w.package, w.main_activity = "pkg", "Main"
+    w.backs, w.relaunches = 0, 0
+
+    def _back():
+        w.backs += 1
+        return back_ok
+    w._press_back = _back
+    w._relaunch_keep_tried = lambda: setattr(w, "relaunches", w.relaunches + 1)
+    return w
+
+
+def test_reposition_back_then_navigate_to_target():
+    # leaf L (나가는 엣지 없음) → Back 으로 A 도착 → A 에서 C 가 목표 → 경로 재현
+    w = _walker_v3(capture_sequence=["A", "B", "C"])
+    _seed_graph(w)
+    out = w._try_frontier_navigation({"canonical_id": "L", "views": []}, "L", 0, reposition=True)
+    assert out == 3                       # back 1 + 경로 2 스텝
+    assert w.backs == 1 and w.relaunches == 0
+    assert w.frontier.stats["reposition_back"] == 1
+    assert w.frontier.stats["nav_success"] == 1
+    assert w.executed == ["click go_b", "click go_c"]
+
+
+def test_reposition_falls_back_to_relaunch_when_back_unsafe():
+    w = _walker_v3(capture_sequence=["A", "B", "C"], back_ok=False)
+    _seed_graph(w)
+    out = w._try_frontier_navigation({"canonical_id": "L", "views": []}, "L", 0, reposition=True)
+    assert out == 3
+    assert w.backs == 1 and w.relaunches == 1
+    assert w.frontier.stats.get("reposition_relaunch") == 1
+    assert w.frontier.stats["nav_success"] == 1
+
+
+def test_reposition_no_target_anywhere_returns_moved_events():
+    # 그래프에 미시도가 하나도 없으면 back+relaunch 둘 다 해도 목표 없음 → moved 이므로 int 반환
+    w = _walker_v3(capture_sequence=["A", "A"])
+    _seed_graph(w)
+    w.tried_actions["C"] = {"click c_untried"}
+    w.tried_actions["D"] = set()
+    # D 는 A -go_d-> D 엣지가 없어서 도달 불가 → 목표 없음
+    out = w._try_frontier_navigation({"canonical_id": "L", "views": []}, "L", 0, reposition=True)
+    assert out == 2
+    assert w.backs == 1 and w.relaunches == 1
+    assert w.executed == []
+
+
+def test_no_reposition_when_flag_off():
+    w = _walker_v3(capture_sequence=["A"])
+    _seed_graph(w)
+    assert w._try_frontier_navigation({"canonical_id": "L", "views": []}, "L", 0) is None
+    assert w.backs == 0
