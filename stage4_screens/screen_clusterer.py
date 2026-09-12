@@ -16,8 +16,87 @@ logger = logging.getLogger(__name__)
 _SYSTEM_BAR_KEYWORDS = (
     "T-Mobile", "Battery", "Wi-Fi", "Wifi", "signal", "percent",
     "AT&T", "Verizon", "Sprint", "bars", "bar",
+    # 2026-09-12 (SM-S908N 실측): status bar 의 알림 아이콘 desc 가 제목 후보 1순위로 잡힘
+    "알림:", "알림", "Android 시스템", "notification", "Edge 패널", "Edge panel",
 )
 _TIME_RE = re.compile(r"^\d{1,2}:\d{2}(\s*[AP]M)?$")
+# 화면 높이 대비 status bar / 상단 제목 영역 비율. 고정 250px 은 1080p 기준이라
+# 1440×3088 폰에서는 제목("매장 정보" y=287) 이 잘렸다 (2026-09-12).
+_STATUS_BAR_RATIO = 0.035   # 이 위쪽은 status bar 로 보고 무시
+_TITLE_ZONE_RATIO = 0.15    # 이 안쪽 텍스트만 제목 후보
+_TITLE_MIN_Y = 250          # 작은 해상도 폴백
+
+
+def _screen_height(views: list[dict]) -> int:
+    """view bounds 의 최대 y2 로 화면 높이 추정 (없으면 0)."""
+    h = 0
+    for v in views:
+        b = v.get("bounds")
+        if isinstance(b, str):
+            m = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", b)
+            if m:
+                h = max(h, int(m.group(4)))
+        elif isinstance(b, list) and len(b) >= 4:
+            try:
+                h = max(h, int(b[3]))
+            except (TypeError, ValueError):
+                pass
+    return h
+
+
+def _is_noise_text(text: str) -> bool:
+    if not text or len(text) < 2 or len(text) > 40:
+        return True
+    if not re.search(r"[A-Za-z가-힣぀-ヿ一-鿿]", text):
+        return True   # "/3", "1/10", "···" 같은 글자 없는 조각
+    if _TIME_RE.match(text):
+        return True
+    if any(kw.lower() in text.lower() for kw in _SYSTEM_BAR_KEYWORDS):
+        return True
+    return False
+
+
+def extract_label_candidates(state: dict, k: int = 8) -> list[str]:
+    """화면에 실제로 보이는 텍스트 중 라벨 후보 k개 (위→아래, 왼→오른 순, 중복 제거).
+
+    LLM 은 이 후보 중 하나를 '고르기만' 하고(환각 없음), LLM 이 없으면 첫 후보를 라벨로 쓴다.
+    후보 순서: 제목 영역(상단 15%) 의 TextView text 우선 → 그 아래 텍스트.
+    """
+    views = state.get("cleaned_views") or state.get("views") or []
+    h = _screen_height(views)
+    top_cut = max(int(h * _STATUS_BAR_RATIO), 60) if h else 60
+    title_cut = max(int(h * _TITLE_ZONE_RATIO), _TITLE_MIN_Y) if h else _TITLE_MIN_Y
+    rows: list[tuple[int, int, int, str]] = []
+    for v in views:
+        y1 = _parse_y1(v.get("bounds"))
+        if y1 == 9999 or y1 < top_cut:
+            continue
+        text = (v.get("text") or "").strip()
+        is_text = bool(text)
+        if not text:
+            text = (v.get("content_desc") or "").strip()
+        if _is_noise_text(text):
+            continue
+        zone = 0 if y1 <= title_cut else 1
+        x1 = 0
+        b = v.get("bounds")
+        if isinstance(b, str):
+            m = re.match(r"\[(\d+),", b)
+            x1 = int(m.group(1)) if m else 0
+        # (영역, 실제 text 우선, y, x)
+        rows.append((zone, 0 if is_text else 1, y1, x1, text))
+    rows.sort()
+    out: list[str] = []
+    seen: set[str] = set()
+    for _z, _t, _y, _x, text in rows:
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+        if len(out) >= k:
+            break
+    return out
 
 
 def _parse_y1(bounds) -> int:
@@ -45,17 +124,18 @@ def _extract_title(state: dict, max_y: int = 250) -> str:
     제목 같은 화면 → 같은 page_id, 제목 다른 화면 → 별 page_id (C 분리).
     """
     views = state.get("cleaned_views") or state.get("views") or []
+    h = _screen_height(views)
+    # 2026-09-12: 고정 250px → 화면 높이 비율. status bar 영역은 제외.
+    top_cut = max(int(h * _STATUS_BAR_RATIO), 60) if h else 60
+    if h:
+        max_y = max(int(h * _TITLE_ZONE_RATIO), max_y)
     candidates: list[tuple[int, str]] = []
     for v in views:
         y1 = _parse_y1(v.get("bounds"))
-        if y1 > max_y:
+        if y1 < top_cut or y1 > max_y:
             continue
         text = (v.get("text") or "").strip() or (v.get("content_desc") or "").strip()
-        if not text or len(text) < 2 or len(text) > 40:
-            continue
-        if _TIME_RE.match(text):
-            continue
-        if any(kw in text for kw in _SYSTEM_BAR_KEYWORDS):
+        if _is_noise_text(text):
             continue
         candidates.append((y1, text))
     candidates.sort()
@@ -143,6 +223,7 @@ def cluster_screens_to_pages(
             "page_id": page_id,
             "structure_str": structure_str,
             "title_text": title,
+            "label_candidates": extract_label_candidates(representative),
             "state_strs": [s.get("state_str", "") for s in group],
             "activity": representative.get("activity", ""),
             "fragment_class": _select_fragment_class(group),

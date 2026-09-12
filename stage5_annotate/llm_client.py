@@ -12,17 +12,72 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+# LLM_MODE 값 → 공급자. "openai" 계열은 OpenAI 호환 chat/completions 를 쓰는 로컬 서버
+# (Ollama / LM Studio / llama.cpp server / vLLM) 이며 다른 PC 의 GPU 로 라벨링을 돌릴 때 쓴다.
+OPENAI_COMPAT_MODES = ("openai", "local", "ollama", "lmstudio", "vllm", "llamacpp")
+
+
+def llm_mode() -> str:
+    return (os.environ.get("LLM_MODE", "api") or "api").strip().lower()
+
+
+def is_llm_configured() -> tuple[bool, str]:
+    """(사용 가능 여부, 사유). pipeline_service 가 Stage 5 실행 여부를 정할 때 사용."""
+    mode = llm_mode()
+    if mode in ("off", "none", "disabled", "0"):
+        return False, "LLM_MODE=off"
+    if mode == "cli":
+        import shutil
+        return (True, "cli") if shutil.which("claude") else (False, "claude CLI not found")
+    if mode in OPENAI_COMPAT_MODES:
+        base = os.environ.get("LLM_BASE_URL", "").strip()
+        model = os.environ.get("LLM_MODEL_SCREEN", "").strip()
+        if not base:
+            return False, "LLM_BASE_URL not set"
+        if not model:
+            return False, "LLM_MODEL_SCREEN not set"
+        return True, f"{mode}:{model}@{base}"
+    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not key or "PLACEHOLDER" in key:
+        return False, "ANTHROPIC_API_KEY missing"
+    return True, "anthropic"
+
+
 def create_client(**kwargs) -> "LLMClient":
     """Factory: create the right client based on LLM_MODE env var.
 
-    Default: API mode (recommended for production).
-    CLI mode is deprecated — use only for local testing without API key.
+    api (default)  — Anthropic API
+    openai/local/… — OpenAI 호환 서버 (LLM_BASE_URL, LLM_MODEL_SCREEN, LLM_MODEL_VISION)
+    cli            — Claude Code CLI (deprecated)
     """
-    mode = os.environ.get("LLM_MODE", "api").lower()
+    mode = llm_mode()
     if mode == "cli":
         logger.info("Using CLI mode (deprecated — switch to API when key available)")
         return CLIClient(**kwargs)
+    if mode in OPENAI_COMPAT_MODES:
+        return OpenAICompatClient(**kwargs)
     return APIClient(**kwargs)
+
+
+def parse_json_response(text: str) -> dict:
+    """모델 응답에서 JSON 객체 추출 (코드펜스 / 앞뒤 잡음 허용). 실패 시 JSONDecodeError."""
+    text = (text or "").strip()
+    if text.startswith("```"):
+        lines = text.split("\n")[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    match = re.search(r"\{[\s\S]*\}", text)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+    raise json.JSONDecodeError(f"No valid JSON ({len(text)} chars)", text[:200], 0)
 
 
 class LLMClient:
@@ -277,24 +332,213 @@ class APIClient(LLMClient):
         return message.content[0].text
 
     def _parse_json(self, text: str) -> dict:
-        text = text.strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            text = "\n".join(lines).strip()
+        return parse_json_response(text)
 
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
 
-        match = re.search(r"\{[\s\S]*\}", text)
-        if match:
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# OpenAI-compatible Mode — 로컬 LLM 서버 (Ollama / LM Studio / llama.cpp / vLLM)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class OpenAICompatClient(LLMClient):
+    """OpenAI `chat/completions` 호환 서버용 클라이언트.
+
+    env:
+      LLM_BASE_URL      예) http://192.168.0.10:11434/v1 (Ollama), http://host:1234/v1 (LM Studio)
+      LLM_MODEL_SCREEN  텍스트 모델 (예: qwen2.5:7b-instruct)
+      LLM_MODEL_VISION  비전 모델 (예: qwen2.5vl:7b). 없으면 LLM_MODEL_SCREEN 사용
+      LLM_API_KEY       서버가 요구할 때만 (기본 "local")
+      LLM_TIMEOUT       초 (로컬 모델은 느리므로 기본 600)
+      LLM_JSON_MODE=1   response_format=json_object 전송 (지원 서버에서 JSON 안정성 ↑)
+
+    APIClient 와 같은 인터페이스: query_json / query_text / query_with_image.
+    """
+
+    def __init__(
+        self,
+        api_key: str = "",
+        model_screen: str = "",
+        model_widget: str = "",
+        temperature: float = 0.1,
+        max_retries: int = 3,
+        base_url: str = "",
+        model_vision: str = "",
+        timeout_s: float | None = None,
+        **_kwargs,
+    ):
+        import httpx
+
+        self.base_url = (base_url or os.environ.get("LLM_BASE_URL", "")).rstrip("/")
+        if not self.base_url:
+            raise RuntimeError("LLM_BASE_URL not set (e.g. http://192.168.0.10:11434/v1)")
+        self.model_screen = model_screen or os.environ.get("LLM_MODEL_SCREEN", "")
+        if not self.model_screen:
+            raise RuntimeError("LLM_MODEL_SCREEN not set (e.g. qwen2.5:7b-instruct)")
+        self.model_widget = model_widget or os.environ.get("LLM_MODEL_WIDGET", "") or self.model_screen
+        self.model_vision = model_vision or os.environ.get("LLM_MODEL_VISION", "") or self.model_screen
+        self.temperature = temperature
+        self.max_retries = max_retries
+        self.json_mode = os.environ.get("LLM_JSON_MODE", "").lower() in ("1", "true", "yes")
+        timeout = timeout_s if timeout_s is not None else float(os.environ.get("LLM_TIMEOUT", "600"))
+        key = os.environ.get("LLM_API_KEY", "") or "local"
+        self._httpx = httpx
+        self.client = httpx.Client(
+            base_url=self.base_url,
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            timeout=httpx.Timeout(timeout, connect=10.0),
+        )
+        logger.info("LLM mode: OpenAI-compatible (%s, text=%s, vision=%s)",
+                    self.base_url, self.model_screen, self.model_vision)
+
+    # ── 공용 ──
+
+    def _chat(self, messages: list[dict], model: str, max_tokens: int, json_mode: bool = False) -> str:
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        if json_mode and self.json_mode:
+            body["response_format"] = {"type": "json_object"}
+        r = self.client.post("/chat/completions", json=body)
+        if r.status_code == 401:
+            raise RuntimeError("LLM authentication failed (check LLM_API_KEY)")
+        if r.status_code == 429:
+            raise _RateLimited(r.headers.get("retry-after"))
+        if r.status_code >= 400:
+            raise RuntimeError(f"LLM server {r.status_code}: {r.text[:200]}")
+        data = r.json()
+        choices = data.get("choices") or []
+        if not choices:
+            raise RuntimeError(f"LLM server returned no choices: {str(data)[:200]}")
+        msg = choices[0].get("message") or {}
+        content = msg.get("content")
+        if isinstance(content, list):   # 일부 서버는 content parts 배열
+            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+        return content or ""
+
+    def _with_retries(self, fn, what: str) -> str:
+        last: Exception | None = None
+        for attempt in range(1, self.max_retries + 1):
             try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
+                return fn(attempt)
+            except _RateLimited as e:
+                wait = e.retry_after or min(2 ** attempt, 30)
+                logger.warning("[%s] rate limited, waiting %ss", what, wait)
+                time.sleep(wait)
+                last = e
+            except RuntimeError as e:
+                if "authentication" in str(e):
+                    raise
+                last = e
+                logger.warning("[%s] error (attempt %d): %s", what, attempt, e)
+                time.sleep(min(2 ** attempt, 15))
+            except Exception as e:  # 연결 실패 / 타임아웃
+                last = e
+                logger.warning("[%s] error (attempt %d): %s", what, attempt, e)
+                time.sleep(min(2 ** attempt, 15))
+        raise RuntimeError(f"{what} failed after {self.max_retries} attempts: {last}")
 
-        raise json.JSONDecodeError(f"No valid JSON ({len(text)} chars)", text[:200], 0)
+    # ── 인터페이스 ──
+
+    def query_json(self, system_prompt: str, user_prompt: str, model: str | None = None,
+                   max_tokens: int = 4096) -> dict[str, Any]:
+        model = model or self.model_screen
+
+        def _once(attempt: int) -> str:
+            prompt = user_prompt
+            if attempt > 1:
+                prompt += "\n\n[IMPORTANT: Respond ONLY with valid JSON. No explanations.]"
+            text = self._chat(
+                [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
+                model, max_tokens, json_mode=True,
+            )
+            try:
+                return json.dumps(parse_json_response(text))
+            except json.JSONDecodeError as e:
+                raise RuntimeError(f"JSON parse failed: {e}") from e
+
+        return json.loads(self._with_retries(_once, "query_json"))
+
+    def query_text(self, system_prompt: str, user_prompt: str, model: str | None = None,
+                   max_tokens: int = 4096) -> str:
+        model = model or self.model_screen
+        return self._with_retries(
+            lambda _a: self._chat(
+                [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+                model, max_tokens),
+            "query_text",
+        )
+
+    def query_with_image(self, system_prompt: str, user_prompt: str, image_bytes: bytes,
+                         image_media_type: str = "image/jpeg", model: str | None = None,
+                         max_tokens: int = 2048) -> str:
+        import base64
+        model = model or self.model_vision
+        b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": [
+                {"type": "text", "text": user_prompt},
+                {"type": "image_url", "image_url": {"url": f"data:{image_media_type};base64,{b64}"}},
+            ]},
+        ]
+        return self._with_retries(lambda _a: self._chat(messages, model, max_tokens), "query_with_image")
+
+    # ── 진단 (대시보드 설정 화면의 '연결 테스트') ──
+
+    def list_models(self) -> list[str]:
+        r = self.client.get("/models")
+        if r.status_code >= 400:
+            raise RuntimeError(f"GET /models -> {r.status_code}: {r.text[:120]}")
+        data = r.json().get("data") or []
+        return [m.get("id", "") for m in data if isinstance(m, dict)]
+
+    def test_connection(self, with_vision: bool = False) -> dict:
+        """모델 목록 / JSON 응답 / (선택) 비전 응답을 점검해 결과 dict 반환."""
+        out: dict[str, Any] = {"ok": False, "base_url": self.base_url, "model": self.model_screen,
+                               "vision_model": self.model_vision}
+        try:
+            out["models"] = self.list_models()[:50]
+        except Exception as e:  # /models 미지원 서버도 있음 — 치명적 아님
+            out["models_error"] = str(e)[:160]
+        t0 = time.time()
+        try:
+            resp = self.query_json("You reply with strict JSON only.",
+                                   'Reply exactly: {"ok": true, "model_says": "<your model name>"}',
+                                   max_tokens=64)
+            out["json_ok"] = bool(resp.get("ok") is True or "ok" in resp)
+            out["latency_ms"] = int((time.time() - t0) * 1000)
+            out["sample"] = resp
+            out["ok"] = out["json_ok"]
+        except Exception as e:
+            out["error"] = str(e)[:300]
+            return out
+        if with_vision:
+            try:
+                from io import BytesIO
+                from PIL import Image
+                buf = BytesIO()
+                img = Image.new("RGB", (64, 64), (255, 77, 28))
+                img.save(buf, format="JPEG")
+                t1 = time.time()
+                txt = self.query_with_image("Answer in one short word.",
+                                            "What is the dominant color of this image?",
+                                            buf.getvalue(), max_tokens=16)
+                out["vision_ok"] = bool(txt.strip())
+                out["vision_latency_ms"] = int((time.time() - t1) * 1000)
+                out["vision_sample"] = txt.strip()[:60]
+            except Exception as e:
+                out["vision_ok"] = False
+                out["vision_error"] = str(e)[:200]
+        return out
+
+
+class _RateLimited(Exception):
+    def __init__(self, retry_after: str | None):
+        super().__init__("rate limited")
+        try:
+            self.retry_after = float(retry_after) if retry_after else None
+        except ValueError:
+            self.retry_after = None

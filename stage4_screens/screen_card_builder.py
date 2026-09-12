@@ -78,6 +78,7 @@ def build_screen_cards(pages: list[dict], transitions: list[dict]) -> list[dict]
             # 2026-05-01 (C+D): page_id 에 들어간 title 과 같은 cluster 의 다른
             # PNG 들. screenmap_builder 에서 노드 머지 시 aliases 로 보존.
             "title_text": page.get("title_text", ""),
+            "label_candidates": page.get("label_candidates", []),
             "variant_screenshots": page.get("variant_screenshots", []),
             # P0-14: byte-equal screenshot 시그널 propagation (state→page→unit→node).
             "screenshot_md5": page.get("screenshot_md5", ""),

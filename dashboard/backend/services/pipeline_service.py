@@ -282,11 +282,15 @@ def run_pipeline_sync(tour_id: str, device_serial: str = "", from_stage: int = 0
                 except Exception as e:
                     logger.warning("ScreenMap backup failed (proceeding anyway): %s", e)
             llm_mode = os.environ.get("LLM_MODE", "api")
-            stage5_mode = os.environ.get("LLM_STAGE5_MODE", "screenmap_annotate")
-            api_key = config.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-            has_valid_key = api_key and "PLACEHOLDER" not in api_key
+            # 2026-09-12: 공급자 선택 (api / 로컬 OpenAI 호환 / cli / off). 로컬 모델 기본은
+            # 후보 선택형(grounded) — 짧은 프롬프트라 7B 급에서도 안정적.
+            from stage5_annotate.llm_client import is_llm_configured, OPENAI_COMPAT_MODES
+            _default_mode = "grounded" if llm_mode.lower() in OPENAI_COMPAT_MODES else "screenmap_annotate"
+            stage5_mode = os.environ.get("LLM_STAGE5_MODE", "") or _default_mode
+            has_valid_key, _llm_reason = is_llm_configured()
+            logger.info("LLM availability: %s (%s), stage5 mode=%s", has_valid_key, _llm_reason, stage5_mode)
 
-            if has_valid_key or llm_mode == "cli":
+            if has_valid_key:
                 try:
                     update_stage(
                         "LLM_ANNOTATING",
@@ -370,8 +374,8 @@ def run_pipeline_sync(tour_id: str, device_serial: str = "", from_stage: int = 0
                     update_stage("SCREENMAP_GENERATED", error=err_label)
             else:
                 logger.info(
-                    "LLM enrichment skipped (no valid ANTHROPIC_API_KEY) — "
-                    "using wireframe ScreenMap as final output",
+                    "LLM enrichment skipped (%s) — using wireframe ScreenMap as final output",
+                    _llm_reason,
                 )
                 # 2026-09-12 (메가커피 실측): 중복 병합(D: md5/pHash/구조) 과 primitive /
                 # metadata refresh 는 LLM 이 필요 없는데 키 분기 안에만 있어서, 키 없는 실행은

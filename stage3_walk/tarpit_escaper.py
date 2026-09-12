@@ -62,11 +62,19 @@ class TarpitEscaper:
         self.budget = budget if budget is not None else int(os.environ.get("TARPIT_BUDGET", "20"))
         self.calls_used = 0
         self.cache: dict[str, list[dict]] = {}
+        self.llm = None
         if client is not None:
             self.client = client   # 테스트 주입
         else:
+            from stage5_annotate.llm_client import OPENAI_COMPAT_MODES, llm_mode
+            if llm_mode() in OPENAI_COMPAT_MODES:
+                # 로컬 OpenAI 호환 공급자 — 텍스트 전용이라 7B 급으로 충분
+                from stage5_annotate.llm_client import create_client
+                self.llm = create_client(max_retries=1, timeout_s=max(timeout_s, 120.0))
+                self.client = None
+                return
             if not api_key or "PLACEHOLDER" in api_key:
-                raise ValueError("TarpitEscaper requires real ANTHROPIC_API_KEY")
+                raise ValueError("TarpitEscaper requires real ANTHROPIC_API_KEY (or LLM_MODE=openai)")
             try:
                 import anthropic
             except ImportError as e:  # pragma: no cover
@@ -160,13 +168,16 @@ class TarpitEscaper:
                 return []
             self.calls_used += 1
             try:
-                msg = self.client.messages.create(
-                    model=self.model,
-                    max_tokens=400,
-                    system=_SYSTEM_PROMPT,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                text = "".join(getattr(b, "text", "") for b in getattr(msg, "content", []) or [])
+                if self.llm is not None:
+                    text = self.llm.query_text(_SYSTEM_PROMPT, prompt, max_tokens=400)
+                else:
+                    msg = self.client.messages.create(
+                        model=self.model,
+                        max_tokens=400,
+                        system=_SYSTEM_PROMPT,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                    text = "".join(getattr(b, "text", "") for b in getattr(msg, "content", []) or [])
             except Exception as e:  # 네트워크/인증/레이트리밋 — 탐색을 멈추지 않는다
                 logger.warning("[tarpit] LLM call failed: %s", e)
                 return []

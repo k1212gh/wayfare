@@ -145,7 +145,8 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         self.vision_tapper = None
         if os.environ.get("VISION_CLICKER_ENABLED", "").lower() in ("1", "true", "yes"):
             api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-            if api_key and "PLACEHOLDER" not in api_key:
+            from stage5_annotate.llm_client import is_llm_configured as _llm_ok
+            if _llm_ok()[0]:
                 try:
                     from .vision_tapper import VisionTapper
                     self.vision_tapper = VisionTapper(api_key=api_key)
@@ -200,7 +201,8 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
         self.tarpit_escaper = None
         if os.environ.get("TARPIT_LLM_ESCAPE", "").lower() in ("1", "true", "yes"):
             api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-            if api_key and "PLACEHOLDER" not in api_key:
+            from stage5_annotate.llm_client import is_llm_configured as _llm_ok
+            if _llm_ok()[0]:
                 try:
                     from .tarpit_escaper import TarpitEscaper
                     self.tarpit_escaper = TarpitEscaper(api_key=api_key)

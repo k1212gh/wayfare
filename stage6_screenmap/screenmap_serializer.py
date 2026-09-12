@@ -88,7 +88,7 @@ def _serialize_node(node: dict) -> dict:
     # Preserve additional session-added fields when present (wireframe flags,
     # classifier outputs, Vision labeler outputs, etc).
     for opt in ("is_launcher", "is_system", "statically_reachable",
-                "intent_filters", "intent_actions", "intent_categories",
+                "intent_filters", "intent_actions", "intent_categories", "label_candidates", "title_text", "label_source",
                 "parent_activity", "fragment_name",
                 "capture_priority", "capture_reason",
                 "is_external_lib", "external_lib_source", "is_plumbing",

@@ -75,16 +75,25 @@ class VisionTapper:
         timeout_s: float = 30.0,
         original_size: tuple[int, int] = (1080, 2400),
     ):
-        if not api_key or "PLACEHOLDER" in api_key:
-            raise ValueError("VisionTapper requires real ANTHROPIC_API_KEY")
-        try:
-            import anthropic
-        except ImportError as e:
-            raise RuntimeError("anthropic SDK required for VisionTapper") from e
-        self._anthropic = anthropic
-        self.client = anthropic.Anthropic(
-            api_key=api_key, timeout=timeout_s, max_retries=0,
-        )
+        # 2026-09-12: LLM_MODE 가 로컬(OpenAI 호환) 이면 공용 클라이언트의 비전 호출 사용.
+        # api 모드는 기존 anthropic 직접 호출 유지 (Haiku 로 비용 최소화).
+        from stage5_annotate.llm_client import OPENAI_COMPAT_MODES, llm_mode
+        self.llm = None
+        self.client = None
+        if llm_mode() in OPENAI_COMPAT_MODES:
+            from stage5_annotate.llm_client import create_client
+            self.llm = create_client(max_retries=1, timeout_s=max(timeout_s, 120.0))
+        else:
+            if not api_key or "PLACEHOLDER" in api_key:
+                raise ValueError("VisionTapper requires real ANTHROPIC_API_KEY (or LLM_MODE=openai)")
+            try:
+                import anthropic
+            except ImportError as e:
+                raise RuntimeError("anthropic SDK required for VisionTapper") from e
+            self._anthropic = anthropic
+            self.client = anthropic.Anthropic(
+                api_key=api_key, timeout=timeout_s, max_retries=0,
+            )
         self.model = model
         self.budget = budget if budget is not None else int(
             os.environ.get("VISION_BUDGET", "10"),
@@ -176,6 +185,11 @@ class VisionTapper:
             return buf.getvalue(), original, resized
 
     def _call_vision(self, img_bytes: bytes) -> str:
+        if self.llm is not None:   # 로컬 OpenAI 호환 공급자
+            return self.llm.query_with_image(
+                _SYSTEM_PROMPT, "Extract actionable elements from this screen.",
+                img_bytes, image_media_type="image/jpeg", max_tokens=2048,
+            )
         import base64
         b64 = base64.standard_b64encode(img_bytes).decode("ascii")
         msg = self.client.messages.create(

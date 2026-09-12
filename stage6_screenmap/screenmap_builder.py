@@ -121,11 +121,42 @@ def _make_edge_id(from_id: str, to_id: str, trigger_action: str, trigger_widget:
     return f"e_{hashlib.sha256(raw.encode()).hexdigest()[:12]}"
 
 
+def short_activity_name(activity: str, fragment: str = "") -> str:
+    """'co.kr.app.ui.main.MainActivity' → 'Main' (+ ' · Fragment')."""
+    name = (activity or "").rsplit(".", 1)[-1]
+    for suffix in ("Activity", "Fragment"):
+        if name.endswith(suffix) and len(name) > len(suffix):
+            name = name[: -len(suffix)]
+    frag = (fragment or "").rsplit(".", 1)[-1]
+    if frag and frag.upper() != frag:   # 'CLOCKS' 같은 태그는 그대로
+        for suffix in ("Fragment",):
+            if frag.endswith(suffix) and len(frag) > len(suffix):
+                frag = frag[: -len(suffix)]
+    return f"{name} · {frag}" if frag and frag.lower() != name.lower() else name
+
+
+def fallback_label(llm_label: str, unit: dict, activity_name: str, sid: str) -> str:
+    """라벨 대체 체인 (2026-09-12):
+    LLM 라벨 → 제목 텍스트 → 화면에 보이는 첫 텍스트 후보 → 액티비티 짧은 이름 → screen_id.
+    LLM 없이도 'page_xxx' 대신 사람이 읽는 이름이 붙는다."""
+    if llm_label and llm_label.strip():
+        return llm_label.strip()
+    title = (unit.get("title_text") or "").strip()
+    if title:
+        return title
+    cands = unit.get("label_candidates") or []
+    if cands:
+        return str(cands[0]).strip()
+    short = short_activity_name(activity_name, unit.get("fragment") or unit.get("fragment_class") or "")
+    return short or sid
+
+
 def _build_node(sg_node: dict, analysis: dict, unit: dict) -> dict:
     """Build a node in schema format."""
     sid = sg_node.get("screen_id") or analysis.get("screen_id") or unit.get("screen_id", "")
-    label_source = sg_node.get("label") or analysis.get("screen_purpose") or sid
     activity_name = unit.get("activity_name", analysis.get("activity_name", ""))
+    label_source = fallback_label(sg_node.get("label") or analysis.get("screen_purpose") or "",
+                                  unit, activity_name, sid)
     node_type = (
         unit.get("node_type")
         or analysis.get("node_type")
@@ -158,6 +189,7 @@ def _build_node(sg_node: dict, analysis: dict, unit: dict) -> dict:
         "host_activity": host_activity,
         "fragment_class": fragment_class,
         "label": label_source[:50] if label_source else sid,
+        "label_source": "llm" if (sg_node.get("label") or analysis.get("screen_purpose")) else "fallback",
         "functional_category": analysis.get("functional_category", "other"),
         "screen_purpose": analysis.get("screen_purpose", sg_node.get("functional_role", "")),
         "params": sg_node.get("screen_params", {"inputs": [], "outputs": [], "displays": []}),
@@ -211,6 +243,8 @@ def _build_node(sg_node: dict, analysis: dict, unit: dict) -> dict:
         # aliases = 같은 page_id (structure+title) cluster 의 다른 PNG 들. 보통 비어있고,
         # screen_clusterer 가 같은 cluster 안 다른 PNG 변종 보존 시 채워짐 → D 보존.
         "title_text": unit.get("title_text", ""),
+        # 화면에 실제로 보이는 텍스트 후보 — Stage 5 grounded 라벨링이 이 중에서 고른다
+        "label_candidates": list(unit.get("label_candidates") or [])[:8],
         "aliases": [
             {"screenshot_ref": s} for s in (unit.get("variant_screenshots") or [])
         ],

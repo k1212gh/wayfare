@@ -186,6 +186,10 @@ app.include_router(_device_router)
 from dashboard.backend.api.graph import router as _graph_router  # noqa: E402
 app.include_router(_graph_router)
 
+# 2026-09-12: LLM 공급자 설정 (Claude API / 로컬 OpenAI 호환 / off)
+from dashboard.backend.api.settings import router as _settings_router  # noqa: E402
+app.include_router(_settings_router)
+
 
 # Serve frontend static files — only in production (not dev mode with Vite)
 # To enable: set SERVE_STATIC=1

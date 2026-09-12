@@ -7,6 +7,7 @@ Two modes:
 """
 
 import json
+import os
 import logging
 from config import PipelineConfig
 from .llm_client import create_client
@@ -36,6 +37,20 @@ def run_stage5(config: PipelineConfig, mode: str = "screenmap_annotate") -> None
         annotate_screenmap(config)
         return
 
+    if mode == "grounded":
+        # 2026-09-12: 후보 선택형 라벨링 — 화면에 보이는 텍스트 중 하나를 고른다.
+        # 텍스트만 쓰므로 싸고, 작은 로컬 모델에서도 안정적. LLM_STAGE5_VISION=1 이면
+        # 스크린샷 라벨러를 추가로 돌린다 (로컬 비전 모델 있을 때).
+        from .label_picker import pick_labels
+        pick_labels(config)
+        if os.environ.get("LLM_STAGE5_VISION", "").lower() in ("1", "true", "yes"):
+            try:
+                from .vision_labeler import label_screens_with_vision
+                label_screens_with_vision(config)
+            except Exception as e:
+                logger.warning("Vision labeler failed (grounded mode continues): %s", e)
+        return
+
     if mode == "vision_only":
         from .vision_labeler import label_screens_with_vision
         label_screens_with_vision(config)
@@ -45,7 +60,7 @@ def run_stage5(config: PipelineConfig, mode: str = "screenmap_annotate") -> None
         _run_legacy(config)
         return
 
-    raise ValueError(f"Unknown stage5 mode: {mode!r} (use 'screenmap_annotate', 'vision_only', or 'legacy')")
+    raise ValueError(f"Unknown stage5 mode: {mode!r} (use 'screenmap_annotate', 'grounded', 'vision_only', or 'legacy')")
 
 
 def _run_legacy(config: PipelineConfig) -> None:

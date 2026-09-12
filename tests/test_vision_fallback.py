@@ -183,5 +183,8 @@ def test_init_requires_api_key(monkeypatch, caplog):
     # __init__ 의 해당 분기만 검증 — 직접 재현 어려우므로 src 안의 가드 존재 확인
     from stage3_walk import tap_walker as mod
     src = Path(mod.__file__).read_text(encoding="utf-8")
-    assert "ANTHROPIC_API_KEY" in src
-    assert "PLACEHOLDER" in src
+    # 2026-09-12: 키 검사는 llm_client.is_llm_configured (PLACEHOLDER 포함) 로 이동
+    assert "is_llm_configured" in src
+    from stage5_annotate import llm_client as lc
+    monkeypatch.setenv("LLM_MODE", "api")
+    assert lc.is_llm_configured()[0] is False
