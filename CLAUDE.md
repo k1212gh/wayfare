@@ -121,6 +121,9 @@ PYTHONPATH=. python -m pytest -q
 | `LLM_STAGE5_VISION=1` | | grounded 뒤에 스크린샷 라벨러도 실행 |
 | `LLM_TIMEOUT` | 로컬은 600 권장 | |
 
-- API: `GET/PUT /api/settings/llm`, `POST /api/settings/llm/test` (`.env` + 프로세스 환경 동시 갱신)
+- API: `GET/PUT /api/settings/llm`, `POST /api/settings/llm/test`, `POST /api/settings/llm/discover` (host 의 11434/1234/3000/8080 탐지)
+- 지원 서버: Ollama(`:11434/v1`), LM Studio(`:1234/v1`), Open WebUI(`:3000/api` + Bearer 키), 그 외 OpenAI 호환 (vLLM, llama.cpp)
+- 이 PC 에 Ollama 0.34 + `qwen2.5:3b` 설치됨 (2026-09-12, winget). 서버: `%LOCALAPPDATA%\Programs\Ollama\ollama.exe serve`
+- 실측: 3B 로 메가커피 74노드 후보 선택 26초. 자유 라벨은 `LLM_PICK_ALLOW_FREE=1` 일 때만 (기본 고르기 전용)
 - 라벨 대체 체인(LLM 없이도): LLM 라벨 → 제목 텍스트 → 화면 첫 텍스트 후보 → 액티비티 짧은 이름. `label_source` 로 출처 기록.
 - 그래프 뷰 기본: 가로 흐름(LR), 구조 엣지(contains/static_ref/global) 숨김, 배지는 정보가 있을 때만.
