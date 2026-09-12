@@ -40,16 +40,16 @@ type Provider = 'ollama' | 'lmstudio' | 'openwebui' | 'custom';
 
 /** 셋 다 OpenAI 호환 chat/completions — 주소와 인증만 다르다. */
 const PROVIDERS: Record<Provider, { name: string; port: number; path: string; needsKey: boolean; model: string; vision: string; hint: string }> = {
-  ollama: { name: 'Ollama', port: 11434, path: '/v1', needsKey: false, model: 'qwen2.5:7b-instruct', vision: 'qwen2.5vl:7b',
-    hint: '다른 PC: OLLAMA_HOST=0.0.0.0 으로 서버 실행, ollama pull qwen2.5:7b-instruct (비전: qwen2.5vl:7b)' },
+  ollama: { name: 'Ollama', port: 11434, path: '/v1', needsKey: false, model: 'qwen3.5:9b', vision: 'qwen3.5:9b',
+    hint: '다른 PC: OLLAMA_HOST=0.0.0.0 으로 서버 실행, ollama pull qwen3.5:9b (텍스트+비전 겸용, 12GB VRAM 권장 · 8GB 는 qwen3.5:4b)' },
   lmstudio: { name: 'LM Studio', port: 1234, path: '/v1', needsKey: false, model: 'qwen2.5-7b-instruct', vision: 'qwen2.5-vl-7b-instruct',
     hint: 'Developer 탭 → Server 시작, "Serve on Local Network" 켜고 모델을 로드해 두세요' },
-  openwebui: { name: 'Open WebUI', port: 3000, path: '/api', needsKey: true, model: 'qwen2.5:7b-instruct', vision: 'qwen2.5vl:7b',
+  openwebui: { name: 'Open WebUI', port: 3000, path: '/api', needsKey: true, model: 'qwen3.5:9b', vision: 'qwen3.5:9b',
     hint: 'Settings → Account → API Keys 에서 키 발급 후 아래 API 키에 입력 (Docker 기본 포트 3000, 직접 실행은 8080)' },
   custom: { name: '직접 입력', port: 8000, path: '/v1', needsKey: false, model: '', vision: '', hint: 'OpenAI 호환 서버라면 무엇이든 (vLLM, llama.cpp server 등)' },
 };
 
-interface Found { provider: string; port: number; base_url: string; needs_key: boolean; status: number; models: string[]; vision_models: string[]; hint?: string }
+interface Found { provider: string; port: number; base_url: string; needs_key: boolean; status: number; models: string[]; vision_models: string[]; recommended?: string; hint?: string }
 
 const inputStyle: React.CSSProperties = {
   width: '100%', padding: '7px 10px', fontSize: 13, border: '1px solid var(--color-border)',
@@ -160,9 +160,15 @@ export function LLMSettings() {
     const k = (f.provider in PROVIDERS ? f.provider : 'custom') as Provider;
     setProvider(k); setMode('openai'); setBaseUrl(f.base_url); setModels(f.models);
     if (f.models.length) {
-      const pick = f.models.find((m) => !PROVIDERS.ollama.vision.includes(m) && !f.vision_models.includes(m)) || f.models[0];
-      setModelScreen(pick);
-      if (f.vision_models.length) setModelVision(f.vision_models[0]);
+      // 서버가 권장 모델(qwen3.5 등, 텍스트+비전 겸용)을 찾았으면 둘 다 그걸로, 아니면 텍스트 전용 + 비전 모델 분리
+      if (f.recommended) {
+        setModelScreen(f.recommended);
+        setModelVision(f.vision_models.includes(f.recommended) ? f.recommended : (f.vision_models[0] || ''));
+      } else {
+        const pick = f.models.find((m) => !f.vision_models.includes(m)) || f.models[0];
+        setModelScreen(pick);
+        if (f.vision_models.length) setModelVision(f.vision_models[0]);
+      }
     }
     setMsg(f.hint || `${PROVIDERS[k].name} 발견 · 모델 ${f.models.length}개${f.models.length ? '' : ' (모델을 먼저 받아 두세요)'}`);
   };

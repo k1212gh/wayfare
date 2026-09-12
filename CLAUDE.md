@@ -116,14 +116,16 @@ PYTHONPATH=. python -m pytest -q
 |---|---|---|
 | `LLM_MODE` | `api` / `openai` / `off` / `cli` | api=Claude, openai=로컬 OpenAI 호환 서버(Ollama·LM Studio·llama.cpp·vLLM), off=라벨은 화면 텍스트만 |
 | `LLM_BASE_URL` | `http://<다른PC IP>:11434/v1` | openai 모드 필수 |
-| `LLM_MODEL_SCREEN` / `LLM_MODEL_VISION` | `qwen2.5:7b-instruct` / `qwen2.5vl:7b` | 텍스트 / 비전(선택) 모델 |
+| `LLM_MODEL_SCREEN` / `LLM_MODEL_VISION` | `qwen3.5:9b` / `qwen3.5:9b` | 텍스트 / 비전(선택) 모델. Qwen3.5·Gemma 4 는 한 모델로 둘 다 |
 | `LLM_STAGE5_MODE` | 비우면 자동 (로컬→`grounded`, api→`screenmap_annotate`) | `grounded` = 화면에 보이는 텍스트 후보 중 하나를 고르는 라벨링 (환각 없음, 노드당 ~200토큰) |
 | `LLM_STAGE5_VISION=1` | | grounded 뒤에 스크린샷 라벨러도 실행 |
 | `LLM_TIMEOUT` | 로컬은 600 권장 | |
 
 - API: `GET/PUT /api/settings/llm`, `POST /api/settings/llm/test`, `POST /api/settings/llm/discover` (host 의 11434/1234/3000/8080 탐지)
 - 지원 서버: Ollama(`:11434/v1`), LM Studio(`:1234/v1`), Open WebUI(`:3000/api` + Bearer 키), 그 외 OpenAI 호환 (vLLM, llama.cpp)
-- 이 PC 에 Ollama 0.34 + `qwen2.5:3b` 설치됨 (2026-09-12, winget). 서버: `%LOCALAPPDATA%\Programs\Ollama\ollama.exe serve`
-- 실측: 3B 로 메가커피 74노드 후보 선택 26초. 자유 라벨은 `LLM_PICK_ALLOW_FREE=1` 일 때만 (기본 고르기 전용)
+- 이 PC 에 Ollama 0.34 설치됨 (2026-09-12, winget). 서버: `%LOCALAPPDATA%\Programs\Ollama\ollama.exe serve`. 받아둔 모델: qwen3.5:9b, gemma4:12b, qwen2.5:7b-instruct, qwen2.5vl:7b, qwen2.5:3b
+- **모델 벤치 (docs/local_llm_benchmark.md, RTX 4070 SUPER 12GB)**: 후보 선택 정확도 qwen3.5:9b 87% > gemma4:12b 78% > qwen2.5:7b 57% > qwen2.5:3b 26%. 비전 12장 오답 qwen3.5 0 / gemma4 3 / qwen2.5vl 1. 속도 qwen3.5 0.37s/노드·6.6s/장, gemma4 는 3배 느림 → **기본 qwen3.5:9b** (5.5GB, 텍스트+비전 겸용). 3B 는 거의 전부 -1 이라 무의미.
+- Ollama 는 네이티브 `/api/chat` 자동 사용 (`llm_client.py`, `LLM_OLLAMA_NATIVE=0` 로 해제): `/v1` 경로는 thinking 모델(Qwen3.5/Gemma4)에 `think:false` 가 안 먹어 응답이 비고 10배 느림. 벤치 스크립트 `scripts/bench_local_labels.py`, 정답표 `docs/bench_gold_megacoffee.json`.
+- 자유 라벨은 `LLM_PICK_ALLOW_FREE=1` 일 때만 (기본 고르기 전용). 피커는 generic 버튼·24자 초과·지점명(`\S{3,}점`) pick 을 거부.
 - 라벨 대체 체인(LLM 없이도): LLM 라벨 → 제목 텍스트 → 화면 첫 텍스트 후보 → 액티비티 짧은 이름. `label_source` 로 출처 기록.
 - 그래프 뷰 기본: 가로 흐름(LR), 구조 엣지(contains/static_ref/global) 숨김, 배지는 정보가 있을 때만.

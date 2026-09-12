@@ -44,6 +44,9 @@ _PLACEHOLDER = re.compile(r"^(page|act|screen|state|node)_[0-9a-f]{6,}$", re.IGN
 ALLOW_FREE_LABEL = os.environ.get("LLM_PICK_ALLOW_FREE", "").lower() in ("1", "true", "yes")
 _GENERIC = {"이전", "뒤로", "닫기", "취소", "확인", "새로고침", "추가", "더보기", "전체", "홈", "메뉴", "검색",
             "back", "close", "cancel", "ok", "confirm", "refresh", "add", "more", "home", "menu", "search"}
+# 지점명("화성마도산업단지점", "신대방역점")은 제목이 아니다 — 모델이 골라도 거부. 공백 없이 4자 이상 + '점' 으로 끝나는 것만
+# (2026-09-12 벤치에서 Qwen3.5 가 매장 선택 화면의 지점명을 pick). "지점"·"매장 정보" 는 걸리지 않음.
+_STORE_NAME = re.compile(r"^\S{3,}점$")
 
 _SYSTEM_PROMPT = (
     "You name screens of an Android app for a screen-flow map.\n"
@@ -113,7 +116,7 @@ def _apply(batch: list[dict], resp) -> int:
         if isinstance(pick, int) and 0 <= pick < len(cands):
             chosen = cands[pick].strip()
             # 모델이 골랐어도 버튼 문구/긴 문장이면 신뢰하지 않고 대체 라벨 유지
-            if chosen.lower() not in _GENERIC and len(chosen) <= 24:
+            if chosen.lower() not in _GENERIC and len(chosen) <= 24 and not _STORE_NAME.match(chosen):
                 label = chosen
                 n["label_source"] = "picked"
         elif (pick == -1 or pick is None) and ALLOW_FREE_LABEL:

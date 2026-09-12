@@ -386,12 +386,88 @@ class OpenAICompatClient(LLMClient):
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             timeout=httpx.Timeout(timeout, connect=10.0),
         )
-        logger.info("LLM mode: OpenAI-compatible (%s, text=%s, vision=%s)",
-                    self.base_url, self.model_screen, self.model_vision)
+        # 2026-09-12: Ollama 는 네이티브 /api/chat 로 호출한다. 이유:
+        #   - Qwen3.5 / Gemma 4 같은 thinking 모델은 /v1 경로에서 think:false 가 무시돼
+        #     추론 토큰만 쓰고 content 가 비는 문제가 보고됨 (ollama#14809 등).
+        #   - /api/chat 은 think:false, format:"json", images:[b64] 를 정식 지원.
+        # 감지: base_url 의 /v1 을 뗀 루트에 /api/tags 가 200 이면 Ollama. LLM_OLLAMA_NATIVE=0 로 끌 수 있음.
+        self.ollama_root: str | None = None
+        native = os.environ.get("LLM_OLLAMA_NATIVE", "auto").lower()
+        if native not in ("0", "false", "no", "off"):
+            root = self.base_url[:-3] if self.base_url.endswith("/v1") else self.base_url
+            try:
+                r = httpx.get(f"{root}/api/tags", timeout=3.0)
+                if r.status_code == 200 and "models" in r.text:
+                    self.ollama_root = root
+            except Exception:
+                pass
+        logger.info("LLM mode: OpenAI-compatible (%s, text=%s, vision=%s, ollama_native=%s)",
+                    self.base_url, self.model_screen, self.model_vision, bool(self.ollama_root))
 
     # ── 공용 ──
 
+    _THINK_RE = re.compile(r"<think>[\s\S]*?</think>\s*", re.IGNORECASE)
+
+    # 모델 계열별 샘플링 프리셋 (벤더 권장값, 2026-09). temperature 는 분류/추출 작업이라 낮게 고정하고
+    # top_p/top_k/repeat 계열만 권장값을 따른다. 매칭 안 되면 Ollama 기본값.
+    _SAMPLING_PRESETS: tuple[tuple[str, dict[str, Any]], ...] = (
+        ("qwen3", {"top_p": 0.8, "top_k": 20, "min_p": 0.0, "presence_penalty": 1.5}),   # Qwen3/3.5 non-thinking
+        ("gemma", {"top_p": 0.95, "top_k": 64, "repeat_penalty": 1.0}),                    # Gemma 3/4
+        ("qwen2", {"top_p": 0.8, "top_k": 20, "repeat_penalty": 1.05}),                    # Qwen2.5 (+VL)
+        ("llama", {"top_p": 0.9, "repeat_penalty": 1.1}),
+        ("mistral", {"top_p": 0.9}),
+    )
+
+    def _sampling_options(self, model: str, max_tokens: int) -> dict[str, Any]:
+        opts: dict[str, Any] = {"temperature": self.temperature, "num_predict": max_tokens}
+        m = model.lower()
+        for prefix, preset in self._SAMPLING_PRESETS:
+            if m.startswith(prefix):
+                opts.update(preset)
+                break
+        return opts
+
+    def _chat_ollama(self, messages: list[dict], model: str, max_tokens: int, json_mode: bool) -> str:
+        """Ollama /api/chat — OpenAI 형식 messages 를 네이티브 형식으로 변환."""
+        native_msgs: list[dict] = []
+        for m in messages:
+            content = m.get("content")
+            if isinstance(content, list):   # 비전: text parts + image_url(data:...;base64,xxx)
+                text = "".join(part.get("text", "") for part in content if part.get("type") == "text")
+                images = []
+                for part in content:
+                    if part.get("type") == "image_url":
+                        url = (part.get("image_url") or {}).get("url", "")
+                        if "base64," in url:
+                            images.append(url.split("base64,", 1)[1])
+                msg = {"role": m["role"], "content": text}
+                if images:
+                    msg["images"] = images
+                native_msgs.append(msg)
+            else:
+                native_msgs.append({"role": m["role"], "content": content or ""})
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": native_msgs,
+            "stream": False,
+            "think": False,
+            "options": self._sampling_options(model, max_tokens),
+        }
+        if json_mode:
+            body["format"] = "json"
+        r = self._httpx.post(f"{self.ollama_root}/api/chat", json=body,
+                             timeout=self.client.timeout)
+        if r.status_code == 404:
+            raise RuntimeError(f"Ollama: model not found ({model}) — ollama pull {model}")
+        if r.status_code >= 400:
+            raise RuntimeError(f"Ollama {r.status_code}: {r.text[:200]}")
+        data = r.json()
+        content = (data.get("message") or {}).get("content") or ""
+        return self._THINK_RE.sub("", content).strip()
+
     def _chat(self, messages: list[dict], model: str, max_tokens: int, json_mode: bool = False) -> str:
+        if self.ollama_root:
+            return self._chat_ollama(messages, model, max_tokens, json_mode)
         body: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -416,7 +492,8 @@ class OpenAICompatClient(LLMClient):
         content = msg.get("content")
         if isinstance(content, list):   # 일부 서버는 content parts 배열
             content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
-        return content or ""
+        # thinking 모델이 content 안에 <think>…</think> 를 섞어 보내는 서버 대응
+        return self._THINK_RE.sub("", content or "").strip()
 
     def _with_retries(self, fn, what: str) -> str:
         last: Exception | None = None
@@ -489,6 +566,10 @@ class OpenAICompatClient(LLMClient):
     # ── 진단 (대시보드 설정 화면의 '연결 테스트') ──
 
     def list_models(self) -> list[str]:
+        if self.ollama_root:
+            r = self._httpx.get(f"{self.ollama_root}/api/tags", timeout=5.0)
+            if r.status_code == 200:
+                return [m.get("name", "") for m in (r.json().get("models") or []) if m.get("name")]
         r = self.client.get("/models")
         if r.status_code >= 400:
             raise RuntimeError(f"GET /models -> {r.status_code}: {r.text[:120]}")
@@ -498,7 +579,7 @@ class OpenAICompatClient(LLMClient):
     def test_connection(self, with_vision: bool = False) -> dict:
         """모델 목록 / JSON 응답 / (선택) 비전 응답을 점검해 결과 dict 반환."""
         out: dict[str, Any] = {"ok": False, "base_url": self.base_url, "model": self.model_screen,
-                               "vision_model": self.model_vision}
+                               "vision_model": self.model_vision, "ollama_native": bool(self.ollama_root)}
         try:
             out["models"] = self.list_models()[:50]
         except Exception as e:  # /models 미지원 서버도 있음 — 치명적 아님

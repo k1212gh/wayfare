@@ -332,3 +332,54 @@ def test_label_picker_accepts_list_response_and_rejects_generic(tmp_path, monkey
     assert saved["page_b"]["label"] == "page_b"          # 긴 문장 선택은 거부 → 유지
     assert saved["page_b"]["functional_category"] == "form"   # 카테고리는 반영
     assert stats["applied"] == 1
+
+
+def test_ollama_native_path_think_false_and_images(monkeypatch):
+    """Ollama 감지 시 /api/chat 로 think:false + format:json + images 전송, <think> 제거."""
+    seen: list = []
+
+    def fake_post(url, json=None, timeout=None):
+        seen.append((url, json))
+        return httpx.Response(200, json={"message": {"role": "assistant",
+                                                     "content": "<think>hmm</think>{\"nodes\": [{\"id\": \"a\", \"pick\": 0}]}"}})
+
+    monkeypatch.setenv("LLM_BASE_URL", "http://gpu-box:11434/v1")
+    monkeypatch.setenv("LLM_MODEL_SCREEN", "qwen3.5:9b")
+    monkeypatch.setattr(lc, "httpx", lc.httpx if hasattr(lc, "httpx") else httpx, raising=False)
+    import stage5_annotate.llm_client as mod
+    real_httpx = mod.__dict__.get("httpx")
+    c = lc.OpenAICompatClient(max_retries=1, timeout_s=5)
+    c.ollama_root = "http://gpu-box:11434"          # 감지 결과 주입
+    monkeypatch.setattr(c._httpx, "post", fake_post)
+    out = c.query_json("SYS", "USER", max_tokens=77)
+    assert out == {"nodes": [{"id": "a", "pick": 0}]}
+    url, body = seen[-1]
+    assert url == "http://gpu-box:11434/api/chat"
+    assert body["think"] is False and body["format"] == "json" and body["options"]["num_predict"] == 77
+    assert body["options"]["top_k"] == 20 and body["options"]["presence_penalty"] == 1.5   # qwen3.5 프리셋
+    assert body["messages"][0] == {"role": "system", "content": "SYS"}
+    # 비전
+    txt = c.query_with_image("s", "what", b"\xff\xd8x", image_media_type="image/jpeg")
+    url, body = seen[-1]
+    assert body["messages"][1]["images"] and body["messages"][1]["content"] == "what"
+    assert "format" not in body
+    assert real_httpx is not None
+
+
+def test_label_picker_rejects_store_branch_name(tmp_path, monkeypatch):
+    from stage5_annotate import label_picker as lp
+    cfg = _config(tmp_path)
+    monkeypatch.setattr(cfg.__class__, "tour_dir", property(lambda self: tmp_path))
+    monkeypatch.setattr(cfg.__class__, "output_dir", property(lambda self: tmp_path / "output"))
+    path = _screenmap(tmp_path, [
+        {"screen_id": "page_a", "label": "page_a", "label_source": "fallback", "label_candidates": ["화성마도산업단지점", "지점"]},
+        {"screen_id": "page_b", "label": "page_b", "label_source": "fallback", "label_candidates": ["매장 정보", "지점"]},
+    ])
+    monkeypatch.setattr(lp, "_push_progress", lambda *_: None)
+    monkeypatch.setattr(lp, "_raise_if_cancelled", lambda *_: None)
+    client = _PickClient({"nodes": [{"id": "page_a", "pick": 0, "category": "list"}, {"id": "page_b", "pick": 0, "category": "list"}]})
+    stats = lp.pick_labels(cfg, client=client)
+    saved = {n["screen_id"]: n for n in json.loads(path.read_text(encoding="utf-8"))["screen_map"]["graph"]["nodes"]}
+    assert saved["page_a"]["label"] == "page_a"           # 지점명은 거부 → 유지
+    assert saved["page_b"]["label"] == "매장 정보"        # 공백 포함/'점' 아님 → 정상 적용
+    assert stats["applied"] == 1

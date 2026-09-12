@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -103,7 +104,7 @@ def label_screens_with_vision(config: PipelineConfig) -> None:
         _push_progress(config, f"Vision labeling {i + 1}/{len(candidates)}")
         _raise_if_cancelled(config)
 
-        ss_path = _resolve_screenshot(n.get("screenshot_ref", ""))
+        ss_path = _resolve_screenshot(n.get("screenshot_ref", ""), config.tour_dir)
         if not ss_path or not ss_path.exists():
             continue
         try:
@@ -166,12 +167,20 @@ def _should_label(node: dict) -> bool:
     return True
 
 
-def _resolve_screenshot(ref: str) -> Path | None:
+def _resolve_screenshot(ref: str, tour_dir: Path | None = None) -> Path | None:
     if not ref:
         return None
     p = Path(ref)
     if p.is_absolute() and p.exists():
         return p
+    # workspace 를 옮긴 뒤 옛 절대경로가 남은 경우: 투어 폴더 안에서 같은 파일명을 찾는다
+    if tour_dir is not None:
+        for base in ("analysis/screens", "dynamic"):
+            root = Path(tour_dir) / base
+            if root.exists():
+                for cand in root.rglob(p.name):
+                    if cand.is_file():
+                        return cand
     return None
 
 
@@ -245,13 +254,23 @@ def _parse_vision_response(text: str) -> dict | None:
     return None
 
 
+# 로컬 모델(특히 Qwen3.5)은 라벨 끝에 "화면"/"페이지"를 붙이는 버릇이 있다 (2026-09-12 벤치) — 그래프에선 군더더기.
+_LABEL_SUFFIX = re.compile(r"\s*(화면|페이지|화면입니다|screen|page)\s*$", re.IGNORECASE)
+
+
+def _clean_label(label: str) -> str:
+    stripped = _LABEL_SUFFIX.sub("", label).strip()
+    return stripped if len(stripped) >= 2 else label
+
+
 def _apply_vision_annotation(node: dict, ann: dict) -> None:
     cat = (ann.get("functional_category") or "").strip().lower()
     if cat in CATEGORY_ENUM:
         node["functional_category"] = cat
-    label = (ann.get("label") or "").strip()
+    label = _clean_label((ann.get("label") or "").strip())
     if label:
         node["label"] = label[:50]
+        node["label_source"] = "llm"
     purpose = (ann.get("screen_purpose") or "").strip()
     if purpose:
         node["screen_purpose"] = purpose

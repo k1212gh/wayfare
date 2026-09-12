@@ -348,6 +348,13 @@ async def get_screenshot(tour_id: str, screen_id: str):
                         ref_path = Path(ref)
                         if ref_path.exists() and _within(ref_path, tour_dir):
                             return FileResponse(ref_path)
+                        # 2026-09-12: workspace 를 다른 폴더/PC 로 옮기면 ref 가 옛 절대경로로 남는다.
+                        # 투어 폴더 안에서 같은 파일명을 찾아 준다 (analysis/screens, dynamic/**).
+                        for base in ("analysis/screens", "dynamic"):
+                            for cand in (tour_dir / base).rglob(ref_path.name) if (tour_dir / base).exists() else ():
+                                if cand.is_file() and _within(cand, tour_dir):
+                                    return FileResponse(cand)
+                    break
         except Exception:
             pass
 
