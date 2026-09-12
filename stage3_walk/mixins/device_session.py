@@ -314,6 +314,18 @@ class DeviceSessionMixin:
         logger.info("[guard] Left target app (%s -> %s); bouncing back",
                     self.target_package, fg)
         self.trap_stats["app_exit_bounced"] += 1
+        # 2026-09-12 (메가커피 실측): 네이티브 외부 앱 이탈(삼성페이 등) 의 trigger 도 학습.
+        # WebView 외부 링크는 outbound_intent_guard 가 P0-10h 로 학습하지만 이 경로에는
+        # 없어서, 강제 재실행 후 결제 화면이 새 canonical 로 잡히면 "결제하기" (submit
+        # 보너스 8점) 를 다시 눌러 삼성페이에 5회 진입했다. 직전 액션 desc 를 블랙리스트
+        # + 디스크 학습 → score -10 으로 재클릭 차단, 다음 잡에도 반영.
+        learn = getattr(self, "_learn_action_desc", None)
+        hist = getattr(self, "action_history", None) or []
+        if learn and hist:
+            last = hist[-1].get("desc") or hist[-1].get("event_desc") or ""
+            if last:
+                learn(last)
+                self.trap_stats["app_exit_learned"] += 1
 
         for attempt in range(3):
             try:

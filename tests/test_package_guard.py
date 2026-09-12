@@ -131,3 +131,28 @@ if __name__ == "__main__":
     test_guard_noop_when_target_package_unset()
     print()
     print("=== ALL PACKAGE GUARD TESTS PASSED ===")
+
+
+def test_app_exit_learns_trigger_action_desc(monkeypatch):
+    """2026-09-12: 외부 앱(삼성페이 등) 이탈 시 직전 액션 desc 를 블랙리스트 학습."""
+    from collections import defaultdict
+    from stage3_walk.tap_walker import TapWalker
+    w = TapWalker.__new__(TapWalker)
+    w.device_serial = "fake"
+    w.target_package = "com.app"
+    w._allow_external = False
+    w.trap_stats = defaultdict(int)
+    w.action_history = [{"canonical_id": "c1", "desc": "click pay@[1,1][2,2]", "event_desc": "click pay@[1,1][2,2]", "action": "click"}]
+    w.external_blacklist = set()
+    w._learned_action_descs = set()
+    w._learned_path = None
+    w._learned_structures = set()
+    fg = iter(["com.samsung.android.spay", "com.app"])
+    w._foreground_package = lambda: next(fg, "com.app")
+    monkeypatch.setattr("stage3_walk.mixins.device_session.subprocess.run", lambda *a, **k: None)
+    monkeypatch.setattr("stage3_walk.mixins.device_session.time.sleep", lambda *_: None)
+    w._check_app_bounds()
+    assert "click pay@[1,1][2,2]" in w.external_blacklist
+    assert "click pay@[1,1][2,2]" in w._learned_action_descs
+    assert w.trap_stats["app_exit_learned"] == 1
+    assert w.trap_stats["app_exit_bounced"] == 1
