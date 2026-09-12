@@ -121,7 +121,7 @@ PYTHONPATH=. python -m pytest -q
 | `LLM_MODE` | `api` / `openai` / `off` / `cli` | api=Claude, openai=로컬 OpenAI 호환 서버(Ollama·LM Studio·llama.cpp·vLLM), off=라벨은 화면 텍스트만 |
 | `LLM_BASE_URL` | `http://<다른PC IP>:11434/v1` | openai 모드 필수 |
 | `LLM_MODEL_SCREEN` / `LLM_MODEL_VISION` | `gemma4:12b` / `qwen3.5:9b` | 텍스트 / 비전 모델 (정확도 우선 조합). Qwen3.5·Gemma 4 는 한 모델로 둘 다 가능 |
-| `LLM_STAGE5_MODE` | 비우면 자동 (로컬→`grounded`, api→`screenmap_annotate`) | `grounded` = 화면에 보이는 텍스트 후보 중 하나를 고르는 라벨링 (환각 없음, 노드당 ~200토큰) |
+| `LLM_STAGE5_MODE` | 비우면 자동 (로컬→`vision_name`, api→`screenmap_annotate`) | `vision_name` = 스크린샷 자유 생성 + 후보 스냅 (82%), `grounded` = 텍스트 후보 선택만 (비전 모델 없을 때, 62~65%) |
 | `LLM_STAGE5_VISION=1` | | grounded 뒤에 스크린샷 라벨러도 실행 |
 | `LLM_TIMEOUT` | 로컬은 600 권장 | |
 
@@ -129,7 +129,7 @@ PYTHONPATH=. python -m pytest -q
 - 지원 서버: Ollama(`:11434/v1`), LM Studio(`:1234/v1`), Open WebUI(`:3000/api` + Bearer 키), 그 외 OpenAI 호환 (vLLM, llama.cpp)
 - 이 PC 에 Ollama 0.34 설치됨 (2026-09-12, winget). 서버: `%LOCALAPPDATA%\Programs\Ollama\ollama.exe serve`. 받아둔 모델: qwen3.5:9b, gemma4:12b, qwen2.5:7b-instruct, qwen2.5vl:7b, qwen2.5:3b
 - **모델 벤치 (docs/local_llm_benchmark.md, RTX 4070 SUPER 12GB, 2회)**: 후보 선택 lenient 정확도 1차/2차 — qwen3.5:9b 87%/74%, gemma4:12b 78%/82%, qwen2.5:7b 57%/56%, qwen2.5:3b 26% (무의미). 비전 오답 qwen3.5 0/0, gemma4 3/0. 속도 qwen3.5 가 텍스트 2.4~3배 빠름, 5.5GB → **기본 qwen3.5:9b**, 정확도 우선이면 gemma4:12b. 다음 개선은 모델 교체보다 Stage 4 후보 정제(아이콘 설명·알림 배너)와 오버레이 제목 후보.
-- **라벨링 방식 비교 (docs/labeling_method_comparison.md, 2026-09-13)**: 텍스트 후보 선택은 LLM 없는 휴리스틱(65%)과 동률, 텍스트 자유 생성은 더 나쁨; **스크린샷 자유 생성이 74~82%** 로 유일하게 기준선을 넘음(qwen3.5 82%, gemma4 79%). 후보 선택의 실제 기여는 category 분류. 권장: Stage 5 라벨을 스크린샷 자유 생성 + 후보 스냅으로 전환(미구현). 기본 모델은 사용자 결정(정확도 우선)으로 텍스트 gemma4:12b / 비전 qwen3.5:9b.
+- **라벨링 방식 비교 (docs/labeling_method_comparison.md, 2026-09-13)**: 텍스트 후보 선택은 LLM 없는 휴리스틱(65%)과 동률, 텍스트 자유 생성은 더 나쁨; **스크린샷 자유 생성이 74~82%** 로 유일하게 기준선을 넘음(qwen3.5 82%, gemma4 79%). 후보 선택의 실제 기여는 category 분류. → **구현됨**: Stage 5 로컬 기본 모드 `vision_name` (`stage5_annotate/vision_namer.py`, 스크린샷 자유 생성 + 후보 스냅), 실측 82%. 기본 모델은 사용자 결정(정확도 우선)으로 텍스트 gemma4:12b / 비전 qwen3.5:9b.
 - Ollama 는 네이티브 `/api/chat` 자동 사용 (`llm_client.py`, `LLM_OLLAMA_NATIVE=0` 로 해제): `/v1` 경로는 thinking 모델(Qwen3.5/Gemma4)에 `think:false` 가 안 먹어 응답이 비고 10배 느림. 벤치 스크립트 `scripts/bench_local_labels.py`, 정답표 `docs/bench_gold_megacoffee*.json` (투어별).
 - 자유 라벨은 `LLM_PICK_ALLOW_FREE=1` 일 때만 (기본 고르기 전용). 피커는 generic 버튼·24자 초과·지점명(`\S{3,}점`) pick 을 거부.
 - 라벨 대체 체인(LLM 없이도): LLM 라벨 → 제목 텍스트 → 화면 첫 텍스트 후보 → 액티비티 짧은 이름. `label_source` 로 출처 기록.

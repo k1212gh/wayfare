@@ -263,9 +263,10 @@ export function ModelsPage() {
       </div>
 
       <div className="wf-callout plain" style={{ marginTop: 16 }}>
-        <b>어떻게 쓰이나.</b> 로컬 모델의 기본 라벨링은 <b>후보 선택형</b>입니다 — 화면에 실제로 보이는 텍스트 중 하나를 고르기만 해서
-        없는 이름을 지어내지 않고, 화면당 200토큰 안팎이라 9B 모델·12GB GPU 에서 수십 초면 끝납니다.
-        RTX 4070 SUPER 실측(2회): 후보 선택은 <span className="wf-mono">gemma4:12b</span> 가 어려운 화면에서 더 정확(82%), 스크린샷 라벨은 <span className="wf-mono">qwen3.5:9b</span> 가 두 번 다 오답 0 — 그래서 기본값이 둘로 나뉩니다 (docs/local_llm_benchmark.md).
+        <b>어떻게 쓰이나.</b> 로컬 모델의 기본 라벨링은 <b>스크린샷 자유 생성 + 화면 텍스트 스냅</b>입니다 — 비전 모델이 화면을 보고 제목을 짓고,
+        그 제목이 화면에 실제로 있는 텍스트와 겹치면 그 원문으로 바꿔 근거를 남깁니다. 화면당 1~1.5초.
+        실측(34화면): 텍스트 후보 선택 62~65%(LLM 없는 휴리스틱과 동률) vs 스크린샷 자유 생성 74~82% (docs/labeling_method_comparison.md).
+        스크린샷이 없는 화면과 비전 모델이 없는 환경은 텍스트 후보 선택으로 채웁니다. 텍스트 모델은 <span className="wf-mono">gemma4:12b</span>, 비전은 <span className="wf-mono">qwen3.5:9b</span> 가 실측 1위.
       </div>
     </div>
   );

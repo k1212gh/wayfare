@@ -268,7 +268,8 @@ def _apply_vision_annotation(node: dict, ann: dict) -> None:
     if cat in CATEGORY_ENUM:
         node["functional_category"] = cat
     label = _clean_label((ann.get("label") or "").strip())
-    if label:
+    # vision_namer 가 붙인 라벨(전용 프롬프트, 후보 스냅)은 유지 — 여기서는 purpose/description 만 보강
+    if label and node.get("label_source") not in ("vision", "vision_snapped"):
         node["label"] = label[:50]
         node["label_source"] = "llm"
     purpose = (ann.get("screen_purpose") or "").strip()

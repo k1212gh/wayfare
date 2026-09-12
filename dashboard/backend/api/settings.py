@@ -45,7 +45,7 @@ class LLMSettings(BaseModel):
     api_key: str | None = Field(None, description="로컬 서버 키 (비우면 유지, '' 이면 삭제)")
     anthropic_api_key: str | None = Field(None, description="비우면 유지, '' 이면 삭제")
     timeout: int | None = None
-    stage5_mode: str = ""          # '' = 자동 (로컬→grounded, api→screenmap_annotate)
+    stage5_mode: str = ""          # '' = 자동 (로컬→vision_name, api→screenmap_annotate)
     stage5_vision: bool | None = None
     json_mode: bool | None = None
 
@@ -145,7 +145,7 @@ async def put_llm_settings(body: LLMSettings):
             raise HTTPException(400, "timeout 은 10~3600 초")
         updates["LLM_TIMEOUT"] = str(body.timeout)
     s5 = (body.stage5_mode or "").strip()
-    if s5 and s5 not in ("screenmap_annotate", "grounded", "vision_only", "legacy"):
+    if s5 and s5 not in ("vision_name", "screenmap_annotate", "grounded", "vision_only", "legacy"):
         raise HTTPException(400, "stage5_mode 값이 올바르지 않습니다")
     updates["LLM_STAGE5_MODE"] = s5 or None
     if body.stage5_vision is not None:

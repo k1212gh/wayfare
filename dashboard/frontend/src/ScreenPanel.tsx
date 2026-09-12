@@ -58,7 +58,7 @@ export function ScreenPanel({ node, tourId, allNodes = [], allEdges = [], onSele
         <span className="wf-chip" style={{ background: CATEGORY_COLOR[cat] || CATEGORY_COLOR.other, color: '#FFFCF5' }}>{CATEGORY_LABEL[cat] || cat}</span>
         {st && <span className="wf-chip outline" title={st.desc}><span className="wf-dot" style={{ background: st.color }} />{st.label}</span>}
         {node.confidence && <span className="wf-chip outline mono">신뢰도 {node.confidence}</span>}
-        {node.label_source && <span className="wf-chip outline mono" title="라벨 출처">{{ picked: '텍스트 선택', llm: 'LLM', fallback: '자동', candidate: '후보' }[node.label_source as string] || node.label_source}</span>}
+        {node.label_source && <span className="wf-chip outline mono" title="라벨 출처">{{ vision: '스크린샷', vision_snapped: '스크린샷+화면 텍스트', picked: '텍스트 선택', llm: 'LLM', fallback: '자동', candidate: '후보' }[node.label_source as string] || node.label_source}</span>}
         {!hasUI && <span className="wf-chip amber">UI 없음</span>}
       </div>
 

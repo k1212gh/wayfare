@@ -285,7 +285,9 @@ def run_pipeline_sync(tour_id: str, device_serial: str = "", from_stage: int = 0
             # 2026-09-12: 공급자 선택 (api / 로컬 OpenAI 호환 / cli / off). 로컬 모델 기본은
             # 후보 선택형(grounded) — 짧은 프롬프트라 7B 급에서도 안정적.
             from stage5_annotate.llm_client import is_llm_configured, OPENAI_COMPAT_MODES
-            _default_mode = "grounded" if llm_mode.lower() in OPENAI_COMPAT_MODES else "screenmap_annotate"
+            # 2026-09-13: 로컬 기본은 vision_name (스크린샷 자유 생성 + 후보 스냅). 비전을 못 받는 모델이면
+            # vision_namer 가 스스로 중단하고 텍스트 피커가 채우므로 안전.
+            _default_mode = "vision_name" if llm_mode.lower() in OPENAI_COMPAT_MODES else "screenmap_annotate"
             stage5_mode = os.environ.get("LLM_STAGE5_MODE", "") or _default_mode
             has_valid_key, _llm_reason = is_llm_configured()
             logger.info("LLM availability: %s (%s), stage5 mode=%s", has_valid_key, _llm_reason, stage5_mode)

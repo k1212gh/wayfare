@@ -76,6 +76,15 @@ strict = 실제 제목(+정답 번호의 후보 텍스트), lenient = 허용 후
 - 방식과 무관한 개선: Stage 4 후보 추출에서 아이콘 설명("화살표 아이콘")·알림 배너("이름/톤")·외부 앱 잔재를 걸러야 하고,
   오버레이가 헤더를 가릴 때는 그 아래 화면의 제목(부모 노드 라벨)을 후보로 넣어야 한다.
 
+## 5. 적용 (2026-09-13 구현)
+
+- `stage5_annotate/vision_namer.py` — 스크린샷 자유 생성 + 후보 스냅(완전 일치 > 라벨보다 ≤3자 긴 후보 > 라벨의 절반 이상을 덮는 후보).
+  `label_source` = `vision` / `vision_snapped`.
+- Stage 5 모드 `vision_name` = vision_namer → 스크린샷 없는 노드는 label_picker → (옵션) vision_labeler 가 purpose/description 만 보강(라벨은 유지).
+  로컬 LLM 의 기본 모드. 비전을 못 받는 모델이면 두 노드 연속 실패 시 스스로 멈추고 텍스트 피커가 채운다.
+- 실제 파이프라인 재실행(투어 358002fe, qwen3.5:9b 비전): 70 노드 2분 6초, **정답 34개 중 28 일치 (82% strict / 85% lenient)** — 벤치와 동일.
+  이전 기본(텍스트 후보 선택) 62~65% 대비 +17~20%p.
+
 ## 재현
 ```bash
 PYTHONPATH=. python scripts/bench_label_methods.py --tour 358002fe --gold docs/bench_gold_megacoffee_358002fe.json \

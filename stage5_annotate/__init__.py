@@ -1,9 +1,10 @@
 """Stage 5: LLM analysis.
 
-Two modes:
-  - screenmap_annotate (default): reads wireframe ScreenMap from stage6, annotates in place.
-                           Token-efficient (batch + prompt caching).
-  - legacy: per-screen analysis + subflow derivation. Kept for back-compat.
+Modes:
+  - vision_name (local default): 스크린샷을 보고 이름을 짓고 화면 텍스트 후보에 스냅 + 텍스트 피커로 나머지 채움.
+  - grounded: 텍스트 후보 선택만 (비전 모델 없을 때).
+  - screenmap_annotate (Claude API default): 그래프 전체 컨텍스트로 7개 필드 생성.
+  - vision_only / legacy: 이전 경로.
 """
 
 import json
@@ -51,6 +52,24 @@ def run_stage5(config: PipelineConfig, mode: str = "screenmap_annotate") -> None
                 logger.warning("Vision labeler failed (grounded mode continues): %s", e)
         return
 
+    if mode == "vision_name":
+        # 2026-09-13: 스크린샷 자유 생성 + 후보 스냅 (docs/labeling_method_comparison.md — 텍스트 후보 선택 62~65%
+        # vs 스크린샷 자유 생성 74~82%). 스크린샷 없는 노드는 텍스트 피커가, purpose/description 은 (옵션) 비전 라벨러가 채운다.
+        from .vision_namer import name_screens_with_vision
+        from .label_picker import pick_labels
+        try:
+            name_screens_with_vision(config)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Vision namer failed (falling back to text picker): %s", e)
+        pick_labels(config)
+        if os.environ.get("LLM_STAGE5_VISION", "").lower() in ("1", "true", "yes"):
+            try:
+                from .vision_labeler import label_screens_with_vision
+                label_screens_with_vision(config)
+            except Exception as e:
+                logger.warning("Vision labeler failed (vision_name mode continues): %s", e)
+        return
+
     if mode == "vision_only":
         from .vision_labeler import label_screens_with_vision
         label_screens_with_vision(config)
@@ -60,7 +79,7 @@ def run_stage5(config: PipelineConfig, mode: str = "screenmap_annotate") -> None
         _run_legacy(config)
         return
 
-    raise ValueError(f"Unknown stage5 mode: {mode!r} (use 'screenmap_annotate', 'grounded', 'vision_only', or 'legacy')")
+    raise ValueError(f"Unknown stage5 mode: {mode!r} (use 'vision_name', 'grounded', 'screenmap_annotate', 'vision_only', or 'legacy')")
 
 
 def _run_legacy(config: PipelineConfig) -> None:
