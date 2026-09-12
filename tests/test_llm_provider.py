@@ -302,3 +302,11 @@ def test_vision_tapper_and_tarpit_use_local_provider(monkeypatch, tmp_path):
     out = te.suggest([{"text": "메뉴", "content_desc": "", "resource_id": "", "class": "V",
                        "clickable": True, "visible": True}], "Main", set(), [], canonical_id="c1")
     assert out and out[0]["index"] == 0 and calls[-1][0] == "text"
+
+
+def test_generic_button_texts_demoted():
+    from stage4_screens.screen_clusterer import _extract_title, extract_label_candidates
+    state = {"views": [_v(text="이전", y1=200), _v(text="닫기", y1=210), _v(text="매장 상세", y1=300),
+                       _v(text="", y1=3000, y2=3088)]}
+    assert _extract_title(state) == "매장 상세"
+    assert extract_label_candidates(state)[:3] == ["매장 상세", "이전", "닫기"]

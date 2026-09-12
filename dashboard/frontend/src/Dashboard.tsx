@@ -5,6 +5,7 @@ import {
 } from './dashboard/types';
 import { TourCard, Btn } from './dashboard/TourCard';
 import { LiveDeviceMirror } from './dashboard/LiveDeviceMirror';
+import { LLMSettings } from './dashboard/LLMSettings';
 
 interface DashboardProps {
   onOpenGraph: (tourId: string) => void;
@@ -355,6 +356,8 @@ export function Dashboard({ onOpenGraph, onRunStart }: DashboardProps) {
             }
           }}
         />
+
+        <LLMSettings />
 
         <UploadStrip
           dragOver={dragOver}

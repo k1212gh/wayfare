@@ -149,6 +149,10 @@ def _real_label(n: dict) -> str:
     label = (n.get("label", "") or "").strip()
     if not label or label == (n.get("screen_id") or "") or _PLACEHOLDER_LABEL.match(label):
         return ""
+    # 액티비티 이름 등 대체 라벨(label_source=fallback) 은 여러 화면이 같은 값을 갖는다
+    # ("Main"×20). 그대로 두면 Tier 1 이 전부 합친다 → 병합 판정에서는 빈 라벨 취급.
+    if n.get("label_source") == "fallback":
+        return ""
     return label
 
 

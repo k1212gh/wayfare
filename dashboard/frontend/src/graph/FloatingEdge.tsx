@@ -35,11 +35,14 @@ export function FloatingEdge({ id, source, target, style, markerEnd, data }: Edg
   if (!sourceNode || !targetNode) return null;
   const s = getNodeIntersection(sourceNode, targetNode);
   const t = getNodeIntersection(targetNode, sourceNode);
+  const d: any = data || {};
+  // 2026-09-12: 가로 레이아웃(LR) 이면 제어점을 좌우로 — 세로 고정이면 S자 곡선이 된다.
+  const lr = d.rankdir === 'LR';
   const [path, labelX, labelY] = getBezierPath({
     sourceX: s.x, sourceY: s.y, targetX: t.x, targetY: t.y,
-    sourcePosition: Position.Bottom, targetPosition: Position.Top,
+    sourcePosition: lr ? Position.Right : Position.Bottom,
+    targetPosition: lr ? Position.Left : Position.Top,
   });
-  const d: any = data || {};
   const label = d.label as string | undefined;
   return (
     <>

@@ -438,3 +438,10 @@ def test_no_labels_never_merges_on_label_tiers(monkeypatch):
     b = {"screen_id": "page_b", "label": "page_b", "activity": "Main", "structure_str": "s2", "screenshot_ref": "y.png"}
     edges = [{"from": "page_a", "to": "z", "kind": "navigate"}, {"from": "page_b", "to": "w", "kind": "navigate"}]
     assert sm._is_mergeable(a, b, edges, 0.85, 4) is False
+
+
+def test_fallback_label_is_not_a_merge_key():
+    """2026-09-12: 액티비티 이름 대체 라벨('Main')은 병합 키가 아니다."""
+    from stage6_screenmap import semantic_merge as sm
+    assert sm._real_label({"screen_id": "page_a", "label": "Main", "label_source": "fallback"}) == ""
+    assert sm._real_label({"screen_id": "page_a", "label": "매장 정보", "label_source": "picked"}) == "매장 정보"

@@ -25,6 +25,11 @@ _TIME_RE = re.compile(r"^\d{1,2}:\d{2}(\s*[AP]M)?$")
 _STATUS_BAR_RATIO = 0.035   # 이 위쪽은 status bar 로 보고 무시
 _TITLE_ZONE_RATIO = 0.15    # 이 안쪽 텍스트만 제목 후보
 _TITLE_MIN_Y = 250          # 작은 해상도 폴백
+# 제목이 되기 어려운 버튼/내비 문구 — 후보 순서를 뒤로 미룬다 (제외는 안 함)
+_GENERIC_TEXTS = {
+    "이전", "뒤로", "닫기", "취소", "확인", "새로고침", "추가", "더보기", "전체", "홈", "메뉴",
+    "back", "close", "cancel", "ok", "confirm", "refresh", "add", "more", "home", "menu", "search", "검색",
+}
 
 
 def _screen_height(views: list[dict]) -> int:
@@ -62,7 +67,9 @@ def extract_label_candidates(state: dict, k: int = 8) -> list[str]:
     LLM 은 이 후보 중 하나를 '고르기만' 하고(환각 없음), LLM 이 없으면 첫 후보를 라벨로 쓴다.
     후보 순서: 제목 영역(상단 15%) 의 TextView text 우선 → 그 아래 텍스트.
     """
-    views = state.get("cleaned_views") or state.get("views") or []
+    # view_tree_cleaner 가 bounds 를 지우므로 좌표가 필요한 여기서는 원본 views 를 쓴다
+    # (cleaned_views 만 쓰면 모든 뷰가 y=9999 로 탈락 → 제목이 항상 빈 문자열이던 원인).
+    views = state.get("views") or state.get("cleaned_views") or []
     h = _screen_height(views)
     top_cut = max(int(h * _STATUS_BAR_RATIO), 60) if h else 60
     title_cut = max(int(h * _TITLE_ZONE_RATIO), _TITLE_MIN_Y) if h else _TITLE_MIN_Y
@@ -83,12 +90,14 @@ def extract_label_candidates(state: dict, k: int = 8) -> list[str]:
         if isinstance(b, str):
             m = re.match(r"\[(\d+),", b)
             x1 = int(m.group(1)) if m else 0
-        # (영역, 실제 text 우선, y, x)
-        rows.append((zone, 0 if is_text else 1, y1, x1, text))
+        # (영역, 버튼성 문구 뒤로, 실제 text 우선, y, x)
+        generic = 1 if text.strip().lower() in _GENERIC_TEXTS else 0
+        longish = 1 if len(text) > 16 else 0   # 문장형 안내문보다 짧은 제목 우선
+        rows.append((zone, generic, longish, 0 if is_text else 1, y1, x1, text))
     rows.sort()
     out: list[str] = []
     seen: set[str] = set()
-    for _z, _t, _y, _x, text in rows:
+    for _z, _g, _l, _t, _y, _x, text in rows:
         key = text.lower()
         if key in seen:
             continue
@@ -123,7 +132,7 @@ def _extract_title(state: dict, max_y: int = 250) -> str:
 
     제목 같은 화면 → 같은 page_id, 제목 다른 화면 → 별 page_id (C 분리).
     """
-    views = state.get("cleaned_views") or state.get("views") or []
+    views = state.get("views") or state.get("cleaned_views") or []   # bounds 필요 → 원본
     h = _screen_height(views)
     # 2026-09-12: 고정 250px → 화면 높이 비율. status bar 영역은 제외.
     top_cut = max(int(h * _STATUS_BAR_RATIO), 60) if h else 60
@@ -137,9 +146,9 @@ def _extract_title(state: dict, max_y: int = 250) -> str:
         text = (v.get("text") or "").strip() or (v.get("content_desc") or "").strip()
         if _is_noise_text(text):
             continue
-        candidates.append((y1, text))
+        candidates.append((1 if text.strip().lower() in _GENERIC_TEXTS else 0, 1 if len(text) > 16 else 0, y1, text))
     candidates.sort()
-    return candidates[0][1] if candidates else ""
+    return candidates[0][3] if candidates else ""
 
 
 def cluster_screens_to_pages(

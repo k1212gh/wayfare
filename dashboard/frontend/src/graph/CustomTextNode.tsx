@@ -28,7 +28,7 @@ export function CustomTextNode({ data }: { data: any }) {
         cursor: 'pointer',
         opacity: prioOpacity,
     }}>
-      <Handle type="target" position={Position.Top} style={{ opacity: 0, pointerEvents: 'none' }} />
+      <Handle type="target" position={data.rankdir === 'LR' ? Position.Left : Position.Top} style={{ opacity: 0, pointerEvents: 'none' }} />
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', width: '100%', gap: '4px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', width: '100%', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', overflow: 'hidden' }}>
@@ -38,8 +38,14 @@ export function CustomTextNode({ data }: { data: any }) {
             </span>
           </div>
         </div>
+        {data.subLabel && (
+          <span style={{ fontSize: '9px', color: '#9ca3af', fontFamily: "'JetBrains Mono', monospace", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+            {data.subLabel}
+          </span>
+        )}
+        {((status && !['probed', 'resolved', 'enriched'].includes(status)) || (data.functional_category && data.functional_category !== 'other')) && (
         <div style={{ display: 'flex', gap: '6px', marginTop: '2px', flexWrap: 'wrap', alignItems: 'center' }}>
-          {status && (
+          {status && !['probed', 'resolved', 'enriched'].includes(status) && (
             <div style={{
               padding: '2px 6px', fontSize: '9px', fontWeight: 600,
               background: `${data.STATUS_BORDER?.[status] || '#9ca3af'}1A`, 
@@ -52,16 +58,19 @@ export function CustomTextNode({ data }: { data: any }) {
               {status.toUpperCase()}
             </div>
           )}
+          {data.functional_category && data.functional_category !== 'other' && (
           <span style={{
             padding: '2px 6px', fontSize: '9px', fontWeight: 600, borderRadius: '4px',
             background: color, color: '#fff', flexShrink: 0,
             display: 'inline-flex', alignItems: 'center', border: `1px solid ${color}`
           }}>
-            {(data.functional_category || 'other').toUpperCase()}
+            {data.functional_category.toUpperCase()}
           </span>
+          )}
         </div>
+        )}
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ opacity: 0, pointerEvents: 'none' }} />
+      <Handle type="source" position={data.rankdir === 'LR' ? Position.Right : Position.Bottom} style={{ opacity: 0, pointerEvents: 'none' }} />
     </div>
   );
 }

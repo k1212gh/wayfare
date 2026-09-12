@@ -22,6 +22,7 @@ import { FloatingEdge } from './graph/FloatingEdge';
 import { ScreenshotNode } from './graph/ScreenshotNode';
 import { CustomTextNode } from './graph/CustomTextNode';
 import { NODE_SIZES, NODE_SIZE_LABEL, NodeSize } from './graph/nodeSize';
+import { displayLabel, subLabel } from './graph/displayLabel';
 
 interface ScreenMapViewProps {
   graph: { entry_node: string; nodes: any[]; edges: any[] };
@@ -64,6 +65,7 @@ function buildLayout(
   tourId: string,
   spacingScale: number = 1.0,
   nodeSize: NodeSize = 'md',
+  rankdir: 'TB' | 'LR' = 'LR',
 ) {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
@@ -71,7 +73,9 @@ function buildLayout(
   const nodeW = showScreenshots ? sizeDims.screenshot.w : sizeDims.text.w;
   const nodeH = showScreenshots ? sizeDims.screenshot.sectionH : sizeDims.text.h;
   g.setGraph({
-    rankdir: 'TB',
+    // 2026-09-12: 기본 가로(LR). 세로로 긴 폰 카드를 세로 랭크로 쌓으면 곡선이 길어지고
+    // 노드가 어긋나 보인다. 가로 흐름은 스토리보드처럼 읽힌다. 툴바에서 토글.
+    rankdir,
     nodesep: sizeDims.dagre.nodesep * spacingScale,
     ranksep: sizeDims.dagre.ranksep * spacingScale,
   });
@@ -212,7 +216,9 @@ function buildLayout(
     flowNodes.push({
       id: n.screen_id,
       data: {
-        label: n.label || n.screen_id,
+        label: displayLabel(n),
+        subLabel: subLabel(n, displayLabel(n)),
+        rankdir,
         prioBadge,
         screen_purpose: n.screen_purpose,
         screen_id: n.screen_id,
@@ -306,6 +312,7 @@ function buildLayout(
       type: 'floating',
       data: {
         edgeId,
+        rankdir,
         kind,
         confidence,
         label,
@@ -402,6 +409,7 @@ export function ScreenMapView({
   onSelectedEdgeDataChange,
 }: ScreenMapViewProps) {
   const [showScreenshots, setShowScreenshots] = useState(false);
+  const [rankdir, setRankdir] = useState<'TB' | 'LR'>('LR');
   const [showEdgeLabels, setShowEdgeLabels] = useState(false);
   const [edgeFiltersOpen, setEdgeFiltersOpen] = useState(false);
   const [graphMode, setGraphMode] = useState<GraphMode>('flow');
@@ -521,7 +529,9 @@ export function ScreenMapView({
   //   별모양 만들어 시각적 노이즈. toolbar 의 chip 클릭으로 보이게 가능.
   //   static_ref / global 도 정적 분석 부산물 — 같은 이유.
   const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(
-    new Set()
+    // 2026-09-12: 주석의 의도대로 구조 엣지(contains/static_ref/global)는 기본 숨김.
+    // 빈 Set 이던 초기값 탓에 메가커피 그래프에서 contains 45개가 hub star 를 그렸다.
+    new Set(['contains', 'static_ref', 'global'])
   );
   const filteredEdges = useMemo(
     () => graph.edges.filter((e: any) => {
@@ -574,8 +584,8 @@ export function ScreenMapView({
     // Tag the nodes array with entry_node_id so buildLayout can highlight it
     const taggedNodes: any = filteredNodes.slice();
     taggedNodes.entry_node_id = graph.entry_node;
-    return buildLayout(taggedNodes, filteredEdges, showScreenshots, showEdgeLabels, openEdgeDetail, tourId, spacingScale, nodeSize);
-  }, [filteredNodes, filteredEdges, showScreenshots, showEdgeLabels, openEdgeDetail, tourId, graph.entry_node, spacingScale, nodeSize]);
+    return buildLayout(taggedNodes, filteredEdges, showScreenshots, showEdgeLabels, openEdgeDetail, tourId, spacingScale, nodeSize, rankdir);
+  }, [filteredNodes, filteredEdges, showScreenshots, showEdgeLabels, openEdgeDetail, tourId, graph.entry_node, spacingScale, nodeSize, rankdir]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(layout.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(layout.edges);
@@ -883,6 +893,9 @@ export function ScreenMapView({
               </button>
             ))}
           </div>
+          <PanelBtn active={rankdir === 'LR'} onClick={() => setRankdir(rankdir === 'LR' ? 'TB' : 'LR')}>
+            {rankdir === 'LR' ? '가로 흐름' : '세로 흐름'}
+          </PanelBtn>
           <PanelBtn active={showScreenshots} onClick={() => setShowScreenshots(!showScreenshots)}>
             {showScreenshots ? 'Screenshots On' : 'Screenshots Off'}
           </PanelBtn>

@@ -34,7 +34,7 @@ export function ScreenshotNode({ data }: { data: any }) {
         boxShadow: data.isEntry ? `0 0 0 2px ${STATUS_DOT.entry}` : undefined,
       }}
     >
-      <Handle id="t" type="target" position={Position.Top} style={{ opacity: 0, pointerEvents: 'none' }} />
+      <Handle id="t" type="target" position={data.rankdir === 'LR' ? Position.Left : Position.Top} style={{ opacity: 0, pointerEvents: 'none' }} />
       <div style={{ height: dims.sectionH, background: '#f5f5f5', overflow: 'hidden', position: 'relative' }}>
         {!imgError ? (
           <img src={screenshotUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center', background: '#000' }}
@@ -66,11 +66,18 @@ export function ScreenshotNode({ data }: { data: any }) {
         )}
       </div>
       <div style={{ padding: '6px 8px' }}>
-        <div style={{ fontSize: '10px', fontWeight: 600, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
+        <div style={{ fontSize: '11px', fontWeight: 600, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
           {data.label || data.screen_id}
         </div>
+        {data.subLabel && (
+          <div style={{ fontSize: '9px', color: '#9ca3af', fontFamily: "'JetBrains Mono', monospace", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
+            {data.subLabel}
+          </div>
+        )}
+        {/* 2026-09-12: probed/resolved 상태와 other 카테고리는 정보량이 없어 배지 생략 (상태는 좌상단 점) */}
+        {((status && !['probed', 'resolved', 'enriched'].includes(status)) || (data.functional_category && data.functional_category !== 'other')) && (
         <div style={{ display: 'flex', gap: '6px', marginTop: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
-          {status && (
+          {status && !['probed', 'resolved', 'enriched'].includes(status) && (
             <div style={{
               padding: '2px 6px', fontSize: '9px', fontWeight: 600,
               background: `${statusColor}1A`, color: statusColor, borderRadius: '4px',
@@ -81,16 +88,19 @@ export function ScreenshotNode({ data }: { data: any }) {
               {status.toUpperCase()}
             </div>
           )}
+          {data.functional_category && data.functional_category !== 'other' && (
           <span style={{
             padding: '2px 6px', fontSize: '9px', fontWeight: 600, borderRadius: '4px',
             background: color, color: '#fff', fontFamily: "'Inter', sans-serif",
             display: 'inline-flex', alignItems: 'center', border: `1px solid ${color}`
           }}>
-            {(data.functional_category || 'other').toUpperCase()}
+            {data.functional_category.toUpperCase()}
           </span>
+          )}
         </div>
+        )}
       </div>
-      <Handle id="s" type="source" position={Position.Bottom} style={{ opacity: 0, pointerEvents: 'none' }} />
+      <Handle id="s" type="source" position={data.rankdir === 'LR' ? Position.Right : Position.Bottom} style={{ opacity: 0, pointerEvents: 'none' }} />
     </div>
     </InstantTooltip>
   );
