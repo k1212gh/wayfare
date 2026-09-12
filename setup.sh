@@ -2,7 +2,7 @@
 # ScreenAtlas — 새 기기 자동 셋업 스크립트
 # 사용법: git clone 후 이 스크립트 실행
 #   git clone https://github.com/YOUR_GITHUB_ID/screenatlas.git
-#   cd screenatlas && git checkout feature/ScreenMap-POC
+#   cd screenatlas
 #   bash setup.sh
 
 set -e

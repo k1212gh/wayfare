@@ -209,7 +209,7 @@ score -= visit_count * 2.5
 
 ### list_view redundancy penalty
 
-`list_view_detector.py`는 반복 sibling pattern을 list_view으로 마킹한다. 첫 항목은 탐색하지만 이후 같은 list_view group의 N번째 항목은 점점 큰 penalty를 준다.
+`list_view_detector.py`는 반복 sibling pattern을 list_view로 마킹한다. 첫 항목은 탐색하지만 이후 같은 list_view group의 N번째 항목은 점점 큰 penalty를 준다.
 
 목적:
 

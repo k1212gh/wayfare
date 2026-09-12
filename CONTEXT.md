@@ -6,7 +6,6 @@
 # 1. Clone
 git clone https://github.com/YOUR_GITHUB_ID/screenatlas.git
 cd screenatlas
-git checkout feature/ScreenMap-POC
 
 # 2. Setup (의존성 + .env + demo)
 bash setup.sh        # Linux/Mac/Git Bash
@@ -78,9 +77,9 @@ NOTION_TOKEN=ntn_your_token
 - `.env` — 환경 설정 (gitignore, 기기별)
 - `stage6_screenmap/__init__.py` — ScreenMap 생성 (edge injection)
 
-### GitLab
+### GitHub
 - Repo: https://github.com/YOUR_GITHUB_ID/screenatlas
-- Branch: `feature/ScreenMap-POC`
+- Branch: `main`
 - 최근 커밋: 10개
 
 ### 노션

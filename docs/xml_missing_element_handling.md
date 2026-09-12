@@ -103,4 +103,3 @@ binary APK는 androguard, decoded XML은 `xml.etree`로 처리하며 dispatch는
 ## 참고
 
 - 관련 정적 분석 단계 전체 흐름: [stage3_coalesce_prevention.md](stage3_coalesce_prevention.md)
-- 파이프라인 단계 정의: [파이프라인_단계별_프로세스_정의서.pdf](../../파이프라인_단계별_프로세스_정의서.pdf)

@@ -1,7 +1,8 @@
 """/api/tours/{id}/run endpoint — per-device locking integration tests.
 
 Sets up a tmp WORKSPACE_ROOT, drops in pre-staged tour dirs with the
-required pipeline_state.json, mocks the background-thread launch, and
+required pipeline_state.json, mocks the background-thread launch (module-level `threading` attr only,
+so starlette TestClient can still spawn its own portal thread), and
 verifies that two tours on different serials both succeed while two tours
 on the same serial collide with 409.
 """
@@ -50,9 +51,9 @@ def _client():
 
 def test_two_tours_on_different_serials_both_succeed(staged_workspace):
     """tour-alpha on emulator + tour-beta on real device → both 200."""
-    with patch("dashboard.backend.api.tours.threading.Thread") as fake_thread:
+    with patch("dashboard.backend.api.tours.threading") as fake_threading:
         # Don't actually launch the pipeline — just record the call
-        fake_thread.return_value.start.return_value = None
+        fake_threading.Thread.return_value.start.return_value = None
         client = _client()
         r1 = client.post(
             "/api/tours/tour-alpha/run", params={"device_serial": "emulator-5554"},
@@ -74,8 +75,8 @@ def test_two_tours_on_different_serials_both_succeed(staged_workspace):
 
 def test_same_serial_second_call_returns_409(staged_workspace):
     """Two different tours targeting the same serial → second is 409."""
-    with patch("dashboard.backend.api.tours.threading.Thread") as fake_thread:
-        fake_thread.return_value.start.return_value = None
+    with patch("dashboard.backend.api.tours.threading") as fake_threading:
+        fake_threading.Thread.return_value.start.return_value = None
         client = _client()
         r1 = client.post(
             "/api/tours/tour-alpha/run", params={"device_serial": "emulator-5554"},
@@ -94,8 +95,8 @@ def test_same_serial_second_call_returns_409(staged_workspace):
 
 def test_same_tour_on_two_serials_blocked(staged_workspace):
     """Re-running the SAME tour_id on a different device must also 409."""
-    with patch("dashboard.backend.api.tours.threading.Thread") as fake_thread:
-        fake_thread.return_value.start.return_value = None
+    with patch("dashboard.backend.api.tours.threading") as fake_threading:
+        fake_threading.Thread.return_value.start.return_value = None
         client = _client()
         r1 = client.post(
             "/api/tours/tour-alpha/run", params={"device_serial": "emulator-5554"},
@@ -112,10 +113,10 @@ def test_same_tour_on_two_serials_blocked(staged_workspace):
 def test_empty_serial_resolves_to_first_device(staged_workspace):
     """device_serial='' → resolves first attached device, locks under that
     real serial (so a 2nd empty-serial caller hitting same device → 409)."""
-    with patch("dashboard.backend.api.tours.threading.Thread") as fake_thread, \
+    with patch("dashboard.backend.api.tours.threading") as fake_threading, \
          patch("dashboard.backend.api.tours._get_first_device",
                return_value="emulator-5554"):
-        fake_thread.return_value.start.return_value = None
+        fake_threading.Thread.return_value.start.return_value = None
         client = _client()
         r1 = client.post("/api/tours/tour-alpha/run")
         r2 = client.post("/api/tours/tour-beta/run")  # also empty serial
@@ -128,7 +129,7 @@ def test_empty_serial_resolves_to_first_device(staged_workspace):
 
 def test_no_attached_device_returns_503(staged_workspace):
     """Empty serial + zero attached devices → 503 (not silently succeed)."""
-    with patch("dashboard.backend.api.tours.threading.Thread"), \
+    with patch("dashboard.backend.api.tours.threading"), \
          patch("dashboard.backend.api.tours._get_first_device", return_value=""):
         client = _client()
         r = client.post("/api/tours/tour-alpha/run")

@@ -136,4 +136,4 @@
 
 **핵심 성과**: "동적 탐색으로 2~7 노드"에서 "**정적 86+노드 + 의미 있는 엣지 분류**"로 확장. 탐색이 실패해도 최소한 정적 그래프는 보임. 엣지가 이제 **의미를 가짐** (단순 click이 아니라 navigate/two_hop/deep link/pending intent 등). 프론트 UX가 실시간 탐색 진행을 시각화.
 
-**화면 지도로서의 가치**: AI 에이전트가 "이 앱의 Settings 화면에 도달하려면?" 같은 질문에 ScreenMap를 쿼리해 답할 수 있는 구조. navigate 엣지로 경로 탐색, contains로 Fragment 계층, overlay로 Dialog 구분, intent_filter로 외부 진입점 모두 명확.
+**화면 지도로서의 가치**: AI 에이전트가 "이 앱의 Settings 화면에 도달하려면?" 같은 질문에 ScreenMap을 쿼리해 답할 수 있는 구조. navigate 엣지로 경로 탐색, contains로 Fragment 계층, overlay로 Dialog 구분, intent_filter로 외부 진입점 모두 명확.

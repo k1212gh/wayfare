@@ -1,12 +1,11 @@
 # ScreenAtlas
 
-APK를 입력받아 앱의 화면 흐름을 Screen Map로 자동 추출하고 웹에서 시각화하는 로컬 자동화 툴.
+APK를 입력받아 앱의 화면 흐름을 Screen Map으로 자동 추출하고 웹에서 시각화하는 로컬 자동화 툴.
 
-## 출처 / 참고 (Disambiguation)
+## 출처 / 참고
 
 - **차용 알고리즘**: `navigator/journey_planner.py`의 3-stage 경로 추론은 **PoG (Paths-over-Graph)** 논문 컨셉을 차용 (`journey_planner.py:1-7` 참고).
 - **나머지 컴포넌트는 모두 자체 설계**: TapWalker (Unseen Scoring + 3단 Back-Gesture Ladder), 3-Level Screen Signature (L1-Authoritative), Activity Classifier (A/B/C 5규칙), Stage 6 9단계 ETL, 5-tier Coalesce Cascade (C → D → A → A+ → B), Manifest Scan + multi-polling, focus_mismatch 관용 모드, Framework-aware ViewTreeReader 4종.
-- ⚠ **이름 충돌 주의**: 동명의 ScreenAtlas 논문(arxiv:2601.17418, 2026)이 존재하나, 본 프로젝트는 그 논문 알고리즘과 **독립적인 자체 PoC 구현**임. 컨셉(앱 ScreenMap로 LLM agent 가이드)이 겹치지만 알고리즘 차용 없음.
 
 ## 디렉토리 구조
 

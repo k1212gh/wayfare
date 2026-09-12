@@ -1,24 +1,35 @@
 # ScreenAtlas — Claude Code 프로젝트 설정
 
-> **이름 변경 (2026-04-27)**: 이전 명칭 ScreenAtlas → ScreenAtlas. 디렉토리 이름 `screenatlas/`는 옵션 B 정책상 유지. 이름 충돌 회피 사유: 동명 ScreenAtlas 논문(arxiv:2601.17418)과 별개 프로젝트임을 명시.
-
-
 ## 프로젝트 개요
-APK를 입력받아 앱 화면 흐름을 Screen Map로 자동 추출하는 파이프라인.
-GitLab: https://github.com/YOUR_GITHUB_ID/screenatlas (branch: feature/ScreenMap-POC)
+APK를 입력받아 앱 화면 흐름을 Screen Map(화면 지도)으로 자동 추출하는 파이프라인.
+GitHub: https://github.com/YOUR_GITHUB_ID/screenatlas
 
-## ⚠️ Canonical 작업 폴더 — 반드시 확인
-- **이 파일이 위치한 디렉터리 (git 레포 루트)만이 유일한 canonical 소스**
-- git 미부착 파생본(`.\` 같은 팀 공유 복사본)이 존재할 수 있음 — **stale로 취급하고 읽지도 쓰지도 말 것**
-- 세션 시작·재개 시 다음 세 값이 일치하는지 첫 메시지에서 cross-check하고 사용자에게 보고:
-  1. shell CWD (`pwd`)
-  2. `git rev-parse --show-toplevel`
-  3. 이 `CLAUDE.md`의 위치
-- 셋이 다르면 즉시 멈추고 사용자에게 확인 요청. 절대 추정으로 진행하지 말 것.
+## 용어 사전 (코드 식별자 ↔ 개념)
+| 식별자 | 개념 |
+|---|---|
+| `TapWalker` (`stage3_walk/tap_walker.py`) | 자체 동적 탐색 엔진 (Unseen Scoring + 3단 Back-Gesture Ladder) |
+| `RevisitWalker` | 2차 재방문 탐색 (vision 보강) |
+| `ScreenSigner` / `ScreenSignature` | 3-Level 화면 서명 (구조 / pHash / GNN, L1-Authoritative) |
+| `ViewTreeReader` 4종 (`view_tree_readers/`) | XML / Compose / Flutter / RN 프레임워크별 뷰 트리 추출 |
+| `ScreenCard` (`stage4_screens/screen_card_builder.py`) | LLM 입력용 화면 단위 패키지 |
+| `ScreenMap` (`stage6_screenmap/`, `screen_map.json`) | 최종 산출물 그래프 |
+| `Wireframe` | 정적 분석 기반 뼈대 그래프 (Static Wireframe) |
+| `Coalesce Cascade` | 5단계 중복 화면 병합 (C → D → A → A+ → B) |
+| `Manifest Scan` (`mixins/scan.py`) | 미방문 Activity 직접 실행 스캔 |
+| `JourneyPlanner` (`navigator/journey_planner.py`) | PoG 스타일 3단계 태스크 경로 추론 |
+| `WidgetCache` (`cache/widget_cache.py`) | 크로스앱 UI 패턴 SQLite 캐시 |
+| `TouchLog` (`tracing/touch_log.py`) | JSONL 실행 기록 |
+| `Tour` (`tour_id`, `workspace/{tour_id}/`, `/api/tours`) | APK 1건에 대한 분석 실행 단위 (앱 투어) |
+| `screen_id` / `screen_*` | 캡처된 화면 식별자와 화면 집합 (`state_*.json`, `states/`, `state_str`, `structure_str` 는 DroidBot 호환 포맷이라 그대로 둠) |
+| `Widget` (`widget_id`, `widgets`, `trigger_widget`) | 화면 안의 조작 가능한 UI 요소 (lxml `Element`, DOM API 이름은 별개) |
+
+## ⚠️ Canonical 작업 폴더
+- 이 파일이 위치한 디렉터리 (git 레포 루트)만이 유일한 canonical 소스
+- 세션 시작·재개 시 `pwd`, `git rev-parse --show-toplevel`, 이 파일 위치가 일치하는지 확인
 
 ## 환경
 - Python 3.12, Node 24, Windows/Linux
-- .env 파일에 ANTHROPIC_API_KEY, NOTION_TOKEN 등 설정
+- .env 파일에 ANTHROPIC_API_KEY 등 설정
 - 실기기(ADB) 또는 에뮬레이터 연결 필요 (탐색 시)
 
 ## 코드 규칙
@@ -32,19 +43,13 @@ GitLab: https://github.com/YOUR_GITHUB_ID/screenatlas (branch: feature/ScreenMap
 
 ### 서버 시작
 ```bash
-cd screenatlas
 PYTHONPATH=. python -m uvicorn dashboard.backend.server:app --port 8000
 cd dashboard/frontend && npx vite --port 5173
 ```
 
 ### 테스트
 ```bash
-PYTHONPATH=. python tests/test_pipeline.py
-```
-
-### 노션 내보내기
-```bash
-python scripts/notion_detailed_report.py
+PYTHONPATH=. python -m pytest -q
 ```
 
 ## 슬래시 명령 (사용자가 요청 시 실행)
@@ -56,31 +61,16 @@ python scripts/notion_detailed_report.py
 4. git push
 5. CONTEXT.md 업데이트
 
-### /resume — 다른 기기에서 이어서 시작
-1. git pull
-2. CONTEXT.md 읽어서 현재 상태 파악
-3. .env 존재 여부 확인 (없으면 안내)
-4. 서버 상태 확인 (포트 8000, 5173)
-5. ADB 디바이스 연결 확인
-6. 마지막 커밋 내용 + TODO 상태 보여주기
-
 ### /status — 현재 상태 한눈에
-1. git log --oneline -5 (최근 커밋)
-2. git status (변경 파일)
+1. git log --oneline -5
+2. git status
 3. 서버 상태 (8000, 5173 포트)
 4. ADB 디바이스 연결
 5. workspace/ 내 tour 목록 + 상태
-6. .env 설정 확인 (API 키 유효 여부)
-
-### /report — 노션에 진행 상황 정리
-1. 현재 TODO/완료 항목 수집
-2. 최근 커밋 이력 수집
-3. 테스트 결과 실행
-4. scripts/notion_detailed_report.py 실행
-5. 결과 URL 출력
+6. .env 설정 확인
 
 ### /test — 전체 테스트
-1. python tests/test_pipeline.py 실행
+1. PYTHONPATH=. python -m pytest -q 실행
 2. 실패 시 원인 분석
 3. 결과 요약 출력
 
@@ -91,15 +81,8 @@ python scripts/notion_detailed_report.py
 4. 진행 상태 모니터링
 5. 완료 시 결과 요약 (노드/엣지/스크린샷 수)
 
-### /logs — 로그 확인
-1. /tmp/sa_backend.log 최근 30줄
-2. workspace/*/dynamic/droidbot_log.txt 또는 walk.json 상태
-3. 에러 있으면 원인 분석
-
 ### /env — 환경 점검
 1. Python, Node, ADB 버전 확인
 2. .env 파일 존재 + 키 유효성 (PLACEHOLDER 체크)
-3. pip 패키지 설치 상태
-4. npm 패키지 설치 상태
-5. 디바이스 연결 상태
-6. 문제 있으면 해결 방법 안내
+3. pip / npm 패키지 설치 상태
+4. 디바이스 연결 상태
