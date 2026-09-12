@@ -42,3 +42,7 @@ Thumbs.db
 
 # adb bugreport archives at repo root
 /bugreport-*.zip
+
+# 로컬 파이썬 가상환경
+.venv/
+venv*/
