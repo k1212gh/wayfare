@@ -159,18 +159,26 @@ def _inject_walk_transitions(graph: dict, transitions: list[dict],
             event_type = t.get("event_type", "click")
             event_str = t.get("event_str", "").replace("click ", "")
 
-            # Determine edge kind: back > overlay > contains(same activity) > navigate
+            # Determine edge kind: back > overlay > fragment_nav(sibling fragments) > navigate
+            # 2026-09-12 (메가커피 실측): 이전 규칙 "같은 activity 면 contains" 는 WebView 앱
+            # (거의 모든 페이지가 WebActivity 하나 안) 에서 관측 전이 64건을 전부 구조 엣지로
+            # 만들어 뷰어에서 이동 엣지가 9개만 보였다. contains 는 fragment_hierarchy 가
+            # 만드는 host→child 포함 관계에만 쓰고, 관측된 페이지 간 이동은 builder 와 같은
+            # 규칙(_infer_edge_kind: 같은 부모의 형제 fragment → fragment_nav, 아니면 navigate).
             kind = "navigate"
-            if "press_back" in event_type.lower() or "keycode_back" in event_str.lower():
+            if event_type.lower() in ("back", "press_back") or "keycode_back" in event_str.lower():
                 kind = "back"
             else:
-                # Same-activity fragment transition → contains
                 from_node_obj = next((n for n in graph.get("nodes", []) if n.get("screen_id") == from_node), {})
                 to_node_obj = next((n for n in graph.get("nodes", []) if n.get("screen_id") == to_node), {})
-                if from_node_obj.get("activity") and from_node_obj.get("activity") == to_node_obj.get("activity"):
-                    kind = "contains"
-                elif to_node_obj.get("functional_category") == "dialog":
+                if to_node_obj.get("functional_category") == "dialog":
                     kind = "overlay"
+                elif to_node_obj.get("parent_activity_id") == from_node:
+                    kind = "contains"   # host activity → its own fragment: real containment
+                else:
+                    from .screenmap_builder import _infer_edge_kind
+                    kind = _infer_edge_kind({"from": from_node, "to": to_node},
+                                            {from_node: from_node_obj, to_node: to_node_obj})
 
             graph["edges"].append({
                 "edge_id": edge_id,
