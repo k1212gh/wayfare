@@ -91,8 +91,22 @@ PYTHONPATH=. python -m pytest -q
 | env | 기법 | 근거 논문 |
 |---|---|---|
 | `WALK_FRONTIER=1` | 앱 전역 미탐색 액션 큐 + 관측 그래프 최단경로 복귀 (`stage3_walk/frontier.py`) | LLM-Explorer, MobiCom 2025 |
+| `WALK_FRONTIER_PREEMPT=3` | 스톨 3회째에 inert 강제 클릭 대신 프런티어 이동 우선 (v2) | 메가커피 실측 |
+| `WALK_FRONTIER_REPOSITION=1` | 현재 화면에서 갈 곳 없으면 Back→재실행으로 아는 화면에 선 뒤 재탐색 (v3, 권장 조합) | LLM-Explorer fault-tolerant path finder |
 | `TARPIT_LLM_ESCAPE=1` (+API 키, `TARPIT_BUDGET` 기본 20) | 막힌 화면에서 텍스트 위젯 목록으로 LLM 탈출 액션 문의 (`stage3_walk/tarpit_escaper.py`) | UI Tarpit Escaping, arXiv 2604.06763 |
 | `COALESCE_LEARNED=1` (+`pair_classifier_weights.json`) | Stage 6 병합에 학습형 쌍 분류기 Tier L (`stage6_screenmap/pair_classifier.py`) | arXiv 2606.16650 |
 
 - A/B 실측: `PYTHONPATH=. python scripts/ab_walk_megacoffee.py --device <serial> --pull-from-device co.kr.waldlust.megacoffee`
 - 분류기 학습: `PYTHONPATH=. python scripts/train_pair_classifier.py` (workspace 상태 파일 + experiments 라벨 필요)
+
+### 메가커피 A/B 실측 (2026-09-12, SM-S908N, 변형당 15분/400이벤트)
+| 변형 | 이벤트 | 고유 화면 | 전이 | 태스크 8개 중 | 스톨 강제클릭 | 하드리셋 |
+|---|---|---|---|---|---|---|
+| baseline (2회) | 291 / 242 | 50 / 64 | 77 / 83 | 4 / 4 | 125 / 73 | 3 / 3 |
+| frontier v1 | 265 | 49 | 85 | 6 | 92 | 3 |
+| frontier v2 | 226 | 63 | 99 | 6 | 44 | 3 |
+| frontier v3 (덤프 수정 후) | 229 | 71 | 124 | 6 | 25 | 2 |
+
+- v3 1차(16:32)는 `dumpsys activity top` 이 5초로 느려진 환경 문제로 오염(69 이벤트) → 패키지 지정 덤프로 수정 후 재실행.
+- 실행 간 편차: baseline 고유 화면 50 vs 64. 화면 수 단독 비교보다 전이 수·스톨 클릭·태스크 도달이 일관된 신호.
+- 결과 파일: `workspace/ab_report_*.json`, 로그 `workspace/ab_run*.log`.
