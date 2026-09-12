@@ -110,3 +110,17 @@ PYTHONPATH=. python -m pytest -q
 - v3 1차(16:32)는 `dumpsys activity top` 이 5초로 느려진 환경 문제로 오염(69 이벤트) → 패키지 지정 덤프로 수정 후 재실행.
 - 실행 간 편차: baseline 고유 화면 50 vs 64. 화면 수 단독 비교보다 전이 수·스톨 클릭·태스크 도달이 일관된 신호.
 - 결과 파일: `workspace/ab_report_*.json`, 로그 `workspace/ab_run*.log`.
+
+## LLM 공급자 (2026-09-12) — 대시보드 "LLM 설정" 패널 또는 .env
+| env | 값 | 설명 |
+|---|---|---|
+| `LLM_MODE` | `api` / `openai` / `off` / `cli` | api=Claude, openai=로컬 OpenAI 호환 서버(Ollama·LM Studio·llama.cpp·vLLM), off=라벨은 화면 텍스트만 |
+| `LLM_BASE_URL` | `http://<다른PC IP>:11434/v1` | openai 모드 필수 |
+| `LLM_MODEL_SCREEN` / `LLM_MODEL_VISION` | `qwen2.5:7b-instruct` / `qwen2.5vl:7b` | 텍스트 / 비전(선택) 모델 |
+| `LLM_STAGE5_MODE` | 비우면 자동 (로컬→`grounded`, api→`screenmap_annotate`) | `grounded` = 화면에 보이는 텍스트 후보 중 하나를 고르는 라벨링 (환각 없음, 노드당 ~200토큰) |
+| `LLM_STAGE5_VISION=1` | | grounded 뒤에 스크린샷 라벨러도 실행 |
+| `LLM_TIMEOUT` | 로컬은 600 권장 | |
+
+- API: `GET/PUT /api/settings/llm`, `POST /api/settings/llm/test` (`.env` + 프로세스 환경 동시 갱신)
+- 라벨 대체 체인(LLM 없이도): LLM 라벨 → 제목 텍스트 → 화면 첫 텍스트 후보 → 액티비티 짧은 이름. `label_source` 로 출처 기록.
+- 그래프 뷰 기본: 가로 흐름(LR), 구조 엣지(contains/static_ref/global) 숨김, 배지는 정보가 있을 때만.
