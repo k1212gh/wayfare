@@ -586,8 +586,10 @@ class OpenAICompatClient(LLMClient):
             out["models_error"] = str(e)[:160]
         t0 = time.time()
         try:
+            # 2026-09-13: "<your model name>" 을 채우라는 프롬프트는 Gemma 4 가 format:json 아래서
+            # 문자열을 열어 둔 채 멈춰(EOS) 파싱 실패했다 → 모델이 답을 지어낼 필요 없는 고정 echo 로.
             resp = self.query_json("You reply with strict JSON only.",
-                                   'Reply exactly: {"ok": true, "model_says": "<your model name>"}',
+                                   'Reply exactly: {"ok": true, "echo": "pong"}',
                                    max_tokens=64)
             out["json_ok"] = bool(resp.get("ok") is True or "ok" in resp)
             out["latency_ms"] = int((time.time() - t0) * 1000)

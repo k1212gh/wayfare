@@ -240,8 +240,10 @@ PROVIDER_PROBES: list[dict] = [
 # 2026-09-12 벤치(docs/local_llm_benchmark.md): Qwen3.5·Gemma 4 는 텍스트+이미지 네이티브 멀티모달
 _VISION_HINTS = ("vl", "vision", "llava", "minicpm-v", "moondream", "gemma3", "gemma4", "pixtral",
                  "qwen2.5vl", "qwen3.5", "qwen3-vl", "bakllava")
-# 탐지 시 자동 선택 우선순위 (앞일수록 권장). 12GB VRAM 기준 실측 정확도/속도 순.
-RECOMMENDED_MODELS = ("qwen3.5:9b", "gemma4:12b", "qwen3.5:4b", "qwen2.5:7b-instruct")
+# 탐지 시 자동 선택 우선순위 (앞일수록 권장). 2026-09-13 벤치 2회 합산: 텍스트(후보 선택)는 gemma4 가
+# 어려운 화면(오버레이)에서 더 정확하고, 비전(스크린샷 라벨)은 qwen3.5 가 두 번 다 오답 0. 사용자 선택: 정확도 우선.
+RECOMMENDED_MODELS = ("gemma4:12b", "qwen3.5:9b", "qwen3.5:4b", "qwen2.5:7b-instruct")
+RECOMMENDED_VISION = ("qwen3.5:9b", "gemma4:12b", "qwen3.5:4b", "qwen2.5vl:7b")
 _SAFE_HOST = re.compile(r"^[A-Za-z0-9.\-_\[\]:]{1,128}$")
 
 
@@ -291,6 +293,7 @@ async def discover_llm_servers(body: DiscoverBody):
                 found["models"] = ids[:100]
                 found["vision_models"] = [m for m in ids if _looks_vision(m)][:20]
                 found["recommended"] = next((m for m in RECOMMENDED_MODELS if m in ids), "")
+                found["recommended_vision"] = next((m for m in RECOMMENDED_VISION if m in ids), "")
             except Exception:
                 pass
             # Ollama 는 /v1/models 가 'object: list' 로 오고 LM Studio 도 같으므로 포트로 구분한 provider 유지

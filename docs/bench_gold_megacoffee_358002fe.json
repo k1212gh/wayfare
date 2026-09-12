@@ -1,37 +1,571 @@
 {
-  "_note": "투어 358002fe (메가커피, 2026-09-13 재탐색) page 노드별 정답 pick. best: 정답 후보 번호(-1=제목 후보 없음), acceptable: 관대 채점 허용. 스크린샷+후보 목록 수작업 판정.",
-  "page_0263ef477750": {"best": [0, 1], "acceptable": [], "title": "주문내역 › 사전예약"},
-  "page_09ada8499aeb": {"best": [-1], "acceptable": [3], "title": "영수증 (주문내역 위 모달; 후보에 없음)"},
-  "page_0b9b8cd7288f": {"best": [0, 1], "acceptable": [], "title": "주문내역 › 메가오더 (픽업 완료)"},
-  "page_0d5bf160b0cb": {"best": [-1], "acceptable": [], "title": "알림 (후보에 없음; 0은 버튼)"},
-  "page_169c4878c9af": {"best": [-1], "acceptable": [4], "title": "스탬프 (WebActivity; 후보에 없음)"},
-  "page_1fe8ba6c4fdd": {"best": [-1], "acceptable": [0, 1], "title": "날짜 선택 (주문내역 위 다이얼로그)"},
-  "page_20769bc66134": {"best": [0], "acceptable": [], "title": "스탬프"},
-  "page_22845c471bef": {"best": [0, 1], "acceptable": [], "title": "주문내역 › 메가오더"},
-  "page_24bd85055562": {"best": [0], "acceptable": [], "title": "주문상태(전체) 선택 시트"},
-  "page_35e0bc388ff6": {"best": [0], "acceptable": [], "title": "선물하기"},
-  "page_37e126be4cbb": {"best": [0], "acceptable": [], "title": "매장 상세"},
-  "page_4459ec9cf519": {"best": [0, 1], "acceptable": [], "title": "조회조건 선택 시트 (주문내역 위)"},
-  "page_49a9c9425e0d": {"best": [0], "acceptable": [], "title": "스탬프"},
-  "page_6221a8ec051a": {"best": [-1], "acceptable": [], "title": "주문내역 (MY매장 확인창; 후보에 없음)"},
-  "page_681536a60d34": {"best": [-1], "acceptable": [7], "title": "제휴 멤버십 관리 (후보에 없음)"},
-  "page_6b61d3164e2f": {"best": [0], "acceptable": [], "title": "전체메뉴"},
-  "page_6bea881fda31": {"best": [0], "acceptable": [1], "title": "바코드 번호로 등록하기 (쿠폰 위 모달)"},
-  "page_6f55c8712449": {"best": [0], "acceptable": [], "title": "메가MGC커피 (인스타그램 웹뷰)"},
-  "page_6fc306bb84b3": {"best": [0], "acceptable": [], "title": "메가오더"},
-  "page_70881179ee76": {"best": [0], "acceptable": [], "title": "매장 정보"},
-  "page_7a571792da8a": {"best": [-1], "acceptable": [0], "title": "CJ ONE (후보 0은 버튼 라벨)"},
-  "page_83a1a0c48d71": {"best": [-1], "acceptable": [], "title": "주문내역 (후보에 없음)"},
-  "page_8ab5d4a39475": {"best": [0], "acceptable": [], "title": "메가퀵결제 등록"},
-  "page_8d9acf2187ce": {"best": [-1], "acceptable": [0], "title": "CJ ONE"},
-  "page_980bf16d7b00": {"best": [0], "acceptable": [], "title": "메가MGC커피 (유튜브 채널)"},
-  "page_a0fa0a5e9bd9": {"best": [-1], "acceptable": [0, 1], "title": "이벤트 상세 (후보에 없음)"},
-  "page_a531aa84a6b3": {"best": [2], "acceptable": [0], "title": "이벤트"},
-  "page_ae005d6a55f8": {"best": [-1], "acceptable": [2], "title": "퀵오더용 제휴 멤버십 설정 (0은 문장)"},
-  "page_b4ae6ae865e9": {"best": [5], "acceptable": [0], "title": "이벤트 공유 (이벤트 상세 위 시트)"},
-  "page_b893b312c8d0": {"best": [3], "acceptable": [], "title": "약관 상세 — 마케팅 활용 동의"},
-  "page_ba045974d767": {"best": [3], "acceptable": [], "title": "메가MGC커피 (구글 플레이)"},
-  "page_d81b2f372994": {"best": [-1], "acceptable": [0], "title": "쿠폰 (후보에 없음; 0은 탭)"},
-  "page_d882495c3dfb": {"best": [1], "acceptable": [], "title": "스탬프 (알림 배너 겹침)"},
-  "page_f7c13650116a": {"best": [0], "acceptable": [1], "title": "바코드 번호로 등록하기 (입력 후)"}
+  "_note": "투어 358002fe (메가커피, 2026-09-13 재탐색) page 노드별 정답. best: 정답 후보 번호(-1=제목 후보 없음), acceptable: 관대 채점 허용. label_gold: 최종 라벨 텍스트 정답(실제 제목 + best 번호의 후보 텍스트), label_gold_lenient: + acceptable 번호의 후보 텍스트. 채점은 공백 제거·소문자 후 포함 관계.",
+  "page_0263ef477750": {
+    "best": [
+      0,
+      1
+    ],
+    "acceptable": [],
+    "title": "주문내역 › 사전예약",
+    "label_gold": [
+      "주문내역",
+      "사전예약",
+      "메가오더"
+    ],
+    "label_gold_lenient": [
+      "주문내역",
+      "사전예약",
+      "메가오더"
+    ]
+  },
+  "page_09ada8499aeb": {
+    "best": [
+      -1
+    ],
+    "acceptable": [
+      3
+    ],
+    "title": "영수증 (주문내역 위 모달; 후보에 없음)",
+    "label_gold": [
+      "영수증"
+    ],
+    "label_gold_lenient": [
+      "영수증",
+      "픽업완료"
+    ]
+  },
+  "page_0b9b8cd7288f": {
+    "best": [
+      0,
+      1
+    ],
+    "acceptable": [],
+    "title": "주문내역 › 메가오더 (픽업 완료)",
+    "label_gold": [
+      "주문내역",
+      "주문 내역 상세",
+      "메가오더",
+      "사전예약"
+    ],
+    "label_gold_lenient": [
+      "주문내역",
+      "주문 내역 상세",
+      "메가오더",
+      "사전예약"
+    ]
+  },
+  "page_0d5bf160b0cb": {
+    "best": [
+      -1
+    ],
+    "acceptable": [],
+    "title": "알림 (후보에 없음; 0은 버튼)",
+    "label_gold": [
+      "알림"
+    ],
+    "label_gold_lenient": [
+      "알림"
+    ]
+  },
+  "page_169c4878c9af": {
+    "best": [
+      -1
+    ],
+    "acceptable": [
+      4
+    ],
+    "title": "스탬프 (WebActivity; 후보에 없음)",
+    "label_gold": [
+      "스탬프"
+    ],
+    "label_gold_lenient": [
+      "스탬프",
+      "스탬프 내역"
+    ]
+  },
+  "page_1fe8ba6c4fdd": {
+    "best": [
+      -1
+    ],
+    "acceptable": [
+      0,
+      1
+    ],
+    "title": "날짜 선택 (주문내역 위 다이얼로그)",
+    "label_gold": [
+      "날짜 선택",
+      "날짜선택",
+      "달력"
+    ],
+    "label_gold_lenient": [
+      "날짜 선택",
+      "날짜선택",
+      "달력",
+      "메가오더",
+      "사전예약"
+    ]
+  },
+  "page_20769bc66134": {
+    "best": [
+      0
+    ],
+    "acceptable": [],
+    "title": "스탬프",
+    "label_gold": [
+      "스탬프"
+    ],
+    "label_gold_lenient": [
+      "스탬프"
+    ]
+  },
+  "page_22845c471bef": {
+    "best": [
+      0,
+      1
+    ],
+    "acceptable": [],
+    "title": "주문내역 › 메가오더",
+    "label_gold": [
+      "주문내역",
+      "메가오더",
+      "사전예약"
+    ],
+    "label_gold_lenient": [
+      "주문내역",
+      "메가오더",
+      "사전예약"
+    ]
+  },
+  "page_24bd85055562": {
+    "best": [
+      0
+    ],
+    "acceptable": [],
+    "title": "주문상태(전체) 선택 시트",
+    "label_gold": [
+      "주문상태",
+      "주문 상태",
+      "주문상태(전체)"
+    ],
+    "label_gold_lenient": [
+      "주문상태",
+      "주문 상태",
+      "주문상태(전체)"
+    ]
+  },
+  "page_35e0bc388ff6": {
+    "best": [
+      0
+    ],
+    "acceptable": [],
+    "title": "선물하기",
+    "label_gold": [
+      "선물하기",
+      "선물"
+    ],
+    "label_gold_lenient": [
+      "선물하기",
+      "선물"
+    ]
+  },
+  "page_37e126be4cbb": {
+    "best": [
+      0
+    ],
+    "acceptable": [],
+    "title": "매장 상세",
+    "label_gold": [
+      "매장 상세",
+      "매장상세"
+    ],
+    "label_gold_lenient": [
+      "매장 상세",
+      "매장상세"
+    ]
+  },
+  "page_4459ec9cf519": {
+    "best": [
+      0,
+      1
+    ],
+    "acceptable": [],
+    "title": "조회조건 선택 시트 (주문내역 위)",
+    "label_gold": [
+      "조회조건",
+      "조회 조건",
+      "주문내역",
+      "메가오더",
+      "사전예약"
+    ],
+    "label_gold_lenient": [
+      "조회조건",
+      "조회 조건",
+      "주문내역",
+      "메가오더",
+      "사전예약"
+    ]
+  },
+  "page_49a9c9425e0d": {
+    "best": [
+      0
+    ],
+    "acceptable": [],
+    "title": "스탬프",
+    "label_gold": [
+      "스탬프"
+    ],
+    "label_gold_lenient": [
+      "스탬프"
+    ]
+  },
+  "page_6221a8ec051a": {
+    "best": [
+      -1
+    ],
+    "acceptable": [],
+    "title": "주문내역 (MY매장 확인창; 후보에 없음)",
+    "label_gold": [
+      "주문내역",
+      "MY매장",
+      "MY 매장"
+    ],
+    "label_gold_lenient": [
+      "주문내역",
+      "MY매장",
+      "MY 매장"
+    ]
+  },
+  "page_681536a60d34": {
+    "best": [
+      -1
+    ],
+    "acceptable": [
+      7
+    ],
+    "title": "제휴 멤버십 관리 (후보에 없음)",
+    "label_gold": [
+      "제휴 멤버십",
+      "제휴멤버십"
+    ],
+    "label_gold_lenient": [
+      "제휴 멤버십",
+      "제휴멤버십",
+      "퀵오더용 제휴 멤버십 설정"
+    ]
+  },
+  "page_6b61d3164e2f": {
+    "best": [
+      0
+    ],
+    "acceptable": [],
+    "title": "전체메뉴",
+    "label_gold": [
+      "전체메뉴",
+      "전체 메뉴"
+    ],
+    "label_gold_lenient": [
+      "전체메뉴",
+      "전체 메뉴"
+    ]
+  },
+  "page_6bea881fda31": {
+    "best": [
+      0
+    ],
+    "acceptable": [
+      1
+    ],
+    "title": "바코드 번호로 등록하기 (쿠폰 위 모달)",
+    "label_gold": [
+      "바코드 번호로 등록",
+      "바코드",
+      "바코드 번호로 등록하기"
+    ],
+    "label_gold_lenient": [
+      "바코드 번호로 등록",
+      "바코드",
+      "바코드 번호로 등록하기",
+      "메가쿠폰"
+    ]
+  },
+  "page_6f55c8712449": {
+    "best": [
+      0
+    ],
+    "acceptable": [],
+    "title": "메가MGC커피 (인스타그램 웹뷰)",
+    "label_gold": [
+      "메가MGC커피",
+      "인스타그램",
+      "Instagram"
+    ],
+    "label_gold_lenient": [
+      "메가MGC커피",
+      "인스타그램",
+      "Instagram"
+    ]
+  },
+  "page_6fc306bb84b3": {
+    "best": [
+      0
+    ],
+    "acceptable": [],
+    "title": "메가오더",
+    "label_gold": [
+      "메가오더"
+    ],
+    "label_gold_lenient": [
+      "메가오더"
+    ]
+  },
+  "page_70881179ee76": {
+    "best": [
+      0
+    ],
+    "acceptable": [],
+    "title": "매장 정보",
+    "label_gold": [
+      "매장 정보",
+      "매장정보",
+      "매장 목록"
+    ],
+    "label_gold_lenient": [
+      "매장 정보",
+      "매장정보",
+      "매장 목록"
+    ]
+  },
+  "page_7a571792da8a": {
+    "best": [
+      -1
+    ],
+    "acceptable": [
+      0
+    ],
+    "title": "CJ ONE (후보 0은 버튼 라벨)",
+    "label_gold": [
+      "CJ ONE"
+    ],
+    "label_gold_lenient": [
+      "CJ ONE",
+      "CJ ONE 등록하기 등록 아이콘"
+    ]
+  },
+  "page_83a1a0c48d71": {
+    "best": [
+      -1
+    ],
+    "acceptable": [],
+    "title": "주문내역 (후보에 없음)",
+    "label_gold": [
+      "주문내역"
+    ],
+    "label_gold_lenient": [
+      "주문내역"
+    ]
+  },
+  "page_8ab5d4a39475": {
+    "best": [
+      0
+    ],
+    "acceptable": [],
+    "title": "메가퀵결제 등록",
+    "label_gold": [
+      "메가퀵결제"
+    ],
+    "label_gold_lenient": [
+      "메가퀵결제"
+    ]
+  },
+  "page_8d9acf2187ce": {
+    "best": [
+      -1
+    ],
+    "acceptable": [
+      0
+    ],
+    "title": "CJ ONE",
+    "label_gold": [
+      "CJ ONE"
+    ],
+    "label_gold_lenient": [
+      "CJ ONE",
+      "CJ ONE 등록하기 등록 아이콘"
+    ]
+  },
+  "page_980bf16d7b00": {
+    "best": [
+      0
+    ],
+    "acceptable": [],
+    "title": "메가MGC커피 (유튜브 채널)",
+    "label_gold": [
+      "메가MGC커피",
+      "유튜브",
+      "YouTube"
+    ],
+    "label_gold_lenient": [
+      "메가MGC커피",
+      "유튜브",
+      "YouTube"
+    ]
+  },
+  "page_a0fa0a5e9bd9": {
+    "best": [
+      -1
+    ],
+    "acceptable": [
+      0,
+      1
+    ],
+    "title": "이벤트 상세 (후보에 없음)",
+    "label_gold": [
+      "이벤트 상세",
+      "이벤트상세",
+      "신메뉴 출시"
+    ],
+    "label_gold_lenient": [
+      "이벤트 상세",
+      "이벤트상세",
+      "신메뉴 출시",
+      "메뉴/MD",
+      "[출시] 가을시즌 신메뉴 출시"
+    ]
+  },
+  "page_a531aa84a6b3": {
+    "best": [
+      2
+    ],
+    "acceptable": [
+      0
+    ],
+    "title": "이벤트",
+    "label_gold": [
+      "이벤트"
+    ],
+    "label_gold_lenient": [
+      "이벤트",
+      "진행 중 이벤트"
+    ]
+  },
+  "page_ae005d6a55f8": {
+    "best": [
+      -1
+    ],
+    "acceptable": [
+      2
+    ],
+    "title": "퀵오더용 제휴 멤버십 설정 (0은 문장)",
+    "label_gold": [
+      "제휴 멤버십",
+      "제휴멤버십"
+    ],
+    "label_gold_lenient": [
+      "제휴 멤버십",
+      "제휴멤버십",
+      "제휴 멤버십 등록하기"
+    ]
+  },
+  "page_b4ae6ae865e9": {
+    "best": [
+      5
+    ],
+    "acceptable": [
+      0
+    ],
+    "title": "이벤트 공유 (이벤트 상세 위 시트)",
+    "label_gold": [
+      "이벤트 공유",
+      "공유"
+    ],
+    "label_gold_lenient": [
+      "이벤트 공유",
+      "공유",
+      "메뉴/MD"
+    ]
+  },
+  "page_b893b312c8d0": {
+    "best": [
+      3
+    ],
+    "acceptable": [],
+    "title": "약관 상세 — 마케팅 활용 동의",
+    "label_gold": [
+      "약관",
+      "마케팅 활용 동의"
+    ],
+    "label_gold_lenient": [
+      "약관",
+      "마케팅 활용 동의"
+    ]
+  },
+  "page_ba045974d767": {
+    "best": [
+      3
+    ],
+    "acceptable": [],
+    "title": "메가MGC커피 (구글 플레이)",
+    "label_gold": [
+      "메가MGC커피",
+      "Play 스토어",
+      "플레이 스토어",
+      "Google Play"
+    ],
+    "label_gold_lenient": [
+      "메가MGC커피",
+      "Play 스토어",
+      "플레이 스토어",
+      "Google Play"
+    ]
+  },
+  "page_d81b2f372994": {
+    "best": [
+      -1
+    ],
+    "acceptable": [
+      0
+    ],
+    "title": "쿠폰 (후보에 없음; 0은 탭)",
+    "label_gold": [
+      "쿠폰",
+      "메가쿠폰"
+    ],
+    "label_gold_lenient": [
+      "쿠폰",
+      "메가쿠폰"
+    ]
+  },
+  "page_d882495c3dfb": {
+    "best": [
+      1
+    ],
+    "acceptable": [],
+    "title": "스탬프 (알림 배너 겹침)",
+    "label_gold": [
+      "스탬프"
+    ],
+    "label_gold_lenient": [
+      "스탬프"
+    ]
+  },
+  "page_f7c13650116a": {
+    "best": [
+      0
+    ],
+    "acceptable": [
+      1
+    ],
+    "title": "바코드 번호로 등록하기 (입력 후)",
+    "label_gold": [
+      "바코드 번호로 등록",
+      "바코드",
+      "바코드 번호로 등록하기"
+    ],
+    "label_gold_lenient": [
+      "바코드 번호로 등록",
+      "바코드",
+      "바코드 번호로 등록하기",
+      "메가쿠폰"
+    ]
+  }
 }

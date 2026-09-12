@@ -20,13 +20,13 @@ interface TestResult {
 type Provider = 'ollama' | 'lmstudio' | 'openwebui' | 'custom';
 
 const PROVIDERS: Record<Provider, { name: string; port: number; path: string; needsKey: boolean; model: string; vision: string; hint: string; desc: string }> = {
-  ollama: { name: 'Ollama', port: 11434, path: '/v1', needsKey: false, model: 'qwen3.5:9b', vision: 'qwen3.5:9b',
-    desc: '가장 간단. 모델 하나로 텍스트+이미지.',
-    hint: '다른 PC: OLLAMA_HOST=0.0.0.0 으로 서버 실행 · ollama pull qwen3.5:9b (12GB VRAM 권장, 8GB 는 qwen3.5:4b)' },
+  ollama: { name: 'Ollama', port: 11434, path: '/v1', needsKey: false, model: 'gemma4:12b', vision: 'qwen3.5:9b',
+    desc: '가장 간단. 권장: gemma4:12b(텍스트) + qwen3.5:9b(비전).',
+    hint: '다른 PC: OLLAMA_HOST=0.0.0.0 으로 서버 실행 · ollama pull gemma4:12b qwen3.5:9b (12GB VRAM 권장, 8GB 는 qwen3.5:4b 하나로)' },
   lmstudio: { name: 'LM Studio', port: 1234, path: '/v1', needsKey: false, model: 'qwen2.5-7b-instruct', vision: 'qwen2.5-vl-7b-instruct',
     desc: 'GUI 로 모델 관리. AMD(Vulkan) 도 지원.',
     hint: 'Developer 탭 → Server 시작, "Serve on Local Network" 켜고 모델을 로드해 두세요' },
-  openwebui: { name: 'Open WebUI', port: 3000, path: '/api', needsKey: true, model: 'qwen3.5:9b', vision: 'qwen3.5:9b',
+  openwebui: { name: 'Open WebUI', port: 3000, path: '/api', needsKey: true, model: 'gemma4:12b', vision: 'qwen3.5:9b',
     desc: 'Ollama 앞단 웹 UI. API 키 필요.',
     hint: 'Settings → Account → API Keys 에서 키 발급 후 아래 API 키에 입력 (Docker 기본 포트 3000, 직접 실행은 8080)' },
   custom: { name: '직접 입력', port: 8000, path: '/v1', needsKey: false, model: '', vision: '',
@@ -34,7 +34,7 @@ const PROVIDERS: Record<Provider, { name: string; port: number; path: string; ne
     hint: 'OpenAI 호환 chat/completions 를 제공하는 서버라면 무엇이든' },
 };
 
-interface Found { provider: string; port: number; base_url: string; needs_key: boolean; status: number; models: string[]; vision_models: string[]; recommended?: string; hint?: string }
+interface Found { provider: string; port: number; base_url: string; needs_key: boolean; status: number; models: string[]; vision_models: string[]; recommended?: string; recommended_vision?: string; hint?: string }
 
 export function ModelsPage() {
   const [cur, setCur] = useState<Settings | null>(null);
@@ -137,7 +137,7 @@ export function ModelsPage() {
     if (f.models.length) {
       if (f.recommended) {
         setModelScreen(f.recommended);
-        setModelVision(f.vision_models.includes(f.recommended) ? f.recommended : (f.vision_models[0] || ''));
+        setModelVision(f.recommended_vision || (f.vision_models.includes(f.recommended) ? f.recommended : (f.vision_models[0] || '')));
       } else {
         setModelScreen(f.models.find((m) => !f.vision_models.includes(m)) || f.models[0]);
         if (f.vision_models.length) setModelVision(f.vision_models[0]);
@@ -265,7 +265,7 @@ export function ModelsPage() {
       <div className="wf-callout plain" style={{ marginTop: 16 }}>
         <b>어떻게 쓰이나.</b> 로컬 모델의 기본 라벨링은 <b>후보 선택형</b>입니다 — 화면에 실제로 보이는 텍스트 중 하나를 고르기만 해서
         없는 이름을 지어내지 않고, 화면당 200토큰 안팎이라 9B 모델·12GB GPU 에서 수십 초면 끝납니다.
-        RTX 4070 SUPER 실측: <span className="wf-mono">qwen3.5:9b</span> 정확도 87% · 비전 12장 오답 0 (docs/local_llm_benchmark.md).
+        RTX 4070 SUPER 실측(2회): 후보 선택은 <span className="wf-mono">gemma4:12b</span> 가 어려운 화면에서 더 정확(82%), 스크린샷 라벨은 <span className="wf-mono">qwen3.5:9b</span> 가 두 번 다 오답 0 — 그래서 기본값이 둘로 나뉩니다 (docs/local_llm_benchmark.md).
       </div>
     </div>
   );

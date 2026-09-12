@@ -108,8 +108,8 @@ wayfare/
 pip install -e .[dev]
 cd dashboard/frontend && npm install
 
-# 로컬 LLM (권장: Ollama + qwen3.5:9b, 12GB VRAM)
-ollama pull qwen3.5:9b
+# 로컬 LLM (권장: Ollama, 12GB VRAM — 텍스트 gemma4:12b + 비전 qwen3.5:9b)
+ollama pull gemma4:12b qwen3.5:9b
 
 # 서버 (백엔드 8008, 프론트 5173)
 PYTHONPATH=. python -m uvicorn dashboard.backend.server:app --host 127.0.0.1 --port 8008
@@ -123,8 +123,8 @@ cd dashboard/frontend && npx vite --port 5173 --host
 ```
 LLM_MODE=openai                          # openai=로컬 OpenAI 호환 서버 | api=Claude API | off=LLM 없이
 LLM_BASE_URL=http://127.0.0.1:11434/v1   # Ollama(11434) · LM Studio(1234) · Open WebUI(3000/api)
-LLM_MODEL_SCREEN=qwen3.5:9b              # 텍스트(라벨 선택·플래너)
-LLM_MODEL_VISION=qwen3.5:9b              # 비전(스크린샷 라벨·탐색) — Qwen3.5/Gemma4 는 한 모델로 둘 다
+LLM_MODEL_SCREEN=gemma4:12b              # 텍스트(라벨 선택·플래너) — 정확도 우선 조합
+LLM_MODEL_VISION=qwen3.5:9b              # 비전(스크린샷 라벨·탐색) — 비전은 qwen3.5 가 더 정확
 LLM_STAGE5_VISION=1                      # 스크린샷 라벨러도 실행
 WALK_FRONTIER=1                          # 프런티어 탐색 (권장 조합)
 WALK_FRONTIER_PREEMPT=3
