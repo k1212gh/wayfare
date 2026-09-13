@@ -338,3 +338,24 @@ def test_back_safely_disables_raw_back_after_it_exits_the_app(monkeypatch):
     assert keys == [4] and relaunches == [1]           # 두 번째는 아무것도 안 누른다
     assert p._return_to_search({"resource_id": "keyword", "bounds": [70, 511, 1372, 661]}) is False
     assert keys == [4]                                 # 복귀 시도도 raw Back 을 다시 쓰지 않는다
+
+
+def test_same_field_is_probed_once_even_if_screen_hash_differs(monkeypatch):
+    """퀵오더 매장 선택창은 선택된 매장에 따라 화면 해시가 바뀌지만 검색창(id·위치)은 같다 → 예산을 다시 쓰지 않는다."""
+    from stage3_walk import u2_helper
+    monkeypatch.setattr(u2_helper, "send_text", lambda serial, text, clear=True: True)
+    monkeypatch.setattr(u2_helper, "press_key", lambda serial, code: None)
+    a = {"structure_str": "s-a", "activity": "co.app.Main", "views": [
+        _v("FrameLayout", "[0,0][1440,3040]"), _v("TextView", "[0,287][1440,444]", text="매장 정보"),
+        _v("EditText", "[70,511][1372,661]", rid="keyword"), _v("TextView", "[140,1088][378,1137]", text="화성향일고점"),
+    ]}
+    b = dict(a, structure_str="s-b")
+    w = FakeWalker([a, a, a])
+    p = SearchProbe(w)
+    p.client = None
+    p.fixture = {"sample_inputs": {"검색": "화성향일고점"}}
+    p._live_views = lambda: a["views"]
+    assert p.should_probe(a, "screen_001")
+    p.run(a, "screen_001", 0)
+    assert not p.should_probe(b, "screen_002")          # 다른 해시, 같은 검색창 → 건너뜀
+    assert p.stats["fields"] == 1

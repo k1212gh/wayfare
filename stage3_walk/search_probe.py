@@ -77,6 +77,7 @@ class SearchProbe:
         self.w = walker
         self.fixture = fixture or {}
         self.probed: set[str] = set()
+        self.probed_fields: set[str] = set()   # 같은 검색창(id·위치)은 화면 해시가 달라도 한 번만 — 3차 실측: 퀵오더 매장 선택창을 3번 프로브
         self.entities: Counter = Counter()
         self.stats = {"fields": 0, "queries": 0, "results": 0, "details": 0, "failed": 0, "llm": 0, "empty": 0, "retries": 0}
         self._last_transition: dict | None = None
@@ -149,13 +150,21 @@ class SearchProbe:
         hits.sort(key=lambda x: -float(x.get("score", 0) or 0))
         return hits[0]
 
+    @staticmethod
+    def _field_key(f: dict) -> str:
+        b = f.get("bounds") or [0, 0, 0, 0]
+        return f"{f.get('resource_id') or f.get('label') or ''}@{b[0] // 40},{b[1] // 40},{b[2] // 40}"
+
+    def _fresh_fields(self, state: dict) -> list[dict]:
+        return [f for f in self.find_fields(state) if self._field_key(f) not in self.probed_fields]
+
     def should_probe(self, state: dict, canonical_id: str) -> bool:
         if self.stats["fields"] >= MAX_FIELDS_PER_WALK:
             return False
         key = state.get("structure_str") or canonical_id
         if key in self.probed:
             return False
-        return bool(self.find_fields(state))
+        return bool(self._fresh_fields(state))
 
     # ── 검색어 ───────────────────────────────────────────────────────────
     @staticmethod
@@ -216,12 +225,13 @@ class SearchProbe:
     # ── 실행 ─────────────────────────────────────────────────────────────
     def run(self, state: dict, canonical_id: str, event_count: int) -> int:
         """프로브 실행. 사용한 이벤트 수를 돌려준다 (워커가 event_count 에 더함)."""
-        fields = self.find_fields(state)
+        fields = self._fresh_fields(state)
         if not fields:
             return 0
         self.probed.add(state.get("structure_str") or canonical_id)
         self.stats["fields"] += 1
         field = fields[0]
+        self.probed_fields.add(self._field_key(field))
         queries = self.generate_queries(state, field)
         if not queries:
             logger.info("[search] no queries for field %r — skipped", field.get("label"))
