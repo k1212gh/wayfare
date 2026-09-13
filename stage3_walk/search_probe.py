@@ -53,6 +53,8 @@ _FORM_HINT = re.compile(r"(비밀번호|password|인증번호|verification|전�
 _GENERIC_ENTITY = {"이전", "뒤로", "닫기", "취소", "확인", "새로고침", "추가", "더보기", "전체", "홈", "메뉴", "검색", "로그인", "전체보기",
                    "설정", "알림", "이벤트", "쿠폰", "선물", "주문", "결제", "장바구니", "마이페이지", "다음", "완료", "선택", "등록"}
 _ENTITY_RE = re.compile(r"^[가-힣A-Za-z][가-힣A-Za-z0-9 ]{1,11}$")
+# 결과 행으로 보지 않는 짧은 조작 요소 (실측: 행의 별 아이콘 '즐겨찾기', 지도의 '이 지역 재검색' 을 행으로 탭함)
+_ROW_EXCLUDE_RE = re.compile(r"(즐겨찾기|재검색|필터|정렬|더보기|전체보기|지도|리스트|닫기|취소|확인)", re.IGNORECASE)
 _RESULT_HEADER_RE = re.compile(r"(검색\s*결과|결과\s*\d+\s*건|\d+\s*건$|results?)", re.IGNORECASE)
 _SENTENCE_RE = re.compile(r"(했어요|습니다|세요|입니다|합니다|해요|하기)\.?$")   # 토스트/안내문은 개체명이 아니다
 # 결과 없음 화면 판정 — 이 문구가 보이면 그 검색어는 실패, 안내문을 LLM 에 피드백해 한 번 재시도
@@ -486,6 +488,8 @@ class SearchProbe:
             if lab in _GENERIC_ENTITY or _FORM_HINT.search(lab) or _SENTENCE_RE.search(lab) or _RESULT_HEADER_RE.search(lab):
                 continue
             width = w["bounds"][2] - w["bounds"][0]
+            if _ROW_EXCLUDE_RE.search(lab):
+                continue
             if width < 0.25 * screen_w and len(lab) <= 4:   # 필터 칩/탭 (짧은 글자, 좁은 폭)
                 continue
             rows.append(w)

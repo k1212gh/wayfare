@@ -13,11 +13,25 @@
 | 4 | 오버레이 분리 + 중복 엣지 병합 | dialog/sheet 를 부모와 분리(overlay 엣지), 같은 from→to 접기 + frequency | 0.5일 | 주문내역 확인창이 별도 노드, 중복 5쌍 → 1개 + frequency ≥2 |
 | 5 | 에이전트 API | `locate`(현재 화면→노드), `next_action`(목표→셀렉터 포함 다음 액션) | 1일 | 실기기에서 "결제까지" 시나리오를 API 만으로 완주 |
 
-## 1. 검색·데이터 화면 처리 — 검색 필요 화면 감지 시 AI 가 검색어 삽입 — 🟡 구현됨, 실기기 검증 대기 (2026-09-13)
-구현: `stage3_walk/search_probe.py`(감지·LLM 검색어·실행·전이 기록), `u2_helper.send_text`(uiautomator2 유니코드 입력, ASCII 는 adb 폴백),
-워커 루프 1b3 훅(`SEARCH_PROBE=0` 으로 해제), `walk_transitions._annotate_dynamic_nodes`(결과 노드 `dynamic{kind, query_field, queries, item_action}`),
-직렬화·대시보드(검색 결과/결과 없음/목록 배지, 인스펙터 "데이터 화면", 전환 "입력 … 후 검색"). 단위 테스트 4개.
-검증: 실기기 탐색 1회 필요 — 완료 기준(아래)으로 측정 후 이 줄 갱신.
+## 1. 검색·데이터 화면 처리 — 검색 필요 화면 감지 시 AI 가 검색어 삽입 — ✅ 실기기 검증 완료 (2026-09-13, 4차)
+구현: `stage3_walk/search_probe.py`(감지·LLM 검색어·실행·복귀 검증·전이 기록), `u2_helper.send_text`(uiautomator2 유니코드 입력, ASCII 는 adb 폴백),
+워커 루프 1b3 훅(`SEARCH_PROBE=0` 으로 해제) + 검색 진입 우선 규칙(`seek_action`), `walk_transitions._annotate_dynamic_nodes`(결과 노드
+`dynamic{kind, query_field, queries, item_action}`), Stage 4 결과/빈 결과 페이지 분리 + `semantic_merge` 검색 상태 병합 금지,
+직렬화·대시보드(검색 결과/결과 없음/목록 배지, 인스펙터 "데이터 화면", 전환 "입력 … 후 검색"). 단위 테스트 17개 (`tests/test_search_probe.py`, `test_overlay_and_edge_fold.py`).
+
+**실기기 측정 (메가커피, 투어 358002fe, `scripts/audit_agent_map.py`)** — 4차 탐색 30분:
+| 항목 | 완료 기준 | 측정 |
+|---|---|---|
+| 검색 결과 노드 + 상세 전환 + 빈 결과 노드 | 매장 검색·메뉴 검색 각각 | 매장 검색: 결과 노드(검색어 3개, 행→상세 3건) + 빈 결과 노드 ✅ · 지도 탭 변형: 결과+빈 결과 ✅ · 퀵오더 매장 선택: 결과 → 매장 선택 ✅ · **메뉴 검색: 앱에 검색창 없음(해당 없음)** |
+| 엣지에 검색어 | 남는다 | type_submit 엣지 5개(`input_value`, 빈 결과는 `outcome: empty`) ✅ |
+| 자동 입력 실행 | ≥ 4 | 8회 (프로브 3회, 결과 8, 상세 5, 빈 결과 3, 실패 0) ✅ |
+| 인증·결제 화면 진입 | 0 | 0 (인증 백오프 5, 결제 가드 6 — 모두 진입 전 차단) ✅ |
+
+**실측에서 고친 것 (1차→4차)**: ① 힌트가 없는 WebView `EditText#keyword` 를 검색창으로 못 봄 → rid/위치 규칙 ② 단일 액티비티 앱이라 워커 Back 가드에
+막혀 상세 뒤 복귀 실패 → 검색창 존재 검증 후에만 입력, 헤더 뒤로 버튼 → KEYCODE_BACK(앱 이탈 시 재실행, 탐색당 1회) ③ 화면 97% 바텀시트를 다이얼로그로
+봐서 워커 stall·오버레이 오탐 → 90% 이상 시트는 페이지 ④ 같은 검색창을 화면 해시가 다를 때마다 재프로브 → 검색창당 1회 ⑤ 빈 결과 검색어를 먼저
+(행 탭으로 시트가 닫히는 흐름 대비) ⑥ 결과/빈 결과 화면이 구조 해시·pHash 로 검색 화면에 병합됨 → Stage 4 outcome 별 페이지, coalesce 금지.
+남은 한계: 검색 화면 진입은 탐색 분산에 좌우됨(3차는 힌트형 매장 정보를 못 만남 — 홈 하단 중앙 탭이 라벨 없음); 결과 행 선택이 가끔 행 안의 아이콘(즐겨찾기)을 탭함(제외 규칙 추가).
 
 ### 왜
 검색 결과·목록은 입력값에 따라 내용이 바뀐다. 지금은 (a) 검색창을 못 찾고(WebView 입력은 EditText 로 안 잡힘),
