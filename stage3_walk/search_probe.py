@@ -33,6 +33,11 @@ logger = logging.getLogger(__name__)
 
 MAX_FIELDS_PER_WALK = int(os.environ.get("SEARCH_PROBE_MAX_FIELDS", "4"))
 QUERIES_PER_FIELD = 3
+# 검색창으로 인정하는 힌트/제목 — 이게 없으면 메모·요청사항·주소 같은 자유 입력란이다 (실측: 주문하기 화면의 "직접 입력")
+_SEARCH_HINT = re.compile(r"((?<![가-힣])검색|(?<![가-힣])찾기|조회|search|find)", re.IGNORECASE)
+_NOTE_HINT = re.compile(r"(요청사항|직접 입력|메모|comment|note|리뷰|후기|답변|문의)", re.IGNORECASE)
+# 결제·주문 확정 화면에서는 어떤 입력도 하지 않는다
+_CHECKOUT_RE = re.compile(r"(결제하기|결제 ?금액|총 ?결제|주문하기|카드 ?번호|인증번호|비밀번호|송금|이체)", re.IGNORECASE)
 _FORM_HINT = re.compile(r"(비밀번호|password|인증번호|verification|전화번호|휴대폰|phone|이메일|email|아이디|생년|birth|이름|name|주민)", re.IGNORECASE)
 _GENERIC_ENTITY = {"이전", "뒤로", "닫기", "취소", "확인", "새로고침", "추가", "더보기", "전체", "홈", "메뉴", "검색", "로그인", "전체보기",
                    "설정", "알림", "이벤트", "쿠폰", "선물", "주문", "결제", "장바구니", "마이페이지", "다음", "완료", "선택", "등록"}
@@ -89,7 +94,19 @@ class SearchProbe:
             return []                       # 폼(회원가입·주소 입력) 은 대상 아님
         if any(_FORM_HINT.search(w.get("label") or "") for w in fields):
             return []                       # 인증/개인정보 폼
-        return fields
+        texts = self.screen_texts(state, k=25)
+        if any(_CHECKOUT_RE.search(t) for t in texts):
+            return []                       # 결제·주문 화면 — 입력 금지
+        # 검색창 근거: 힌트에 검색/찾기/조회, 또는 화면 제목·본문에 검색이 있고 필드가 하나뿐
+        title_has_search = any(_SEARCH_HINT.search(t) for t in texts[:6])
+        out = []
+        for w in fields:
+            lab = w.get("label") or ""
+            if _NOTE_HINT.search(lab):
+                continue
+            if _SEARCH_HINT.search(lab) or (title_has_search and len(fields) == 1):
+                out.append(w)
+        return out
 
     def should_probe(self, state: dict, canonical_id: str) -> bool:
         if self.stats["fields"] >= MAX_FIELDS_PER_WALK:

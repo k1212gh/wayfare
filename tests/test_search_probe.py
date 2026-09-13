@@ -203,3 +203,25 @@ def test_first_result_row_skips_filter_chips_and_picks_card():
     # 결과가 없으면 None
     state3 = {"structure_str": "s-r3", "activity": "co.app.Main", "views": state["views"][:5]}
     assert p._first_result_row(state3, field) is None
+
+
+def test_find_fields_ignores_note_fields_and_checkout_screens():
+    note = {"structure_str": "s-note", "activity": "co.app.Main", "views": [
+        _v("TextView", "[560,60][880,120]", text="주문하기"), _v("TextView", "[56,1100][300,1160]", text="요청사항"),
+        _v("EditText", "[56,1200][1384,1300]", text="직접 입력"), _v("View", "[56,1500][1384,1620]", clickable=True),
+        _v("TextView", "[500,1530][940,1590]", text="12,700원 결제하기"),
+    ]}
+    w = FakeWalker([])
+    p = SearchProbe(w)
+    p.client = None
+    assert p.find_fields(note) == []
+    # 힌트 없는 EditText 라도 화면 제목이 "매장 검색" 이면 검색창
+    titled = {"structure_str": "s-t", "activity": "co.app.Main", "views": [
+        _v("TextView", "[560,60][880,120]", text="매장 검색"), _v("EditText", "[56,200][1384,300]", text=""),
+    ]}
+    assert len(p.find_fields(titled)) == 1
+    # 힌트도 제목도 검색이 아니면 대상 아님
+    plain = {"structure_str": "s-p", "activity": "co.app.Main", "views": [
+        _v("TextView", "[560,60][880,120]", text="프로필"), _v("EditText", "[56,200][1384,300]", text="닉네임"),
+    ]}
+    assert p.find_fields(plain) == []
