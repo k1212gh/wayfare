@@ -34,21 +34,29 @@ def build_screen_cards(pages: list[dict], transitions: list[dict]) -> list[dict]
             page.get("elements", [])
         )
 
-        # Available actions
+        # Available actions — 위젯당 한 항목. 2026-09-13: 셀렉터 필드(resource_id/text/desc/class/bounds/
+        # clickable/editable/label) 를 그대로 실어 Stage 6 노드 widgets 에 도달하게 한다 (에이전트 grounding).
         available_actions = []
         for elem in page.get("elements", []):
-            for action_type in elem.get("action_types", []):
-                desc_parts = [elem.get("class", "")]
-                if elem.get("text"):
-                    desc_parts.append(f'text="{elem["text"]}"')
-                if elem.get("content_desc"):
-                    desc_parts.append(f'desc="{elem["content_desc"]}"')
-
-                available_actions.append({
-                    "widget_id": elem["widget_id"],
-                    "type": action_type,
-                    "description": ", ".join(desc_parts),
-                })
+            action_types = elem.get("action_types") or []
+            desc_parts = [elem.get("class", "")]
+            if elem.get("label") and elem.get("label") != elem.get("text"):
+                desc_parts.append(f'label="{elem["label"]}"')
+            if elem.get("text"):
+                desc_parts.append(f'text="{elem["text"]}"')
+            if elem.get("content_desc"):
+                desc_parts.append(f'desc="{elem["content_desc"]}"')
+            entry = {
+                "widget_id": elem.get("widget_id") or elem.get("id", ""),
+                "type": action_types[0] if action_types else "text",
+                "description": ", ".join(p for p in desc_parts if p),
+                "action_types": action_types,
+            }
+            for key in ("resource_id", "class", "text", "content_desc", "label", "bounds", "clickable", "editable", "scrollable", "editable_hint"):
+                val = elem.get(key)
+                if val not in (None, "", [], {}):
+                    entry[key] = val
+            available_actions.append(entry)
 
         # Navigation context
         reachable = list(set(outgoing.get(pid, [])))

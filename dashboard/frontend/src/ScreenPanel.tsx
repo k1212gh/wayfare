@@ -160,14 +160,23 @@ export function ScreenPanel({ node, tourId, allNodes = [], allEdges = [], onSele
       )}
 
       {node.widgets?.length > 0 && (
-        <Section title={`UI 요소 ${node.widgets.length}`}>
+        <Section title={`조작 가능한 요소 ${node.widgets.filter((w: any) => (w.action_types?.length ?? 0) > 0 || w.clickable || w.editable).length} · 텍스트 ${node.widgets.length}`}>
           <div className="wf-list" style={{ gap: 4 }}>
-            {node.widgets.map((el: any, i: number) => (
-              <div key={i} className="wf-row" style={{ justifyContent: 'space-between' }}>
-                <span className="wf-mono wf-ellipsis">{el.id || el.text || 'unnamed'}</span>
-                <span className="wf-mono wf-faint" style={{ flexShrink: 0 }}>{el.type}{el.role ? ` · ${el.role}` : ''}</span>
-              </div>
-            ))}
+            {[...node.widgets].sort((a: any, b: any) => Number(!!(b.action_types?.length || b.clickable || b.editable)) - Number(!!(a.action_types?.length || a.clickable || a.editable))).slice(0, 40).map((el: any, i: number) => {
+              const acts: string[] = el.action_types || (el.type && el.type !== 'text' ? [el.type] : []);
+              const by = el.resource_id ? `#${el.resource_id}` : el.content_desc ? `desc "${el.content_desc}"` : el.text || el.label ? `"${el.label || el.text}"` : el.role || el.id;
+              const b = Array.isArray(el.bounds) ? el.bounds : null;
+              return (
+                <div key={i} className="wf-row" style={{ gap: 8, opacity: acts.length ? 1 : 0.7 }} title={JSON.stringify(el, null, 2)}>
+                  <span className="wf-ellipsis" style={{ flex: 1, fontWeight: acts.length ? 600 : 400 }}>{el.label || el.text || el.content_desc || el.resource_id || el.id}</span>
+                  {el.editable && <span className="wf-chip info" style={{ height: 18 }}>입력{el.editable_hint ? '(웹)' : ''}</span>}
+                  {acts.includes('click') && <span className="wf-chip accent" style={{ height: 18 }}>탭</span>}
+                  {acts.includes('scroll') && <span className="wf-chip outline" style={{ height: 18 }}>스크롤</span>}
+                  <span className="wf-mono wf-faint wf-ellipsis" style={{ maxWidth: 150, flexShrink: 0 }}>{el.class || ''}{el.resource_id ? ` #${el.resource_id}` : ''}{b ? ` [${b[0]},${b[1]}]` : ''}</span>
+                </div>
+              );
+            })}
+            {node.widgets.length > 40 && <div className="wf-faint" style={{ fontSize: 11 }}>+{node.widgets.length - 40}개 더</div>}
           </div>
         </Section>
       )}

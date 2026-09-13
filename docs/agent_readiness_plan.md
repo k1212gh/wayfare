@@ -44,7 +44,9 @@
 - 메가커피: 매장 검색(지도 탭)·메뉴 검색이 각각 결과 노드 + 상세 전환 + 빈 결과 노드로 지도에 생기고, 엣지에 검색어가 남는다.
 - 자동 입력 실행 횟수 ≥ 4 (검색어 3 × 검색창 ≥ 1 + 폼 1), 인증·결제 화면 진입 0.
 
-## 2. 위젯 grounding
+## 2. 위젯 grounding — ✅ 구현됨 (2026-09-13, `stage4_screens/widget_table.py`)
+결과(메가커피 재빌드): page 노드 위젯 보유 10/30 → **29/29**, 위젯 752개 전부 좌표·686개 텍스트/desc, 입력 필드 7개(웹 검색창 포함).
+탐색 엣지 셀렉터 52개: resource_id 12 · content_desc 10 · text 23 · 좌표만 7 (이전 좌표만 10). WebView 특성 대응은 `docs/webview_handling.md`.
 - Stage 4 `view_tree_cleaner` 가 버리는 `resource_id / text / content_description / bounds / clickable / class` 를 노드 `widgets` 에 그대로 싣는다(클릭 가능 + 텍스트 있는 것 우선, 최대 60개).
 - 엣지 `trigger_widget` 문자열을 `selector: {"rid":…, "desc":…, "text":…, "class":…, "bounds":[…]}` 객체로. 우선순위 rid > desc > text > 좌표.
 - 완료 기준: 30/30 page 노드 위젯 보유, 클릭 엣지 55개 중 좌표만 있는 것 0 (원본 상태에 rid 35개/85뷰 있음).

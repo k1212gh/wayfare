@@ -112,7 +112,7 @@ def _serialize_edge(edge: dict) -> dict:
     }
     # Preserve edge metadata — drives frontend styling + path planning.
     for opt in ("confidence", "source", "frequency", "weight",
-                "outcome", "trigger_bounds", "trigger_label"):
+                "outcome", "trigger_bounds", "trigger_label", "selector"):
         if opt in edge:
             out[opt] = edge[opt]
     return out

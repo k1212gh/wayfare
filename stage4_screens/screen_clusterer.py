@@ -214,8 +214,9 @@ def cluster_screens_to_pages(
         seed = structure_str + ("|" + title if title else "")
         page_id = f"page_{hashlib.sha256(seed.encode()).hexdigest()[:12]}"
 
-        # FIX #2: Union elements across ALL states in cluster, not just group[0]
-        elements = _extract_interactive_widgets_union(group)
+        # 2026-09-13: 위젯 표 — 원본 views(bounds·package) 로 셀렉터 정보를 그대로 싣는다 (widget_table.py).
+        # 대표 상태를 기본으로, 군집의 다른 상태에만 있는 인터랙티브 위젯을 id 기준으로 합친다.
+        elements = _extract_widget_table_union(group, representative)
 
         # variant_screenshots — 같은 page_id 이지만 다른 PNG 들 보존 (D 부분).
         # screenmap_builder 가 노드 머지 시 aliases 로 흡수. semantic_merge 와 별개.
@@ -325,6 +326,24 @@ def _select_fragment_class(group: list[dict]) -> str:
     if not counts:
         return ""
     return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+
+
+def _extract_widget_table_union(group: list[dict], representative: dict) -> list[dict]:
+    """대표 상태의 위젯 표 + 다른 상태에만 있는 인터랙티브 위젯(id 기준). 각 항목은 widget_table 행 형식."""
+    from .widget_table import extract_widget_table
+    rows = extract_widget_table(representative.get("views") or [])
+    seen = {r["id"] for r in rows}
+    for state in group:
+        if state is representative:
+            continue
+        for r in extract_widget_table(state.get("views") or []):
+            if r["id"] in seen or not r.get("action_types"):
+                continue
+            seen.add(r["id"])
+            rows.append(r)
+    for r in rows:
+        r["widget_id"] = r["id"]
+    return rows[:100]
 
 
 def _extract_interactive_widgets_union(group: list[dict]) -> list[dict]:

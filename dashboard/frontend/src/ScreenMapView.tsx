@@ -174,7 +174,7 @@ function parseBoundsValue(value: any): ActionBounds | null {
   return { left, top, right, bottom, label: label || undefined };
 }
 function extractActionBounds(raw: any): ActionBounds | null {
-  return parseBoundsValue(raw?.trigger_bounds) || parseBoundsValue(raw?.widget_bounds) || parseBoundsValue(raw?.bounds) || parseBoundsValue(raw?.bbox) || parseBoundsValue(raw?.trigger_widget);
+  return parseBoundsValue(raw?.selector?.bounds) || parseBoundsValue(raw?.trigger_bounds) || parseBoundsValue(raw?.widget_bounds) || parseBoundsValue(raw?.bounds) || parseBoundsValue(raw?.bbox) || parseBoundsValue(raw?.trigger_widget);
 }
 export function readableTriggerLabel(value: any): string {
   if (typeof value !== 'string' || !value.trim()) return '';
@@ -528,6 +528,17 @@ function EdgeDetailPanel({ edgeData, tourId, onClose, onSelectNode }: { edgeData
             <span className="wf-chip outline mono">{edgeData.confidence === 'observed' ? '탐색에서 관찰' : edgeData.confidence || 'unknown'}</span>
           </div>
           <div><b>동작:</b> {action}</div>
+          {raw.selector && raw.selector.by !== 'back' && (
+            <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }} title="에이전트용 셀렉터 — 우선순위 resource_id > content_desc > text > 좌표">
+              <span className="wf-eyebrow">셀렉터</span>
+              {raw.selector.resource_id && <span className="wf-chip accent mono">#{raw.selector.resource_id}</span>}
+              {raw.selector.content_desc && <span className="wf-chip info mono">desc "{raw.selector.content_desc}"</span>}
+              {raw.selector.text && <span className="wf-chip outline mono">"{raw.selector.text}"</span>}
+              {raw.selector.class && <span className="wf-chip outline mono">{raw.selector.class}</span>}
+              {Array.isArray(raw.selector.bounds) && <span className="wf-chip outline mono">[{raw.selector.bounds.join(',')}]</span>}
+              <span className="wf-faint" style={{ fontSize: 11 }}>기준: {raw.selector.by}</span>
+            </div>
+          )}
           {detail && <div className="wf-mono wf-faint" style={{ marginTop: 2 }}>{detail}</div>}
           <div className="wf-muted" style={{ marginTop: 6 }}>{es.desc}</div>
           {raw.condition && <div className="wf-faint" style={{ marginTop: 6 }}>조건: {String(raw.condition)}</div>}

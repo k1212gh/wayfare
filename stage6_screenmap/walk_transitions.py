@@ -180,12 +180,20 @@ def _inject_walk_transitions(graph: dict, transitions: list[dict],
                     kind = _infer_edge_kind({"from": from_node, "to": to_node},
                                             {from_node: from_node_obj, to_node: to_node_obj})
 
+            # 2026-09-13: 셀렉터 객체 — 출발 노드의 위젯 표에서 rid/desc/class 를 보강 (에이전트 grounding)
+            from stage4_screens.widget_table import build_selector
+            if kind == "back":
+                selector = {"by": "back"}
+            else:
+                from_obj = next((n for n in graph.get("nodes", []) if n.get("screen_id") == from_node), {})
+                selector = build_selector(event_str, from_obj.get("widgets") or [])
             graph["edges"].append({
                 "edge_id": edge_id,
                 "from": from_node,
                 "to": to_node,
                 "trigger_action": event_type,
                 "trigger_widget": event_str,
+                "selector": selector,
                 "kind": kind,
                 "confidence": "observed",  # directly seen during walk
                 "source": "walk",

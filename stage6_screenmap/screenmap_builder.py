@@ -264,7 +264,8 @@ def _build_widget(element: dict) -> dict:
         ),
         "role": element.get("role", element.get("content_desc", element.get("description", ""))),
     }
-    for key in ("bounds", "bbox", "rect", "text", "label", "content_desc", "resource_id", "class"):
+    for key in ("bounds", "bbox", "rect", "text", "label", "content_desc", "resource_id", "class",
+                "clickable", "editable", "scrollable", "editable_hint", "action_types"):
         value = element.get(key)
         if value not in (None, "", [], {}):
             out[key] = value
