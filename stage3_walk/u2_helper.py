@@ -23,6 +23,7 @@ Android, restricted profiles) still work via the original CLI path.
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 from typing import Any
 
@@ -176,6 +177,22 @@ def send_text(serial: str, text: str, clear: bool = True) -> bool:
         except Exception as e:
             logger.debug("adb input text failed on %s: %s", serial, e)
     return False
+
+
+def current_package(serial: str) -> str:
+    """포그라운드 앱 패키지 (u2 → dumpsys window 폴백). 모르면 ''."""
+    d = _connect_u2(serial)
+    if d is not None:
+        try:
+            return str((d.app_current() or {}).get("package") or "")
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        r = subprocess.run(["adb", "-s", serial, "shell", "dumpsys", "window"], capture_output=True, timeout=5)
+        m = re.search(r"mCurrentFocus=Window\{[^ ]+ u\d+ ([\w.]+)/", (r.stdout or b"").decode("utf-8", "replace"))
+        return m.group(1) if m else ""
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def press_key(serial: str, keycode: int) -> None:

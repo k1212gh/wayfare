@@ -19,6 +19,18 @@ def test_dialog_never_merges_with_underlying_screen():
 def test_detect_dialog_recognizes_bottom_sheet_window_ids():
     assert detect_dialog([{"class": "android.view.View", "resource_id": "app:id/touch_outside"}])
     assert detect_dialog([{"class": "android.widget.FrameLayout", "resource_id": "app:id/design_bottom_sheet"}])
+    # 화면 절반짜리 시트는 다이얼로그
+    half = [{"class": "android.widget.FrameLayout", "bounds": "[0,0][1440,3040]"},
+            {"class": "android.view.View", "resource_id": "app:id/touch_outside", "bounds": "[0,0][1440,3040]"},
+            {"class": "android.widget.FrameLayout", "resource_id": "app:id/design_bottom_sheet", "bounds": "[0,1500][1440,3040]"}]
+    assert detect_dialog(half)
+    # 화면 90% 이상을 덮는 시트는 페이지 (메가커피 매장 정보/검색/상세 흐름) — 워커가 닫으려 들지 않게
+    full = [{"class": "android.widget.FrameLayout", "bounds": "[0,0][1440,3040]"},
+            {"class": "android.view.View", "resource_id": "app:id/touch_outside", "bounds": "[0,100][1440,3035]"},
+            {"class": "android.widget.FrameLayout", "resource_id": "app:id/design_bottom_sheet", "bounds": "[0,100][1440,3035]"}]
+    assert not detect_dialog(full)
+    # 전체 시트라도 그 안에 AlertDialog 클래스가 있으면 다이얼로그
+    assert detect_dialog(full + [{"class": "android.app.AlertDialog", "bounds": "[100,1000][1340,1600]"}])
     assert not detect_dialog([{"class": "android.widget.FrameLayout", "resource_id": "app:id/content"}])
 
 

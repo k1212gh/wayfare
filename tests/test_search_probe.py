@@ -118,6 +118,7 @@ def test_run_records_type_submit_and_list_item_transitions(monkeypatch):
     monkeypatch.setattr(u2_helper, "press_key", lambda serial, code: None)
     p = SearchProbe(w)
     p.client = FakeClient()
+    p._live_views = lambda: SEARCH_STATE["views"]      # 검색 화면에 머문다고 가정
     used = p.run(SEARCH_STATE, "screen_001", 10)
     assert used > 0 and sent == ["화성조암시장점", "강남", "zzqx"]
     kinds = [(t["from_screen"], t.get("event_type"), t.get("input_value"), t.get("list_item")) for t in w.transitions]
@@ -171,6 +172,7 @@ def test_run_retries_with_feedback_when_results_are_empty(monkeypatch):
     monkeypatch.setattr(u2_helper, "send_text", lambda serial, text, clear=True: sent.append(text) or True)
     monkeypatch.setattr(u2_helper, "press_key", lambda serial, code: None)
     p = SearchProbe(w)
+    p._live_views = lambda: SEARCH_STATE["views"]
     p.client = C()
     p.run(SEARCH_STATE, "screen_001", 0)
     assert sent[:4] == ["아메리카노", "자몽에이드", "zzqx", "강남"]      # 피드백 재시도 1회
@@ -281,3 +283,39 @@ def test_seek_action_prefers_untried_search_entry_while_budget_remains():
     assert p.seek_action(actions, set(), set()) is None                            # 예산 소진
     # '즐겨찾기' 는 검색이 아니다
     assert p.seek_action([{"desc": "click 즐겨찾기", "score": 5, "view": {"text": "즐겨찾기", "content_desc": ""}}], set(), set()) is None or p.stats["fields"] >= spm.MAX_FIELDS_PER_WALK
+
+
+def test_run_stops_when_search_screen_is_lost(monkeypatch):
+    """행 탭 뒤 Back 이 가드에 막혀 다른 화면(퀵오더 시트)에 서 있으면 남은 검색어를 치지 않는다 (358002fe 2차 실측)."""
+    results = {"structure_str": "s-results", "activity": "co.app.Main", "views": [
+        _v("View", "[70,457][1370,614]", clickable=True), _v("TextView", "[224,511][861,570]", text="화성조암시장점"),
+        _v("View", "[70,700][1370,900]", clickable=True), _v("TextView", "[126,720][558,790]", text="화성조암시장점 매장"),
+    ]}
+    sheet = {"structure_str": "s-sheet", "activity": "co.app.Main", "views": [_v("TextView", "[100,300][900,400]", text="퀵오더")]}
+    w = FakeWalker([results, sheet, sheet, sheet])
+    sent = []
+    from stage3_walk import u2_helper
+    monkeypatch.setattr(u2_helper, "send_text", lambda serial, text, clear=True: sent.append(text) or True)
+    monkeypatch.setattr(u2_helper, "press_key", lambda serial, code: None)
+    p = SearchProbe(w)
+    p.client = FakeClient()
+    p._live_views = lambda: sheet["views"]              # 상세 뒤로 돌아오지 못한 상황
+    p.run(SEARCH_STATE, "screen_001", 10)
+    assert sent == ["화성조암시장점"] and p.stats.get("lost") == 1
+    assert w.backs >= 3                                  # 복귀 시도는 했다
+
+
+def test_field_on_screen_and_header_back_button():
+    p = SearchProbe(FakeWalker([]))
+    field = {"resource_id": "keyword", "bounds": [70, 511, 1372, 661], "editable": True}
+    same_rid = [_v("FrameLayout", "[0,0][1440,3040]"), _v("EditText", "[70,511][1372,661]", rid="keyword")]
+    moved = [_v("FrameLayout", "[0,0][1440,3040]"), _v("EditText", "[70,457][1370,614]")]          # rid 없지만 겹침
+    other = [_v("FrameLayout", "[0,0][1440,3040]"), _v("EditText", "[70,2000][1372,2100]", rid="memo")]
+    assert p._field_on_screen(field, same_rid) and p._field_on_screen(field, moved)
+    assert not p._field_on_screen(field, other) and not p._field_on_screen(field, [])
+    hdr = [_v("FrameLayout", "[0,0][1440,3040]"), _v("ImageView", "[40,150][160,270]", clickable=True),
+           _v("TextView", "[500,160][940,260]", text="매장 검색"), _v("View", "[70,700][245,808]", desc="주차", clickable=True)]
+    assert SearchProbe._header_back_button(hdr)["bounds"] == "[40,150][160,270]"
+    by_desc = [_v("FrameLayout", "[0,0][1440,3040]"), _v("Button", "[1200,150][1400,270]", desc="닫기", clickable=True)]
+    assert SearchProbe._header_back_button(by_desc)["content_desc"] == "닫기"
+    assert SearchProbe._header_back_button([_v("FrameLayout", "[0,0][1440,3040]")]) is None

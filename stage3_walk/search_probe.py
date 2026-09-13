@@ -24,10 +24,15 @@ import json
 import logging
 import os
 import re
+import tempfile
 import time
 from collections import Counter
+from pathlib import Path
 
 from stage4_screens.widget_table import extract_widget_table, build_selector, parse_bounds
+
+from . import u2_helper
+from .view_tree_parser import parse_ui_xml
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +44,8 @@ _NOTE_HINT = re.compile(r"(요청사항|직접 입력|메모|comment|note|리뷰
 # 힌트가 비어 있어도 검색창으로 인정하는 resource_id (실측: 메가커피 매장 정보의 EditText#keyword 는 hint·desc 모두 빈 문자열)
 _SEARCH_RID = re.compile(r"(keyword|search|query|srch|\bkw\b|find)", re.IGNORECASE)
 # 탐색 중 검색 화면으로 끌고 갈 액션 — 텍스트/desc/rid 가 검색·돋보기면 미시도 시 우선 탭 (프로브 예산이 남아 있을 때만)
+# 헤더의 뒤로 버튼 — 단일 액티비티 WebView 앱은 워커의 Back 가드(메인 액티비티에서 Back 금지)에 걸리므로 화면 안 버튼을 쓴다
+_BACK_DESC = re.compile(r"(뒤로|이전|back|close|닫기)", re.IGNORECASE)
 _SEEK_RE = re.compile(r"((?<![가-힣])검색|돋보기|\bsearch\b|매장 ?찾기|store ?finder)", re.IGNORECASE)
 # 결제·주문 확정 화면에서는 어떤 입력도 하지 않는다
 _CHECKOUT_RE = re.compile(r"(결제하기|결제 ?금액|총 ?결제|주문하기|카드 ?번호|인증번호|비밀번호|송금|이체)", re.IGNORECASE)
@@ -208,7 +215,6 @@ class SearchProbe:
     # ── 실행 ─────────────────────────────────────────────────────────────
     def run(self, state: dict, canonical_id: str, event_count: int) -> int:
         """프로브 실행. 사용한 이벤트 수를 돌려준다 (워커가 event_count 에 더함)."""
-        from . import u2_helper
         fields = self.find_fields(state)
         if not fields:
             return 0
@@ -230,6 +236,12 @@ class SearchProbe:
             q = queries[i]
             i += 1
             try:
+                # 0) 검색창이 아직 화면에 있는지 — 행 탭·Back 뒤에 다른 화면(퀵오더 시트, 이벤트)에 서 있으면 거기에
+                #    검색어를 치면 안 된다 (358002fe 2차: 상세 뒤 Back 이 가드에 막혀 '난곡사거리점' 이 이벤트 상세로 감)
+                if i > 1 and not self._return_to_search(field):
+                    logger.info("[search] lost the search screen after %d queries — stop probing this field", i - 1)
+                    self.stats["lost"] = self.stats.get("lost", 0) + 1
+                    break
                 # 1) 필드 탭 → 포커스
                 self.w._tap_view({"bounds": f"[{field['bounds'][0]},{field['bounds'][1]}][{field['bounds'][2]},{field['bounds'][3]}]"})
                 used += 1
@@ -282,18 +294,99 @@ class SearchProbe:
                         })
                         if detail_id:
                             self.stats["details"] += 1
-                        self.w._press_back()
+                        self._back_safely()
                         used += 1
                         self.w.wait_for_stable(timeout=2.0)
             except Exception as e:  # noqa: BLE001
                 self.stats["failed"] += 1
                 logger.warning("[search] probe step failed: %s", str(e)[:160])
         # 원래 화면으로: 결과 화면이면 Back 한 번
-        self.w._press_back()
+        self._back_safely()
         used += 1
         self.w.wait_for_stable(timeout=2.0)
         logger.info("[search] done on %s: %s", canonical_id, self.stats)
         return used
+
+    # ── 화면 복귀 ────────────────────────────────────────────────────────
+    def _live_views(self) -> list[dict]:
+        """지금 화면의 뷰 트리 — 캡처·전이 기록 없이 확인만."""
+        try:
+            xml = u2_helper.dump_hierarchy(self.w.device_serial, timeout=6.0)
+            if not xml or "<hierarchy" not in xml:
+                return []
+            tmp = Path(tempfile.gettempdir()) / f"wf_probe_{re.sub(r'[^A-Za-z0-9]', '_', str(self.w.device_serial))}.xml"
+            tmp.write_text(xml, encoding="utf-8")
+            return parse_ui_xml(tmp)
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _field_on_screen(self, field: dict, views: list[dict]) -> bool:
+        """같은 resource_id 이거나 좌표가 절반 이상 겹치는 입력 위젯이 보이면 검색 화면이다."""
+        if not views:
+            return False
+        fb = field.get("bounds") or [0, 0, 0, 0]
+        for w in extract_widget_table(views, getattr(self.w, "package", "") or ""):
+            if not w.get("editable"):
+                continue
+            if field.get("resource_id") and w.get("resource_id") == field.get("resource_id"):
+                return True
+            b = w.get("bounds") or [0, 0, 0, 0]
+            ix = max(0, min(fb[2], b[2]) - max(fb[0], b[0]))
+            iy = max(0, min(fb[3], b[3]) - max(fb[1], b[1]))
+            area = max(1, (fb[2] - fb[0]) * (fb[3] - fb[1]))
+            if ix * iy >= 0.5 * area:
+                return True
+        return False
+
+    @staticmethod
+    def _header_back_button(views: list[dict]) -> dict | None:
+        """상단 12%·좌측 15% 안의 클릭 가능한 뷰, 또는 desc 가 뒤로/이전/닫기 인 뷰."""
+        ys = [b for b in (parse_bounds(v.get("bounds")) for v in views) if b]
+        if not ys:
+            return None
+        top, screen_h = min(b[1] for b in ys), max(b[3] for b in ys)
+        screen_w = max(b[2] for b in ys)
+        for v in views:
+            b = parse_bounds(v.get("bounds"))
+            if not b or not v.get("clickable"):
+                continue
+            desc = f"{v.get('content_desc') or ''} {v.get('text') or ''}"
+            if _BACK_DESC.search(desc) and b[1] < top + 0.2 * screen_h:
+                return v
+            if b[1] < top + 0.12 * screen_h and b[2] <= 0.15 * screen_w and (b[2] - b[0]) < 0.12 * screen_w:
+                return v
+        return None
+
+    def _back_safely(self) -> None:
+        """뒤로가기: 워커 가드가 허용하면 그걸로, 아니면 헤더 뒤로 버튼 → KEYCODE_BACK (앱을 벗어나면 재실행)."""
+        try:
+            if self.w._press_back():
+                return
+        except Exception:  # noqa: BLE001
+            pass
+        btn = self._header_back_button(self._live_views())
+        if btn is not None:
+            self.w._tap_view(btn)
+            time.sleep(0.8)
+            return
+        serial = self.w.device_serial
+        u2_helper.press_key(serial, 4)   # KEYCODE_BACK
+        time.sleep(0.8)
+        pkg = getattr(self.w, "package", "") or ""
+        if pkg and u2_helper.current_package(serial) not in ("", pkg):
+            logger.info("[search] back left the app — relaunching")
+            relaunch = getattr(self.w, "_relaunch_keep_tried", None)
+            if relaunch:
+                relaunch()
+
+    def _return_to_search(self, field: dict, tries: int = 3) -> bool:
+        """검색창이 보일 때까지 뒤로가기 (최대 tries 회). 못 돌아오면 False."""
+        for _ in range(tries):
+            if self._field_on_screen(field, self._live_views()):
+                return True
+            self._back_safely()
+            self.w.wait_for_stable(timeout=2.0)
+        return self._field_on_screen(field, self._live_views())
 
     def _capture_and_record(self, from_id: str, idx: int, extra: dict) -> str | None:
         new_screen = self.w._capture_screen(idx)

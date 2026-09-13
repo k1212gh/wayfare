@@ -285,12 +285,27 @@ def detect_dialog(views: list[dict]) -> bool:
         # 2026-09-13: Dialog/BottomSheet 윈도우의 표준 id — WebView 앱의 시트도 이걸로 잡힌다 (메가커피 매장 정보 시트)
         "touch_outside", "design_bottom_sheet", "bottom_sheet",
     )
+    # 2026-09-13: 화면 높이의 90% 이상을 덮는 BottomSheetDialog 는 사실상 페이지다 (메가커피 매장 정보→검색→상세
+    # 흐름 전체가 [0,100][1440,3035] 시트 안에서 돈다). 이걸 다이얼로그로 보면 워커는 매번 닫으려 들고(Back 가드에
+    # 막혀 stall), 지도는 세 화면을 오버레이로 표시한다. 시트 뷰의 bounds 가 없으면 판단 불가 → 기존대로 다이얼로그.
+    _sheet_kw = ("touch_outside", "design_bottom_sheet", "bottom_sheet")
+    ys = [b for b in (_parse_bounds(v.get("bounds", "")) for v in views) if b]
+    screen_h = (max(b[3] for b in ys) - min(b[1] for b in ys)) if ys else 0
+    full_sheet = False
+    for v in views[:40]:
+        rid = (v.get("resource_id") or "").lower()
+        if any(kw in rid for kw in ("design_bottom_sheet", "bottom_sheet")):
+            b = _parse_bounds(v.get("bounds", ""))
+            if b and screen_h and (b[3] - b[1]) >= 0.9 * screen_h:
+                full_sheet = True
     for v in views[:30]:
         cls = (v.get("class") or "").lower()
         rid = (v.get("resource_id") or "").lower()
         if any(kw in cls for kw in dialog_class_kw):
             return True
         if any(kw in rid for kw in dialog_id_kw):
+            if full_sheet and any(kw in rid for kw in _sheet_kw):
+                continue
             return True
     return False
 

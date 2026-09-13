@@ -60,7 +60,8 @@ def main() -> None:
         seg = log[last:] if last >= 0 else log
         probes = re.findall(r"\[search\] done on \S+: (\{.*?\})", seg)
         stats = [eval(p) for p in probes]  # noqa: S307 — 우리 로그
-        print(f"[로그] 프로브 실행 {len(stats)}회 · 검색어 입력 {sum(s['queries'] for s in stats)} · 결과 {sum(s['results'] for s in stats)} · 상세 {sum(s['details'] for s in stats)} · 실패 {sum(s['failed'] for s in stats)} · 재시도 {sum(s.get('retries', 0) for s in stats)}")
+        last = stats[-1] if stats else {}   # stats 는 누적값 — 마지막 done 이 합계
+        print(f"[로그] 프로브 실행 {len(stats)}회 · 검색어 입력 {last.get('queries', 0)} · 결과 {last.get('results', 0)} · 상세 {last.get('details', 0)} · 빈 결과 {last.get('empty', 0)} · 실패 {last.get('failed', 0)} · 재시도 {last.get('retries', 0)} · 화면 이탈 중단 {last.get('lost', 0)}")
         auth = len(re.findall(r"auth_backoff|\[auth\]", seg))
         pay = len(re.findall(r"payment|결제 화면|\[external\]", seg))
         print(f"[로그] 인증 화면 백오프 {auth} · 외부/결제 가드 {pay}")
