@@ -138,7 +138,9 @@ def _inject_walk_transitions(graph: dict, transitions: list[dict],
         return None
 
     node_ids = {n["screen_id"] for n in graph.get("nodes", [])}
-    existing_edges = {(e["from"], e["to"]) for e in graph.get("edges", [])}
+    # 2026-09-13 (#4): 같은 from→to 관측 전이는 하나로 접는다 — frequency 누적, 서로 다른 셀렉터는 selectors[] 에 보존
+    # (배너 캐러셀처럼 탭할 때마다 새 엣지가 생기던 문제). 기존(정적) 엣지도 포함해 키로 잡는다.
+    edge_by_pair: dict[tuple, dict] = {(e["from"], e["to"]): e for e in graph.get("edges", [])}
     added = 0
 
     for t in transitions:
@@ -154,7 +156,18 @@ def _inject_walk_transitions(graph: dict, transitions: list[dict],
         if to_node not in node_ids:
             to_node = _find_matching_node(to_id, node_ids) or synthesize_node(to_id)
 
-        if from_node and to_node and from_node != to_node and (from_node, to_node) not in existing_edges:
+        if from_node and to_node and from_node != to_node and (from_node, to_node) in edge_by_pair:
+            ex = edge_by_pair[(from_node, to_node)]
+            if ex.get("source") == "walk":
+                ex["frequency"] = int(ex.get("frequency") or 1) + 1
+                from stage4_screens.widget_table import build_selector
+                from_obj = next((n for n in graph.get("nodes", []) if n.get("screen_id") == from_node), {})
+                sel = build_selector(t.get("event_str", "").replace("click ", ""), from_obj.get("widgets") or [])
+                sels = ex.setdefault("selectors", [ex.get("selector")] if ex.get("selector") else [])
+                if sel not in sels and len(sels) < 5:
+                    sels.append(sel)
+            continue
+        if from_node and to_node and from_node != to_node:
             edge_id = f"e_exp_{hashlib.sha256(f'{from_node}|{to_node}'.encode()).hexdigest()[:12]}"
             event_type = t.get("event_type", "click")
             event_str = t.get("event_str", "").replace("click ", "")
@@ -171,7 +184,7 @@ def _inject_walk_transitions(graph: dict, transitions: list[dict],
             else:
                 from_node_obj = next((n for n in graph.get("nodes", []) if n.get("screen_id") == from_node), {})
                 to_node_obj = next((n for n in graph.get("nodes", []) if n.get("screen_id") == to_node), {})
-                if to_node_obj.get("functional_category") == "dialog":
+                if to_node_obj.get("functional_category") == "dialog" or to_node_obj.get("is_dialog"):
                     kind = "overlay"
                 elif to_node_obj.get("parent_activity_id") == from_node:
                     kind = "contains"   # host activity → its own fragment: real containment
@@ -194,6 +207,8 @@ def _inject_walk_transitions(graph: dict, transitions: list[dict],
                 "trigger_action": event_type,
                 "trigger_widget": event_str,
                 "selector": selector,
+                "selectors": [selector],
+                "frequency": 1,
                 "kind": kind,
                 "confidence": "observed",  # directly seen during walk
                 "source": "walk",
@@ -201,7 +216,7 @@ def _inject_walk_transitions(graph: dict, transitions: list[dict],
                 "passed_params": [],
                 "returned_params": [],
             })
-            existing_edges.add((from_node, to_node))
+            edge_by_pair[(from_node, to_node)] = graph["edges"][-1]
             added += 1
 
     if added:

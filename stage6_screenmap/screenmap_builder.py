@@ -194,7 +194,7 @@ def _build_node(sg_node: dict, analysis: dict, unit: dict) -> dict:
         "fragment_class": fragment_class,
         "label": label_source[:50] if label_source else sid,
         "label_source": "llm" if (sg_node.get("label") or analysis.get("screen_purpose")) else "fallback",
-        "functional_category": analysis.get("functional_category", "other"),
+        "functional_category": analysis.get("functional_category") or ("dialog" if unit.get("is_dialog") else "other"),
         "screen_purpose": analysis.get("screen_purpose", sg_node.get("functional_role", "")),
         "params": sg_node.get("screen_params", {"inputs": [], "outputs": [], "displays": []}),
         "widgets": [
@@ -206,6 +206,9 @@ def _build_node(sg_node: dict, analysis: dict, unit: dict) -> dict:
         # Filled by Stage 5 chip_group_detector + Stage 6 transformations.
         "chip_groups": unit.get("chip_groups", []),
         "state_variables": unit.get("state_variables", []),
+        # 2026-09-13 (#4): 오버레이 노드 — 부모와 병합 금지, 에이전트는 닫아야 부모를 조작할 수 있음
+        "is_dialog": bool(unit.get("is_dialog", False)),
+        "blocks_parent": bool(unit.get("is_dialog", False)),
         "infinite_scroll": False,           # set by _mark_infinite_scroll_nodes (Stage 6)
         "scroll_metadata": {},              # populated alongside infinite_scroll
         "screenshot_ref": unit.get("screenshot", ""),

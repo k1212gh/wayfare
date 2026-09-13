@@ -242,6 +242,13 @@ def _is_mergeable(
     if md5_a and md5_b and md5_a == md5_b:
         return True
 
+    # 2026-09-13 (#4): 오버레이(다이얼로그/시트) 와 그 아래 화면은 절대 합치지 않는다 — 에이전트에게는
+    # "확인창을 먼저 닫아야 한다" 가 중요한 상태 차이. pHash 는 작은 팝업을 거의 못 가른다.
+    if bool(a.get("is_dialog")) != bool(b.get("is_dialog")):
+        return False
+    if (a.get("functional_category") == "dialog") != (b.get("functional_category") == "dialog"):
+        return False
+
     # Tier L (2026-09-12): 학습형 쌍 분류기 — 확신 구간이면 즉시 결정, 애매하면 기존 tier.
     _clf = _learned_classifier()
     if _clf is not None:
@@ -331,6 +338,7 @@ def _rewrite_edges(
     duplicates (same from/to/kind/trigger_action/trigger_widget)."""
     out: list[dict] = []
     seen: set[tuple] = set()
+    folded: dict[tuple, dict] = {}
     for e in edges:
         e = dict(e)   # copy so we don't mutate the original
         if e.get("from") == old_id:
@@ -339,6 +347,23 @@ def _rewrite_edges(
             e["to"] = new_id
         # Drop self-loops introduced by merging (A → A after A==B absorbed)
         if e.get("from") == e.get("to"):
+            continue
+        if e.get("source") == "walk":
+            # 2026-09-13 (#4): 병합으로 같은 from→to 가 된 관측 엣지는 하나로 접는다 — frequency 합산, 셀렉터 누적
+            key = (e.get("from"), e.get("to"), e.get("kind") or "", "walk")
+            if key in folded:
+                tgt = folded[key]
+                tgt["frequency"] = int(tgt.get("frequency") or 1) + int(e.get("frequency") or 1)
+                sels = tgt.setdefault("selectors", [tgt["selector"]] if tgt.get("selector") else [])
+                for sel in (e.get("selectors") or ([e["selector"]] if e.get("selector") else [])):
+                    if sel not in sels and len(sels) < 5:
+                        sels.append(sel)
+                if _selector_rank(e.get("selector")) < _selector_rank(tgt.get("selector")):
+                    tgt["selector"] = e["selector"]
+                    tgt["trigger_widget"] = e.get("trigger_widget", tgt.get("trigger_widget"))
+                continue
+            folded[key] = e
+            out.append(e)
             continue
         key = (
             e.get("from"),
@@ -352,6 +377,13 @@ def _rewrite_edges(
         seen.add(key)
         out.append(e)
     return out
+
+
+_SELECTOR_ORDER = {"resource_id": 0, "content_desc": 1, "text": 2, "bounds": 3, "back": 4}
+
+
+def _selector_rank(sel: dict | None) -> int:
+    return _SELECTOR_ORDER.get((sel or {}).get("by", "bounds"), 3)
 
 
 def _prefer_primary(a: dict, b: dict) -> tuple[dict, dict]:

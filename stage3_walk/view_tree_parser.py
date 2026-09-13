@@ -282,6 +282,8 @@ def detect_dialog(views: list[dict]) -> bool:
     dialog_id_kw = (
         "dialog", "alert", "popup",
         "time_picker", "date_picker", "picker_dialog",
+        # 2026-09-13: Dialog/BottomSheet 윈도우의 표준 id — WebView 앱의 시트도 이걸로 잡힌다 (메가커피 매장 정보 시트)
+        "touch_outside", "design_bottom_sheet", "bottom_sheet",
     )
     for v in views[:30]:
         cls = (v.get("class") or "").lower()

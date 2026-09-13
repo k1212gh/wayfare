@@ -229,8 +229,16 @@ def cluster_screens_to_pages(
                 seen_shots.add(shot)
                 variant_shots.append(shot)
 
+        # 2026-09-13 (#4): 오버레이 여부 — 탐색 시 판정 + 확장된 detect_dialog 재판정. 노드까지 전달돼
+        # coalesce 가 아래 화면과 합치지 못하게 하고, 관측 전이는 overlay 엣지가 된다.
+        try:
+            from stage3_walk.view_tree_parser import detect_dialog
+            is_dialog = any(bool(s.get("is_dialog")) or detect_dialog(s.get("views") or []) for s in group)
+        except Exception:  # noqa: BLE001
+            is_dialog = any(bool(s.get("is_dialog")) for s in group)
         page = {
             "page_id": page_id,
+            "is_dialog": is_dialog,
             "structure_str": structure_str,
             "title_text": title,
             "label_candidates": extract_label_candidates(representative),

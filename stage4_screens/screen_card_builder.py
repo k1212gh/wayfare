@@ -73,6 +73,7 @@ def build_screen_cards(pages: list[dict], transitions: list[dict]) -> list[dict]
             "fragment": fragment_id,
             "fragment_class": fragment_id,
             "node_type": page.get("node_type", "activity"),
+            "is_dialog": bool(page.get("is_dialog", False)),
             "screenshot": page.get("screenshot_path", ""),
             "cleaned_xml": cleaned_xml,
             "available_actions": available_actions,

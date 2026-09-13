@@ -53,7 +53,8 @@ def _compute_transition_weights(graph: dict, transitions: list[dict],
 
     for edge in graph.get("edges", []):
         key = (edge["from"], edge["to"])
-        count = freq.get(key, 0)
+        # 2026-09-13: walk_transitions 가 접으면서 센 frequency 가 있으면 그 값을 존중 (여기 resolve 는 state_str 키라 0 이 나오기 쉬움)
+        count = max(freq.get(key, 0), int(edge.get("frequency") or 0))
         edge["weight"] = round(1.0 / (count + 1), 3)
         edge["frequency"] = count
 

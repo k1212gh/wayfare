@@ -57,7 +57,12 @@
 - 확인창 노드: `blocks_parent: true` (닫아야 부모 조작 가능).
 - 대시보드: 🔒 배지, 경로 묻기 결과에 "먼저 로그인" 단계 삽입.
 
-## 4. 오버레이 분리 + 중복 엣지 병합
+## 4. 오버레이 분리 + 중복 엣지 병합 — ✅ 구현됨 (2026-09-13)
+결과(메가커피 재빌드): 관측 엣지 62개 중 frequency>1 36개(이전 전부 0), 대체 셀렉터 보유 18개, 같은 from→to 중복 5쌍 → 0(kind 가 다른 2쌍만 남음).
+바텀시트 2개(매장 정보·매장 상세)가 `is_dialog`/`blocks_parent` 노드로 분리되고 `overlay` 엣지로 연결. 영수증 모달은 별도 노드로 유지(주문내역과 병합 안 됨).
+구현: `detect_dialog` 에 `touch_outside`/`design_bottom_sheet` id 추가 → Stage 4 page → 노드 `is_dialog`; `_is_mergeable` 에 오버레이≠일반 가드;
+`_inject_walk_transitions` 가 같은 from→to 를 접어 `frequency`/`selectors[]` 누적, coalesce 후 `_rewrite_edges` 가 다시 접음(대표 셀렉터는 rid>desc>text>bounds).
+남은 것: 웹 div 모달(MY매장 확인창)은 구조로 못 잡음 — 비전 category=dialog 로만 분리됨. #3 에서 화면 텍스트 기반 판정 추가.
 - coalesce 에서 `is_dialog` 상태는 부모와 합치지 않고 `overlay` 엣지로 잇는다(지금 "주문내역"에 확인창 열림/닫힘이 합쳐짐).
 - 같은 from→to 의 walk 엣지는 하나로 접고 `frequency`, `selectors[]` 누적 (현재 5쌍 중복, frequency 전부 0).
 

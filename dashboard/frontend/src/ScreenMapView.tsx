@@ -86,6 +86,7 @@ function buildLayout(nodes: any[], edges: any[], showScreenshots: boolean, showE
       status === 'probed' && !hasShot ? '⚡ 파이프라인에서 UI 를 못 잡음 — 에이전트가 도달하면 즉시 캡처' : null,
       hasShot && !hasWidgets ? '스크린샷은 있으나 UI 요소 목록이 없음' : null,
       isSystemTriggered ? '⚡ 알림/위젯/AlarmManager 로만 진입' : null,
+      n.is_dialog ? '오버레이 — 아래 화면을 조작하려면 먼저 닫아야 함' : null,
     ].filter(Boolean).join('\n');
     const isFragment = n.node_type === 'fragment';
     const isActivity = n.node_type === 'activity' || (!n.node_type && !isSystem);
@@ -131,7 +132,8 @@ function buildLayout(nodes: any[], edges: any[], showScreenshots: boolean, showE
     const confidence: string = e.confidence || (e.source === 'walk' ? 'observed' : 'static_intent');
     const s = edgeStyle(kind);
     const actionLabel = friendlyLabel(e, kind, nodeLabelMap[e.to]);
-    const label = showEdgeLabels && s.showLabel ? actionLabel : '';
+    const freq = Number(e.frequency || 0);
+    const label = showEdgeLabels && s.showLabel ? (actionLabel + (freq > 1 ? ` ×${freq}` : '')) : '';
     const edgeId = e.edge_id || `${e.from}-${e.to}`;
     const baseOpacity = showEdgeLabels ? 0.85 : (kind === 'navigate' ? 0.5 : 0.6);
     const opacity = confidence === 'static_intent' && kind !== 'two_hop' && kind !== 'navigate' ? Math.min(baseOpacity, 0.45) : baseOpacity;
@@ -527,7 +529,7 @@ function EdgeDetailPanel({ edgeData, tourId, onClose, onSelectNode }: { edgeData
             <span className="wf-chip" style={{ background: es.stroke, color: '#FFFCF5' }}>{es.label}</span>
             <span className="wf-chip outline mono">{edgeData.confidence === 'observed' ? '탐색에서 관찰' : edgeData.confidence || 'unknown'}</span>
           </div>
-          <div><b>동작:</b> {action}</div>
+          <div><b>동작:</b> {action}{Number(raw.frequency || 0) > 1 && <span className="wf-chip outline mono" style={{ marginLeft: 8 }}>{raw.frequency}회 관측</span>}</div>
           {raw.selector && raw.selector.by !== 'back' && (
             <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }} title="에이전트용 셀렉터 — 우선순위 resource_id > content_desc > text > 좌표">
               <span className="wf-eyebrow">셀렉터</span>
@@ -538,6 +540,9 @@ function EdgeDetailPanel({ edgeData, tourId, onClose, onSelectNode }: { edgeData
               {Array.isArray(raw.selector.bounds) && <span className="wf-chip outline mono">[{raw.selector.bounds.join(',')}]</span>}
               <span className="wf-faint" style={{ fontSize: 11 }}>기준: {raw.selector.by}</span>
             </div>
+          )}
+          {Array.isArray(raw.selectors) && raw.selectors.length > 1 && (
+            <div className="wf-faint" style={{ marginTop: 4, fontSize: 11 }}>같은 전환을 만드는 다른 요소 {raw.selectors.length - 1}개: {raw.selectors.slice(1).map((x: any) => x.resource_id ? `#${x.resource_id}` : x.content_desc || x.text || (x.bounds ? `[${x.bounds.join(',')}]` : '?')).join(' · ')}</div>
           )}
           {detail && <div className="wf-mono wf-faint" style={{ marginTop: 2 }}>{detail}</div>}
           <div className="wf-muted" style={{ marginTop: 6 }}>{es.desc}</div>

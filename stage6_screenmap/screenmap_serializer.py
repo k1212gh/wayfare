@@ -92,7 +92,7 @@ def _serialize_node(node: dict) -> dict:
                 "parent_activity", "fragment_name",
                 "capture_priority", "capture_reason",
                 "is_external_lib", "external_lib_source", "is_plumbing",
-                "primary_affordances", "fragment"):
+                "primary_affordances", "fragment", "is_dialog", "blocks_parent"):
         if opt in node:
             out[opt] = node[opt]
     return out
@@ -112,7 +112,7 @@ def _serialize_edge(edge: dict) -> dict:
     }
     # Preserve edge metadata — drives frontend styling + path planning.
     for opt in ("confidence", "source", "frequency", "weight",
-                "outcome", "trigger_bounds", "trigger_label", "selector"):
+                "outcome", "trigger_bounds", "trigger_label", "selector", "selectors"):
         if opt in edge:
             out[opt] = edge[opt]
     return out
