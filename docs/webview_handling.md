@@ -15,6 +15,9 @@ uiautomator 덤프에서 `android.webkit.WebView` 노드는 **0개**였다 — �
 | `<img alt>` / 아이콘 버튼 | `ImageView` 또는 `View` + `content_desc` (alt) | `ImageView desc="즐겨찾기" click=1`, `View desc="필터아이콘"` |
 | 리스트 행 | 같은 구조의 형제 그룹이 반복 (행마다 이름·주소·시간·거리) | 매장 목록 3행 |
 | resource-id | 거의 없음 (앱 자체 컴포넌트에만) | `touch_outside`, `clock` |
+| `<input>` (힌트가 a11y 로 안 나오는 경우) | `EditText` 인데 text·hint·desc 모두 빈 문자열, id 만 남음 | 매장 정보의 `EditText#keyword` — 화면 제목에도 "검색" 없음 |
+| 페이지 흐름을 담은 BottomSheetDialog | `touch_outside` + `design_bottom_sheet` 가 화면 97% 를 덮음 (매장 정보→검색→상세 전체) | 다이얼로그 id 만 보고 오버레이로 분류하면 안 됨 |
+| 웹 div 모달 (`<div class="modal">`) | 아무 id·클래스 신호 없음 — 그냥 뷰들 | 퀵오더 시트, "메뉴를 선택해주세요 / 확인" 알림 |
 
 그리고 전체 뷰의 **55% 가 `com.android.systemui`** (상태바 알림 아이콘 30여 개, Edge 패널) 였다 — 앱 뷰가 아닌데 텍스트 후보·위젯 표를 오염시킨다.
 
@@ -34,6 +37,11 @@ uiautomator 덤프에서 `android.webkit.WebView` 노드는 **0개**였다 — �
   대체: uiautomator2 의 `d.send_keys(text)` (자체 FastInputIME, 유니코드 OK) 또는 `d(focused=True).set_text()`. 계획 #1(검색어 AI) 구현 시 함께 교체.
 - **제출**: 웹 검색 폼은 Enter(KEYCODE_66) 로 대부분 제출되지만, 돋보기 버튼만 있는 폼은 힌트 옆 `View desc="검색"` 을 탭해야 한다 → 입력 후 "제출 후보"(같은 y 구간의 클릭 가능 아이콘) 탭 규칙.
 - **외부 웹 이탈**: 인스타그램·유튜브·구글플레이 페이지가 앱 안 WebView/CustomTab 으로 열린다. 패키지 가드(`_check_app_bounds`)가 CustomTab 은 잡지만 앱 내부 WebView 로 열린 외부 사이트는 못 잡는다 → 화면 텍스트에 앱 도메인과 무관한 브랜드(Instagram/YouTube/Play 스토어)가 보이면 `is_external: true` 로 표시하고 더 파고들지 않는다(계획 #3 전제조건과 함께).
+- **Back 이 안 먹는 단일 액티비티**: 앱 전체가 `MainActivity` 하나라 워커의 Back 가드("메인 액티비티에서 Back 금지 — 앱이 종료됨")가 모든 Back 을 막는다.
+  WebView 앱은 `onBackPressed → webview.goBack()` 으로 페이지를 되돌리므로 실제로는 안전한 경우가 많다. 검색 프로브는 (1) 워커 Back → (2) 헤더의 뒤로 버튼(상단 12%·좌측 15% 안의 클릭 뷰, 또는 desc 뒤로/이전/닫기) →
+  (3) KEYCODE_BACK 후 포그라운드 패키지 확인(앱을 벗어나면 재실행) 순으로 되돌아가고, **되돌아왔는지를 검색창(같은 id 또는 좌표 겹침)으로 검증**한 뒤에만 다음 검색어를 친다 (`search_probe._return_to_search`).
+  3차 실측 전(2차)에는 이 검증이 없어 상세 화면의 지도 위 "NAVER" 를 결과 행으로 탭하고, 퀵오더 시트에 검색어를 쳐서 이벤트 상세로 흘러갔다.
+- **전체 화면 시트 = 페이지**: `design_bottom_sheet` 높이가 화면의 90% 이상이면 `detect_dialog` 가 False (`view_tree_parser`). 2차 실측에서 이 시트를 다이얼로그로 보는 바람에 워커가 매장 상세를 22번 "닫으려" 하다 stall 했고, 지도에 매장 정보·검색·상세가 오버레이로 찍혔다.
 - **스크롤 리스트**: 행이 반복되는 화면은 스크롤로 새 행만 나오고 화면은 같다 → `infinite_scroll` 마킹은 있으나 탐색이 행마다 탭해 전이를 중복 생성(같은 from→to 4개). 행 템플릿(2-2)이 생기면 "행 1개만 탭" 규칙으로 줄인다.
 
 ### 2-2. 지도 (Stage 4/6) — 이번에 구현한 것 (`stage4_screens/widget_table.py`)
@@ -58,6 +66,7 @@ uiautomator 덤프에서 `android.webkit.WebView` 노드는 **0개**였다 — �
 | 접근성 트리 + 라벨 귀속 (**채택**) | 앱 수정 불필요, 텍스트·desc 로 안정적 셀렉터 | resource-id 없음, 리스트 행 반복 | 기본 경로 |
 
 ## 4. 남은 일 (계획 문서와 연결)
-- 계획 #1: 검색창(`editable_hint`) 감지 시 LLM 검색어 → 유니코드 입력 교체 → 결과·상세 캡처, 행 템플릿.
+- 계획 #1: 구현·실기기 검증됨 (`docs/agent_readiness_plan.md` #1). 남은 것: 행 템플릿(같은 구조의 행 묶기), 돋보기 버튼만 있는 폼의 제출.
+- 웹 div 모달 감지: id 신호가 없으므로 "화면 하단/중앙의 카드 + 확인/닫기 버튼 + 배경 뷰가 그대로" 패턴을 텍스트·기하로 잡아야 한다 (계획 #3 `blocks_parent`).
 - 계획 #3: 외부 사이트 WebView `is_external`, 로그인 필요 표시.
 - 계획 #5: `locate` 가 WebView 노드를 제목+서명+pHash 로 맞추는지 검증.

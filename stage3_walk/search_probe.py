@@ -80,6 +80,7 @@ class SearchProbe:
         self.entities: Counter = Counter()
         self.stats = {"fields": 0, "queries": 0, "results": 0, "details": 0, "failed": 0, "llm": 0, "empty": 0, "retries": 0}
         self._last_transition: dict | None = None
+        self._back_exits_app = False      # KEYCODE_BACK 이 앱을 종료시킨 적이 있으면 True — 이후 raw Back 금지
         self.client = None
         try:
             from stage5_annotate.llm_client import is_llm_configured, create_client
@@ -369,12 +370,17 @@ class SearchProbe:
             self.w._tap_view(btn)
             time.sleep(0.8)
             return
+        # 헤더 버튼도 없으면 KEYCODE_BACK — 단, 이 앱에서 한 번이라도 앱을 벗어났으면 다시 시도하지 않는다
+        # (3차 실측: 퀵오더 흐름에서 매장 선택 뒤 시트가 닫혀 있어 Back 4번이 전부 앱 종료→재실행이었다)
+        if self._back_exits_app:
+            return
         serial = self.w.device_serial
         u2_helper.press_key(serial, 4)   # KEYCODE_BACK
         time.sleep(0.8)
         pkg = getattr(self.w, "package", "") or ""
         if pkg and u2_helper.current_package(serial) not in ("", pkg):
-            logger.info("[search] back left the app — relaunching")
+            self._back_exits_app = True
+            logger.info("[search] back left the app — relaunching (raw Back disabled for this walk)")
             relaunch = getattr(self.w, "_relaunch_keep_tried", None)
             if relaunch:
                 relaunch()
@@ -382,8 +388,11 @@ class SearchProbe:
     def _return_to_search(self, field: dict, tries: int = 3) -> bool:
         """검색창이 보일 때까지 뒤로가기 (최대 tries 회). 못 돌아오면 False."""
         for _ in range(tries):
-            if self._field_on_screen(field, self._live_views()):
+            views = self._live_views()
+            if self._field_on_screen(field, views):
                 return True
+            if self._back_exits_app and self._header_back_button(views) is None:
+                break                     # 돌아갈 수단이 없다 — 더 눌러봐야 앱만 종료된다
             self._back_safely()
             self.w.wait_for_stable(timeout=2.0)
         return self._field_on_screen(field, self._live_views())

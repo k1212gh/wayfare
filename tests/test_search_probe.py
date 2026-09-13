@@ -319,3 +319,22 @@ def test_field_on_screen_and_header_back_button():
     by_desc = [_v("FrameLayout", "[0,0][1440,3040]"), _v("Button", "[1200,150][1400,270]", desc="닫기", clickable=True)]
     assert SearchProbe._header_back_button(by_desc)["content_desc"] == "닫기"
     assert SearchProbe._header_back_button([_v("FrameLayout", "[0,0][1440,3040]")]) is None
+
+
+def test_back_safely_disables_raw_back_after_it_exits_the_app(monkeypatch):
+    """KEYCODE_BACK 이 앱을 종료시키면(단일 액티비티 앱) 재실행 뒤 다시는 raw Back 을 누르지 않는다."""
+    from stage3_walk import u2_helper
+    w = FakeWalker([])
+    w._press_back = lambda: False                      # 워커 가드: 메인 액티비티
+    w._relaunch_keep_tried = lambda: relaunches.append(1)
+    relaunches, keys = [], []
+    monkeypatch.setattr(u2_helper, "press_key", lambda serial, code: keys.append(code))
+    monkeypatch.setattr(u2_helper, "current_package", lambda serial: "com.sec.android.app.launcher")
+    p = SearchProbe(w)
+    p._live_views = lambda: [_v("FrameLayout", "[0,0][1440,3040]"), _v("TextView", "[100,300][900,400]", text="퀵오더")]
+    p._back_safely()
+    assert keys == [4] and relaunches == [1] and p._back_exits_app
+    p._back_safely()
+    assert keys == [4] and relaunches == [1]           # 두 번째는 아무것도 안 누른다
+    assert p._return_to_search({"resource_id": "keyword", "bounds": [70, 511, 1372, 661]}) is False
+    assert keys == [4]                                 # 복귀 시도도 raw Back 을 다시 쓰지 않는다
