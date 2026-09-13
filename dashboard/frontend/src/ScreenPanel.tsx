@@ -86,6 +86,25 @@ export function ScreenPanel({ node, tourId, allNodes = [], allEdges = [], onSele
           <ul style={{ paddingLeft: 18, lineHeight: 1.7, fontSize: 13 }}>{node.primary_affordances.map((a: string, i: number) => <li key={i}>{a}</li>)}</ul>
         </Section>
       )}
+      {node.dynamic?.kind && (
+        <Section title="데이터 화면">
+          <div className="wf-callout info" style={{ fontSize: 12.5 }}>
+            <div><b>{({ search_results: '검색 결과 화면', search_empty: '검색 결과 없음 화면', list: '목록 화면' } as any)[node.dynamic.kind] || node.dynamic.kind}</b> — 내용이 입력값·데이터에 따라 바뀝니다.</div>
+            {Array.isArray(node.dynamic.queries) && node.dynamic.queries.length > 0 && (
+              <div style={{ marginTop: 6 }}>검색어 예: {node.dynamic.queries.map((q: string) => <span key={q} className="wf-chip outline mono" style={{ marginRight: 4 }}>"{q}"</span>)}</div>
+            )}
+            {node.dynamic.query_field && (
+              <div className="wf-mono wf-faint" style={{ marginTop: 4 }}>검색창: {node.dynamic.query_field.resource_id ? `#${node.dynamic.query_field.resource_id}` : `"${node.dynamic.query_field.text || node.dynamic.query_field.content_desc || ''}"`}</div>
+            )}
+            {node.dynamic.item_action && (
+              <div style={{ marginTop: 6 }}>
+                행을 탭하면 → <button className="wf-chip clickable accent" onClick={() => onSelectNode?.(node.dynamic.item_action.to)}>{labelFor(node.dynamic.item_action.to)}</button>
+                {node.dynamic.item_action.sample_items?.length > 0 && <span className="wf-faint"> (예: {node.dynamic.item_action.sample_items.slice(0, 3).join(', ')})</span>}
+              </div>
+            )}
+          </div>
+        </Section>
+      )}
       {node.label_candidates?.length > 0 && (
         <Section title="화면 텍스트 후보">
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{node.label_candidates.slice(0, 8).map((c: string, i: number) => <span key={i} className={`wf-chip ${c === node.label ? 'accent' : 'outline'}`}>{c}</span>)}</div>

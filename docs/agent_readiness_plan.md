@@ -13,7 +13,11 @@
 | 4 | 오버레이 분리 + 중복 엣지 병합 | dialog/sheet 를 부모와 분리(overlay 엣지), 같은 from→to 접기 + frequency | 0.5일 | 주문내역 확인창이 별도 노드, 중복 5쌍 → 1개 + frequency ≥2 |
 | 5 | 에이전트 API | `locate`(현재 화면→노드), `next_action`(목표→셀렉터 포함 다음 액션) | 1일 | 실기기에서 "결제까지" 시나리오를 API 만으로 완주 |
 
-## 1. 검색·데이터 화면 처리 — 검색 필요 화면 감지 시 AI 가 검색어 삽입
+## 1. 검색·데이터 화면 처리 — 검색 필요 화면 감지 시 AI 가 검색어 삽입 — 🟡 구현됨, 실기기 검증 대기 (2026-09-13)
+구현: `stage3_walk/search_probe.py`(감지·LLM 검색어·실행·전이 기록), `u2_helper.send_text`(uiautomator2 유니코드 입력, ASCII 는 adb 폴백),
+워커 루프 1b3 훅(`SEARCH_PROBE=0` 으로 해제), `walk_transitions._annotate_dynamic_nodes`(결과 노드 `dynamic{kind, query_field, queries, item_action}`),
+직렬화·대시보드(검색 결과/결과 없음/목록 배지, 인스펙터 "데이터 화면", 전환 "입력 … 후 검색"). 단위 테스트 4개.
+검증: 실기기 탐색 1회 필요 — 완료 기준(아래)으로 측정 후 이 줄 갱신.
 
 ### 왜
 검색 결과·목록은 입력값에 따라 내용이 바뀐다. 지금은 (a) 검색창을 못 찾고(WebView 입력은 EditText 로 안 잡힘),

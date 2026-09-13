@@ -159,6 +159,17 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             else:
                 logger.warning("[vision] VISION_CLICKER_ENABLED but ANTHROPIC_API_KEY missing")
 
+        # 검색 프로브 (2026-09-13, docs/agent_readiness_plan.md #1): 검색창 화면에서 LLM 검색어를 넣고
+        # 결과·상세까지 캡처. SEARCH_PROBE=0 으로 끈다. LLM 없으면 fixture/개체명 폴백.
+        self.search_probe = None
+        if os.environ.get("SEARCH_PROBE", "1").lower() not in ("0", "false", "no", "off"):
+            try:
+                from .search_probe import SearchProbe
+                self.search_probe = SearchProbe(self, fixture=getattr(self, "_fixture", None))
+                logger.info("[search] probe enabled (llm=%s)", self.search_probe.client is not None)
+            except Exception as e:
+                logger.warning("[search] init failed: %s — disabled", e)
+
         # 2026-04-30: ViewTreeChain + StallDetector — 2-tier fallback.
         # ViewTreeChain 의 is_primary_sufficient = framework-specific quality
         # (entry 시점 정적 검사). StallDetector = runtime 동적 (T2/T3/T4).
@@ -1020,6 +1031,19 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                     event_count += 1
                     self.wait_for_stable(timeout=2.0)  # was time.sleep(0.8)
                     continue
+
+            # 1b3. Search probe — 검색창이 있는 화면은 한 번 검색어를 넣어 결과·상세를 캡처 (#1)
+            sp = getattr(self, "search_probe", None)
+            if sp is not None:
+                try:
+                    sp.observe(state)
+                    if sp.should_probe(state, canonical_id):
+                        used = sp.run(state, canonical_id, event_count)
+                        event_count += used
+                        if used:
+                            continue
+                except Exception as e:
+                    logger.warning("[search] probe error: %s", str(e)[:160])
 
             # 1c. Overlay handling: distinguish popup menu (walk) vs
             #     blocking dialog (dismiss). Popups contain app-specific

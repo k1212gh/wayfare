@@ -216,14 +216,53 @@ def _inject_walk_transitions(graph: dict, transitions: list[dict],
                 "passed_params": [],
                 "returned_params": [],
             })
+            # 2026-09-13 (#1): 검색 프로브 메타 — 입력값·필드 셀렉터·리스트 행 여부
+            for k in ("input_value", "expect", "field", "list_item", "item_text"):
+                if t.get(k) not in (None, "", False):
+                    graph["edges"][-1][k] = t[k]
             edge_by_pair[(from_node, to_node)] = graph["edges"][-1]
             added += 1
 
     if added:
         logger.info("Injected %d walk edges into graph", added)
+    _annotate_dynamic_nodes(graph)
     if synth_count:
         logger.info("Synthesized %d new nodes from unresolved transitions (framework=%s)",
                     synth_count, framework)
+
+
+def _annotate_dynamic_nodes(graph: dict) -> None:
+    """검색 프로브 전이로 데이터 화면을 표시한다 (#1).
+
+    type_submit 엣지의 도착 노드 → dynamic{kind: search_results|search_empty, query_field, queries[]}
+    list_item 엣지의 출발 노드 → dynamic.item_action{to, by: text, sample_items[]}
+    """
+    by_id = {n.get("screen_id"): n for n in graph.get("nodes", [])}
+    for e in graph.get("edges", []):
+        if e.get("trigger_action") == "type_submit":
+            tgt = by_id.get(e.get("to"))
+            if not tgt:
+                continue
+            d = tgt.setdefault("dynamic", {})
+            d["kind"] = "search_empty" if e.get("expect") == "empty" else "search_results"
+            if e.get("field") and not d.get("query_field"):
+                d["query_field"] = e["field"]
+            qs = d.setdefault("queries", [])
+            if e.get("input_value") and e["input_value"] not in qs:
+                qs.append(e["input_value"])
+            d["from"] = e.get("from")
+        if e.get("list_item"):
+            src = by_id.get(e.get("from"))
+            if not src:
+                continue
+            d = src.setdefault("dynamic", {})
+            d.setdefault("kind", "list")
+            ia = d.setdefault("item_action", {"to": e.get("to"), "by": "text", "sample_items": []})
+            if e.get("item_text") and e["item_text"] not in ia["sample_items"]:
+                ia["sample_items"].append(e["item_text"])
+    n_dyn = sum(1 for n in graph.get("nodes", []) if n.get("dynamic"))
+    if n_dyn:
+        logger.info("[dynamic] %d data screens annotated (search/list)", n_dyn)
 
 
 def _find_matching_node(candidate: str, node_ids: set[str]) -> str | None:

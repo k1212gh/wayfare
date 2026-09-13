@@ -16,7 +16,7 @@ export function ScreenshotNode({ data }: { data: any }) {
   const pr = PRIO_STYLE[prio];
   const cat: string = data.functional_category || '';
   const showStatus = st && !['probed', 'resolved', 'enriched'].includes(status);
-  const showBadges = showStatus || (cat && cat !== 'other') || data.is_dialog;
+  const showBadges = showStatus || (cat && cat !== 'other') || data.is_dialog || !!data.dynamic?.kind;
 
   return (
     <InstantTooltip text={data.tooltip || ''}>
@@ -42,6 +42,7 @@ export function ScreenshotNode({ data }: { data: any }) {
                 <span className="wf-mini-badge" style={{ background: color, color: '#FFFCF5' }}>{CATEGORY_LABEL[cat] || cat}</span>
               )}
               {data.is_dialog && cat !== 'dialog' && <span className="wf-mini-badge" style={{ background: 'var(--wf-amber-soft)', color: 'var(--wf-amber-ink)' }}>오버레이</span>}
+              {data.dynamic?.kind && <span className="wf-mini-badge" style={{ background: 'var(--wf-info-soft)', color: 'var(--wf-info)' }}>{({ search_results: '검색 결과', search_empty: '결과 없음', list: '목록' } as any)[data.dynamic.kind] || data.dynamic.kind}</span>}
             </div>
           )}
         </div>

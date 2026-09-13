@@ -113,6 +113,7 @@ function buildLayout(nodes: any[], edges: any[], showScreenshots: boolean, showE
     if (kind === 'launcher') return '런처';
     if (kind === 'intent_filter') return elem ? `딥링크 ${elem.split('/').pop()?.slice(0, 14) || ''}` : '딥링크';
     if (kind === 'overlay') return '오버레이';
+    if (action === 'type_submit') return e.input_value ? `검색 "${e.input_value}"` : '검색';
     if (elem.startsWith('reflection/')) return '정적 추론';
     if (elem.startsWith('two_hop_')) return '헬퍼 경유';
     if (elem === 'fragment_transaction') return '';
@@ -187,6 +188,8 @@ export function readableTriggerLabel(value: any): string {
 function buildActionText(raw: any, fallback: string): string {
   const action = raw?.trigger_action || '';
   const label = readableTriggerLabel(raw?.trigger_widget);
+  if (action === 'type_submit') return raw?.input_value ? `입력 "${raw.input_value}" 후 검색` : '입력 후 검색';
+  if (action === 'click' && raw?.list_item) return label ? `목록 행 탭: ${label}` : '목록 행 탭';
   if (action === 'click') return label ? `탭: ${label}` : '탭';
   if (action === 'press_back') return '뒤로가기';
   if (action === 'intent') return label ? `인텐트: ${label}` : '인텐트';

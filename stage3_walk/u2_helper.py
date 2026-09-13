@@ -144,3 +144,43 @@ def restore_animations(serial: str) -> None:
             )
         except Exception:
             pass
+
+
+def send_text(serial: str, text: str, clear: bool = True) -> bool:
+    """포커스된 입력 필드에 텍스트를 넣는다 — 유니코드(한글) 지원.
+
+    2026-09-13 (#1 검색 프로브): 기존 `_input_text` 는 한글을 Clipper 앱 브로드캐스트로 넣어
+    앱이 없는 실기기에서 조용히 실패했다. uiautomator2 의 send_keys (자체 IME) 를 먼저 쓰고,
+    ASCII 만이면 `adb shell input text` 로 폴백.
+    """
+    if not text:
+        return False
+    d = _connect_u2(serial)
+    if d is not None:
+        try:
+            if clear:
+                try:
+                    d.clear_text()
+                except Exception:
+                    pass
+            d.send_keys(text, clear=clear)
+            return True
+        except Exception as e:
+            logger.debug("u2 send_keys failed on %s: %s — CLI fallback", serial, e)
+    if text.isascii():
+        try:
+            escaped = text.replace(" ", "%s").replace("'", "\'")
+            subprocess.run(["adb", "-s", serial, "shell", "input", "text", escaped],
+                           capture_output=True, timeout=5)
+            return True
+        except Exception as e:
+            logger.debug("adb input text failed on %s: %s", serial, e)
+    return False
+
+
+def press_key(serial: str, keycode: int) -> None:
+    try:
+        subprocess.run(["adb", "-s", serial, "shell", "input", "keyevent", str(keycode)],
+                       capture_output=True, timeout=5)
+    except Exception:
+        pass

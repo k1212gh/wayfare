@@ -27,7 +27,7 @@ export function CustomTextNode({ data }: { data: any }) {
           <span className="t" style={{ flex: 1 }}>{label || screen_id}</span>
         </div>
         {data.subLabel && <div className="s">{data.subLabel}</div>}
-        {(showStatus || (cat && cat !== 'other')) && (
+        {(showStatus || (cat && cat !== 'other') || data.is_dialog || !!data.dynamic?.kind) && (
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 5 }}>
             {showStatus && (
               <span className="wf-mini-badge" title={st.desc} style={{ background: `${st.color}22`, color: st.color }}>
@@ -35,6 +35,8 @@ export function CustomTextNode({ data }: { data: any }) {
               </span>
             )}
             {cat && cat !== 'other' && <span className="wf-mini-badge" style={{ background: color, color: '#FFFCF5' }}>{CATEGORY_LABEL[cat] || cat}</span>}
+            {data.is_dialog && cat !== 'dialog' && <span className="wf-mini-badge" style={{ background: 'var(--wf-amber-soft)', color: 'var(--wf-amber-ink)' }}>오버레이</span>}
+            {data.dynamic?.kind && <span className="wf-mini-badge" style={{ background: 'var(--wf-info-soft)', color: 'var(--wf-info)' }}>{({ search_results: '검색 결과', search_empty: '결과 없음', list: '목록' } as any)[data.dynamic.kind] || data.dynamic.kind}</span>}
           </div>
         )}
         <Handle type="source" position={data.rankdir === 'LR' ? Position.Right : Position.Bottom} style={{ opacity: 0, pointerEvents: 'none' }} />
