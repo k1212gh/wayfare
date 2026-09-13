@@ -209,6 +209,7 @@ def _build_node(sg_node: dict, analysis: dict, unit: dict) -> dict:
         # 2026-09-13 (#4): 오버레이 노드 — 부모와 병합 금지, 에이전트는 닫아야 부모를 조작할 수 있음
         "is_dialog": bool(unit.get("is_dialog", False)),
         "blocks_parent": bool(unit.get("is_dialog", False)),
+        "search_outcome": unit.get("search_outcome") or "",
         "infinite_scroll": False,           # set by _mark_infinite_scroll_nodes (Stage 6)
         "scroll_metadata": {},              # populated alongside infinite_scroll
         "screenshot_ref": unit.get("screenshot", ""),

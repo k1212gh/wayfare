@@ -92,7 +92,7 @@ def _serialize_node(node: dict) -> dict:
                 "parent_activity", "fragment_name",
                 "capture_priority", "capture_reason",
                 "is_external_lib", "external_lib_source", "is_plumbing",
-                "primary_affordances", "fragment", "is_dialog", "blocks_parent", "dynamic"):
+                "primary_affordances", "fragment", "is_dialog", "blocks_parent", "dynamic", "search_outcome"):
         if opt in node:
             out[opt] = node[opt]
     return out

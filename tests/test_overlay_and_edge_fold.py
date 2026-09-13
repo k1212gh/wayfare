@@ -75,3 +75,43 @@ def test_inject_walk_transitions_folds_same_pair_and_marks_overlay():
     assert len(ab[0]["selectors"]) == 2
     bd = next(e for e in graph["edges"] if e["from"] == "page_b" and e["to"] == "page_d")
     assert bd["kind"] == "overlay"
+
+
+def test_search_screen_results_and_empty_never_merge_and_queries_union():
+    """#1 — 검색 화면·결과·빈 결과는 dynamic.kind/type_submit 로 구분해 병합하지 않고, 같은 종류끼리는 검색어를 합친다."""
+    from stage6_screenmap.semantic_merge import _merge_dynamic
+    search = {"screen_id": "page_s", "label": "매장 검색", "activity": "Main", "screenshot_md5": "m1"}
+    results = {"screen_id": "page_r", "label": "매장 검색", "activity": "Main", "screenshot_md5": "m1",
+               "dynamic": {"kind": "search_results", "queries": ["화성"]}}
+    empty = {"screen_id": "page_e", "label": "매장 검색", "activity": "Main", "screenshot_md5": "m1",
+             "dynamic": {"kind": "search_empty", "queries": ["zzqx"]}}
+    edges = [{"from": "page_s", "to": "page_r", "trigger_action": "type_submit", "input_value": "화성"},
+             {"from": "page_s", "to": "page_e", "trigger_action": "type_submit", "input_value": "zzqx"}]
+    assert _is_mergeable(search, results, edges, 0.85) is False     # md5 가 같아도 검색 화면 ↔ 결과
+    assert _is_mergeable(results, empty, edges, 0.85) is False      # 결과 ↔ 빈 결과
+    results2 = {"screen_id": "page_r2", "label": "매장 검색", "activity": "Main", "screenshot_md5": "m1",
+                "dynamic": {"kind": "search_results", "queries": ["화성조암시장점"], "item_action": {"to": "page_d", "by": "text", "sample_items": ["화성조암시장점"]}}}
+    assert _is_mergeable(results, results2, edges, 0.85) is True    # 같은 종류(결과 페이지, 검색어만 다름) 는 병합
+    _merge_dynamic(results, results2)
+    assert results["dynamic"]["queries"] == ["화성", "화성조암시장점"]
+    assert results["dynamic"]["item_action"]["sample_items"] == ["화성조암시장점"]
+
+
+def test_cluster_splits_type_submit_targets_by_outcome():
+    """Stage 4 — 구조 해시가 같아도 결과/빈 결과 상태는 다른 페이지가 된다."""
+    from stage4_screens.screen_clusterer import cluster_screens_to_pages
+    v = [{"class": "TextView", "bounds": "[0,100][1440,200]", "text": "매장 검색", "package": "co.app"}]
+    states = [
+        {"state_str": "s_search", "canonical_id": "c_search", "structure_str": "h1", "activity": "co.app.Main", "views": v},
+        {"state_str": "s_res", "canonical_id": "c_res", "structure_str": "h1", "activity": "co.app.Main", "views": v},
+        {"state_str": "s_empty", "canonical_id": "c_empty", "structure_str": "h1", "activity": "co.app.Main", "views": v},
+    ]
+    transitions = [
+        {"from_screen": "c_search", "to_screen": "c_res", "event_type": "type_submit", "event_str": "type_submit \"화성\"@[0,0][1,1]", "input_value": "화성", "expect": "results"},
+        {"from_screen": "c_search", "to_screen": "c_empty", "event_type": "type_submit", "event_str": "type_submit \"zzqx\"@[0,0][1,1]", "input_value": "zzqx", "expect": "empty", "outcome": "empty"},
+    ]
+    pages = cluster_screens_to_pages(states, transitions)
+    ids = {p["state_strs"][0] if p.get("state_strs") else p["page_id"]: p["page_id"] for p in pages}
+    by_outcome = {p.get("search_outcome") or "": p["page_id"] for p in pages}
+    assert len({p["page_id"] for p in pages}) == 3                  # 검색 / 결과 / 빈 결과 페이지가 다 다르다
+    assert set(by_outcome) == {"", "results", "empty"}

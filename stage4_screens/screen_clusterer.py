@@ -185,6 +185,13 @@ def cluster_screens_to_pages(
     # structure_str when canonical_id is absent (older runs / synthesized states).
     # Without this, Stage 4 throws away pHash/GNN merges done in Stage 3 and
     # re-splits clusters using only the L1 structural hash.
+    # 2026-09-13 (#1): 검색어 입력(type_submit) 의 도착 상태는 결과/빈 결과 로 나눠 묶는다. 구조 해시는 리스트 자식을
+    # 접으므로 "결과 1건" 과 "결과 없음" 이 같은 페이지가 됐다 (4차 실측: 빈 결과 3개가 결과 페이지에 흡수).
+    search_outcome: dict[str, str] = {}
+    for t in transitions:
+        if t.get("event_type") == "type_submit" and t.get("to_screen"):
+            search_outcome[t["to_screen"]] = "empty" if (t.get("outcome") or t.get("expect")) == "empty" else "results"
+
     groups: dict[str, list[dict]] = defaultdict(list)
     for state in unique_screens:
         key = state.get("canonical_id") or state.get("structure_str", "")
@@ -194,6 +201,10 @@ def cluster_screens_to_pages(
                 "Missing canonical_id and structure_str for state %s, using fallback hash",
                 state.get("state_str", "?")[:16],
             )
+        outcome = search_outcome.get(state.get("canonical_id") or "") or search_outcome.get(state.get("state_str") or "")
+        if outcome:
+            state["search_outcome"] = outcome
+            key = f"{key}|search_{outcome}"
         groups[key].append(state)
 
     pages = []
@@ -212,6 +223,9 @@ def cluster_screens_to_pages(
         # 만 사용 (기존 동작 유지).
         title = _extract_title(representative)
         seed = structure_str + ("|" + title if title else "")
+        outcome = next((s.get("search_outcome") for s in group if s.get("search_outcome")), "")
+        if outcome:
+            seed += "|search_" + outcome
         page_id = f"page_{hashlib.sha256(seed.encode()).hexdigest()[:12]}"
 
         # 2026-09-13: 위젯 표 — 원본 views(bounds·package) 로 셀렉터 정보를 그대로 싣는다 (widget_table.py).
@@ -239,6 +253,7 @@ def cluster_screens_to_pages(
         page = {
             "page_id": page_id,
             "is_dialog": is_dialog,
+            "search_outcome": outcome,
             "structure_str": structure_str,
             "title_text": title,
             "label_candidates": extract_label_candidates(representative),

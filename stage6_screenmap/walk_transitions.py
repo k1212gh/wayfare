@@ -217,7 +217,7 @@ def _inject_walk_transitions(graph: dict, transitions: list[dict],
                 "returned_params": [],
             })
             # 2026-09-13 (#1): 검색 프로브 메타 — 입력값·필드 셀렉터·리스트 행 여부
-            for k in ("input_value", "expect", "field", "list_item", "item_text"):
+            for k in ("input_value", "expect", "outcome", "field", "list_item", "item_text"):
                 if t.get(k) not in (None, "", False):
                     graph["edges"][-1][k] = t[k]
             edge_by_pair[(from_node, to_node)] = graph["edges"][-1]
@@ -244,7 +244,8 @@ def _annotate_dynamic_nodes(graph: dict) -> None:
             if not tgt:
                 continue
             d = tgt.setdefault("dynamic", {})
-            d["kind"] = "search_empty" if e.get("expect") == "empty" else "search_results"
+            # 관측된 outcome(빈 결과 문구 감지) 이 LLM 의 expect 보다 우선 — 4차 실측: zzqx 가 결과 화면 구조와 같아도 빈 결과
+            d["kind"] = "search_empty" if (e.get("outcome") or e.get("expect")) == "empty" else "search_results"
             if e.get("field") and not d.get("query_field"):
                 d["query_field"] = e["field"]
             qs = d.setdefault("queries", [])

@@ -197,6 +197,36 @@ def _node_group_key(n: dict) -> tuple:
     )
 
 
+def _linked_by_input(edges: list[dict], a_id: str, b_id: str) -> bool:
+    """a↔b 사이에 type_submit(검색어 입력) 전이가 있으면 True — 검색 화면과 그 결과는 별개 노드로 남긴다."""
+    for e in edges:
+        if e.get("trigger_action") != "type_submit":
+            continue
+        if {e.get("from"), e.get("to")} == {a_id, b_id}:
+            return True
+    return False
+
+
+def _merge_dynamic(keeper: dict, goner: dict) -> None:
+    """같은 종류의 데이터 화면을 합칠 때 검색어·행 샘플을 합집합으로 — 병합으로 검색어가 사라지지 않게."""
+    dg = goner.get("dynamic") or {}
+    if not dg:
+        return
+    dk = keeper.setdefault("dynamic", {})
+    dk.setdefault("kind", dg.get("kind"))
+    if not dk.get("query_field") and dg.get("query_field"):
+        dk["query_field"] = dg["query_field"]
+    qs = dk.setdefault("queries", [])
+    for q in dg.get("queries") or []:
+        if q not in qs:
+            qs.append(q)
+    if dg.get("item_action"):
+        ia = dk.setdefault("item_action", {"to": dg["item_action"].get("to"), "by": dg["item_action"].get("by", "text"), "sample_items": []})
+        for it in dg["item_action"].get("sample_items") or []:
+            if it not in ia["sample_items"]:
+                ia["sample_items"].append(it)
+
+
 def _edge_kind_set(edges: list[dict], screen_id: str) -> frozenset[str]:
     """Set of outgoing edge ``kind`` values from a given node."""
     return frozenset(
@@ -228,6 +258,14 @@ def _is_mergeable(
     """
     # Never merge system / entry stubs with other nodes
     if a.get("screen_id", "").startswith("system:") or b.get("screen_id", "").startswith("system:"):
+        return False
+
+    # 2026-09-13 (#1): 검색 화면·검색 결과·빈 결과는 서로 다른 상태다 — "이 검색어를 넣으면 어느 상태가 되는가" 가
+    # 에이전트 지도의 핵심인데, WebView 결과 페이지는 구조·제목·pHash 가 검색 화면과 거의 같아 4차 실측에서
+    # 94→55 병합 중 빈 결과 3개가 전부 검색 화면으로 흡수됐다. dynamic.kind 가 다르거나 type_submit 으로 연결된 쌍은 금지.
+    if (a.get("dynamic") or {}).get("kind") != (b.get("dynamic") or {}).get("kind"):
+        return False
+    if _linked_by_input(edges, a.get("screen_id", ""), b.get("screen_id", "")):
         return False
 
     # Tier 0 (P0-14, 2026-05-07): byte-identical screenshot — authoritative override.
@@ -470,6 +508,7 @@ def semantic_merge(screenmap: dict, threshold: float = 0.85,
                 absorbed.add(goner_id)
                 # Track provenance on the survivor
                 keeper.setdefault("merged_from", []).append(goner_id)
+                _merge_dynamic(keeper, goner)
                 # If the goner had a screenshot and the keeper didn't, transplant
                 if (not keeper.get("screenshot_ref")) and goner.get("screenshot_ref"):
                     keeper["screenshot_ref"] = goner["screenshot_ref"]
@@ -545,6 +584,7 @@ def semantic_merge(screenmap: dict, threshold: float = 0.85,
                 })
                 absorbed.add(goner_id)
                 keeper.setdefault("merged_from", []).append(goner_id)
+                _merge_dynamic(keeper, goner)
                 if (not keeper.get("screenshot_ref")) and goner.get("screenshot_ref"):
                     keeper["screenshot_ref"] = goner["screenshot_ref"]
                 edges = _rewrite_edges(edges, goner_id, keeper_id)
