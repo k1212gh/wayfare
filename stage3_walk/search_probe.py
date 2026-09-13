@@ -37,6 +37,7 @@ _FORM_HINT = re.compile(r"(비밀번호|password|인증번호|verification|전�
 _GENERIC_ENTITY = {"이전", "뒤로", "닫기", "취소", "확인", "새로고침", "추가", "더보기", "전체", "홈", "메뉴", "검색", "로그인", "전체보기",
                    "설정", "알림", "이벤트", "쿠폰", "선물", "주문", "결제", "장바구니", "마이페이지", "다음", "완료", "선택", "등록"}
 _ENTITY_RE = re.compile(r"^[가-힣A-Za-z][가-힣A-Za-z0-9 ]{1,11}$")
+_RESULT_HEADER_RE = re.compile(r"(검색\s*결과|결과\s*\d+\s*건|\d+\s*건$|results?)", re.IGNORECASE)
 _SENTENCE_RE = re.compile(r"(했어요|습니다|세요|입니다|합니다|해요|하기)\.?$")   # 토스트/안내문은 개체명이 아니다
 # 결과 없음 화면 판정 — 이 문구가 보이면 그 검색어는 실패, 안내문을 LLM 에 피드백해 한 번 재시도
 _EMPTY_RE = re.compile(r"(결과가 없|검색 결과 없|일치하는 .*없|찾을 수 없|없습니다\.?$|no results|nothing found|not found)", re.IGNORECASE)
@@ -281,21 +282,34 @@ class SearchProbe:
         return ""
 
     def _first_result_row(self, state: dict, field: dict) -> dict | None:
-        """결과 화면에서 검색창 아래 첫 번째 결과 행(카드).
+        """결과 화면에서 첫 번째 결과 항목.
 
-        2026-09-13 실측 보정: 검색창 바로 아래의 필터 칩("주차", "DP")이 먼저 잡혀 필터를 켜 버렸다 →
-        행은 화면 폭의 절반 이상·높이 100px 이상인 클릭 컨테이너만 (칩·탭·버튼 제외).
+        2026-09-13 실측 보정:
+          - 검색창 바로 아래 필터 칩("주차")이 먼저 잡혀 필터를 켜던 문제 → "검색결과 N건" 헤더 아래부터 본다
+            (헤더가 없으면 검색창 아래 60px 밑부터; 좁고 짧은 글자는 칩으로 보고 제외).
+          - WebView 결과 카드는 접근성 트리에서 clickable 이 아니다(텍스트 리프만 있음) → 클릭 플래그를 요구하지 않고
+            항목처럼 생긴 텍스트(짧은 개체명, 칩보다 넓거나 높음)를 탭한다.
         """
         views = state.get("views") or []
         widgets = extract_widget_table(views, getattr(self.w, "package", "") or "")
         fb = parse_bounds(field.get("bounds")) or (0, 0, 0, 0)
         screen_w = max((parse_bounds(v.get("bounds")) or (0, 0, 0, 0))[2] for v in views) if views else 1440
-        min_w, min_h = 0.5 * screen_w, 100
-        rows = [w for w in widgets if w.get("clickable") and (w.get("label") or "") and not w.get("editable")
-                and w["bounds"][1] >= fb[3]
-                and (w["bounds"][2] - w["bounds"][0]) >= min_w and (w["bounds"][3] - w["bounds"][1]) >= min_h
-                and (w.get("label") or "") not in _GENERIC_ENTITY
-                and not _FORM_HINT.search(w.get("label") or "")
-                and not _SENTENCE_RE.search(w.get("label") or "")]
+        header_y = None
+        for w in widgets:
+            lab = w.get("label") or ""
+            if _RESULT_HEADER_RE.search(lab) and w["bounds"][1] >= fb[3]:
+                header_y = w["bounds"][3] if header_y is None else min(header_y, w["bounds"][3])
+        start_y = header_y if header_y is not None else fb[3] + 60
+        rows = []
+        for w in widgets:
+            lab = (w.get("label") or "").strip()
+            if not lab or w.get("editable") or w["bounds"][1] < start_y:
+                continue
+            if lab in _GENERIC_ENTITY or _FORM_HINT.search(lab) or _SENTENCE_RE.search(lab) or _RESULT_HEADER_RE.search(lab):
+                continue
+            width = w["bounds"][2] - w["bounds"][0]
+            if width < 0.25 * screen_w and len(lab) <= 4:   # 필터 칩/탭 (짧은 글자, 좁은 폭)
+                continue
+            rows.append(w)
         rows.sort(key=lambda w: (w["bounds"][1], w["bounds"][0]))
         return rows[0] if rows else None

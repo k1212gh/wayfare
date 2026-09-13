@@ -183,16 +183,23 @@ def test_run_retries_with_feedback_when_results_are_empty(monkeypatch):
 
 
 def test_first_result_row_skips_filter_chips_and_picks_card():
+    # WebView 결과: 카드는 clickable 이 아니고 텍스트 리프만 있다 (메가커피 실측)
     state = {"structure_str": "s-r", "activity": "co.app.Main", "views": [
         _v("View", "[70,457][1370,614]", clickable=True), _v("TextView", "[224,511][861,570]", text="커피"),
         _v("View", "[64,625][226,793]", clickable=True), _v("TextView", "[112,684][184,734]", text="주차"),        # 필터 칩
         _v("View", "[226,625][393,793]", clickable=True), _v("TextView", "[282,684][337,734]", text="DP"),
         _v("TextView", "[56,880][400,940]", text="검색결과 11건"),
-        _v("View", "[56,980][1384,1330]", clickable=True), _v("TextView", "[126,1000][558,1067]", text="병점역점"),  # 결과 카드
+        _v("TextView", "[126,1000][558,1067]", text="병점역점"),                                                 # 결과 카드 제목
         _v("TextView", "[126,1100][735,1160]", text="경기 화성시 떡전골로 96-4"),
     ]}
     w = FakeWalker([])
     p = SearchProbe(w)
     field = {"bounds": [70, 457, 1370, 614]}
     row = p._first_result_row(state, field)
-    assert row is not None and row["label"] == "병점역점" and row["bounds"][1] == 980
+    assert row is not None and row["label"] == "병점역점" and row["bounds"][1] == 1000
+    # 헤더가 없으면 검색창 250px 아래부터 — 칩은 여전히 제외
+    state2 = {"structure_str": "s-r2", "activity": "co.app.Main", "views": state["views"][:5] + [_v("TextView", "[126,1000][558,1067]", text="병점역점")]}
+    assert p._first_result_row(state2, field)["label"] == "병점역점"
+    # 결과가 없으면 None
+    state3 = {"structure_str": "s-r3", "activity": "co.app.Main", "views": state["views"][:5]}
+    assert p._first_result_row(state3, field) is None
