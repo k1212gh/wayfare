@@ -1334,6 +1334,17 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
                         )
                         best = kw_best
 
+            # 2026-09-13 (agent_readiness #1): 검색 진입 우선 — 검색 프로브 예산이
+            # 남아 있는 동안 이 화면의 미시도 액션 중 검색·돋보기(텍스트/desc/rid)
+            # 가 있으면 그것을 best 로. 358002fe 30분 탐색이 검색 화면에 한 번도
+            # 못 들어가 프로브 0회였던 분산을 줄인다. 미시도 필터가 있어 반복 없음.
+            sp_seek = getattr(self, "search_probe", None)
+            if sp_seek is not None:
+                seek = sp_seek.seek_action(actions, self.tried_actions.get(canonical_id, set()), self.external_blacklist)
+                if seek is not None and seek is not best:
+                    logger.info("[search] seek override on %s — desc=%r", canonical_id, (seek.get("desc") or "")[:40])
+                    best = seek
+
             # P1-3 (2026-05-05): must_reach priority — TASK-KW 보다 더 강한
             # override. 미 hit must_reach spec 의 text_substr 에 매칭되는
             # 액션이 있으면 강제 best. 90d2f770 잡에서 must_reach 2/8 (25%)

@@ -36,6 +36,10 @@ QUERIES_PER_FIELD = 3
 # 검색창으로 인정하는 힌트/제목 — 이게 없으면 메모·요청사항·주소 같은 자유 입력란이다 (실측: 주문하기 화면의 "직접 입력")
 _SEARCH_HINT = re.compile(r"((?<![가-힣])검색|(?<![가-힣])찾기|조회|search|find)", re.IGNORECASE)
 _NOTE_HINT = re.compile(r"(요청사항|직접 입력|메모|comment|note|리뷰|후기|답변|문의)", re.IGNORECASE)
+# 힌트가 비어 있어도 검색창으로 인정하는 resource_id (실측: 메가커피 매장 정보의 EditText#keyword 는 hint·desc 모두 빈 문자열)
+_SEARCH_RID = re.compile(r"(keyword|search|query|srch|\bkw\b|find)", re.IGNORECASE)
+# 탐색 중 검색 화면으로 끌고 갈 액션 — 텍스트/desc/rid 가 검색·돋보기면 미시도 시 우선 탭 (프로브 예산이 남아 있을 때만)
+_SEEK_RE = re.compile(r"((?<![가-힣])검색|돋보기|\bsearch\b|매장 ?찾기|store ?finder)", re.IGNORECASE)
 # 결제·주문 확정 화면에서는 어떤 입력도 하지 않는다
 _CHECKOUT_RE = re.compile(r"(결제하기|결제 ?금액|총 ?결제|주문하기|카드 ?번호|인증번호|비밀번호|송금|이체)", re.IGNORECASE)
 _FORM_HINT = re.compile(r"(비밀번호|password|인증번호|verification|전화번호|휴대폰|phone|이메일|email|아이디|생년|birth|이름|name|주민)", re.IGNORECASE)
@@ -94,19 +98,48 @@ class SearchProbe:
             return []                       # 폼(회원가입·주소 입력) 은 대상 아님
         if any(_FORM_HINT.search(w.get("label") or "") for w in fields):
             return []                       # 인증/개인정보 폼
-        texts = self.screen_texts(state, k=25)
+        texts = self.screen_texts(state, k=25, package=getattr(self.w, "package", "") or "")
         if any(_CHECKOUT_RE.search(t) for t in texts):
             return []                       # 결제·주문 화면 — 입력 금지
-        # 검색창 근거: 힌트에 검색/찾기/조회, 또는 화면 제목·본문에 검색이 있고 필드가 하나뿐
+        # 검색창 근거 (하나면 충분): (a) 힌트에 검색/찾기/조회 (b) 화면 제목·본문에 검색이 있고 필드가 하나뿐
+        # (c) resource_id 가 keyword/search/query (d) 필드가 하나뿐이고 힌트가 없는데 화면 상단(30%)의 넓은(60%+) 입력란이며
+        #     화면 어디에도 개인정보·메모 힌트가 없다 — WebView 검색창은 hint 를 a11y 로 안 내보내는 경우가 있다
         title_has_search = any(_SEARCH_HINT.search(t) for t in texts[:6])
+        form_on_screen = any(_FORM_HINT.search(t) or _NOTE_HINT.search(t) for t in texts)
+        views = state.get("views") or []
+        screen_w = max((parse_bounds(v.get("bounds")) or (0, 0, 0, 0))[2] for v in views) if views else 1440
+        screen_h = max((parse_bounds(v.get("bounds")) or (0, 0, 0, 0))[3] for v in views) if views else 3040
         out = []
         for w in fields:
             lab = w.get("label") or ""
             if _NOTE_HINT.search(lab):
                 continue
-            if _SEARCH_HINT.search(lab) or (title_has_search and len(fields) == 1):
+            rid = w.get("resource_id") or ""
+            b = w.get("bounds") or [0, 0, 0, 0]
+            top_wide = (not lab and len(fields) == 1 and not form_on_screen
+                        and b[1] < 0.3 * screen_h and (b[2] - b[0]) >= 0.6 * screen_w)
+            if _SEARCH_HINT.search(lab) or (title_has_search and len(fields) == 1) or _SEARCH_RID.search(rid) or top_wide:
                 out.append(w)
         return out
+
+    # ── 탐색 유도: 검색 화면으로 가는 액션을 먼저 누르게 ───────────────────
+    def seek_action(self, actions: list[dict], tried: set, blacklist) -> dict | None:
+        """미시도 액션 중 검색·돋보기로 보이는 것 (점수 높은 순). 프로브 예산이 남았을 때만."""
+        if self.stats["fields"] >= MAX_FIELDS_PER_WALK:
+            return None
+        hits = []
+        for a in actions:
+            desc = a.get("desc", "")
+            if desc in tried or desc in blacklist:
+                continue
+            v = a.get("view") or a
+            blob = f"{v.get('text') or ''} {v.get('content_desc') or ''} {v.get('resource_id') or ''}"
+            if _SEEK_RE.search(blob):
+                hits.append(a)
+        if not hits:
+            return None
+        hits.sort(key=lambda x: -float(x.get("score", 0) or 0))
+        return hits[0]
 
     def should_probe(self, state: dict, canonical_id: str) -> bool:
         if self.stats["fields"] >= MAX_FIELDS_PER_WALK:
@@ -118,10 +151,15 @@ class SearchProbe:
 
     # ── 검색어 ───────────────────────────────────────────────────────────
     @staticmethod
-    def screen_texts(state: dict, k: int = 15) -> list[str]:
-        """화면 상단부터 보이는 텍스트 (제목·힌트·안내문) — 검색 대상 종류를 LLM 이 알 수 있게."""
+    def screen_texts(state: dict, k: int = 15, package: str = "") -> list[str]:
+        """화면 상단부터 보이는 텍스트 (제목·힌트·안내문) — 검색 대상 종류를 LLM 이 알 수 있게.
+        상태바·런처(com.android.systemui 등) 텍스트는 뺀다 — 실측: 'Edge 패널', '배터리 18퍼센트' 가 프롬프트를 채웠다."""
         out = []
-        for v in state.get("views") or []:
+        views = sorted(state.get("views") or [], key=lambda v: (parse_bounds(v.get("bounds")) or (0, 0, 0, 0))[1::-1])
+        for v in views:
+            pkg = v.get("package") or ""
+            if pkg and (pkg.startswith("com.android.systemui") or (package and pkg != package)):
+                continue
             t = (v.get("text") or v.get("content_desc") or "").strip()
             if t and 1 < len(t) <= 40 and t not in out and "알림" not in t:
                 out.append(t)
@@ -133,7 +171,7 @@ class SearchProbe:
         hint = field.get("label") or field.get("text") or field.get("content_desc") or ""
         app = getattr(self.w, "app_label", "") or getattr(self.w, "package", "")
         seen = [t for t, _ in self.entities.most_common(40)]
-        texts = self.screen_texts(state)
+        texts = self.screen_texts(state, package=getattr(self.w, "package", "") or "")
         if self.client is not None:
             try:
                 user = (f"App: {app}\nSearch box hint: {hint or '(no hint)'!r}\n"

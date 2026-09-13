@@ -225,3 +225,59 @@ def test_find_fields_ignores_note_fields_and_checkout_screens():
         _v("TextView", "[560,60][880,120]", text="프로필"), _v("EditText", "[56,200][1384,300]", text="닉네임"),
     ]}
     assert p.find_fields(plain) == []
+
+
+def test_find_fields_accepts_hintless_search_box_by_rid_or_position():
+    """실측(358002fe): 매장 정보의 EditText#keyword 는 hint·desc 가 비어 있고 제목에도 '검색' 이 없다."""
+    w = FakeWalker([])
+    p = SearchProbe(w)
+    p.client = None
+    by_rid = {"structure_str": "s-rid", "activity": "co.app.Main", "views": [
+        _v("TextView", "[0,287][1440,444]", text="매장 정보", rid="headerTit"),
+        _v("EditText", "[70,511][1372,661]", rid="keyword"), _v("View", "[70,700][245,808]", desc="주차", clickable=True),
+    ]}
+    assert [f["resource_id"] for f in p.find_fields(by_rid)] == ["keyword"]
+    # rid 도 없지만 상단의 넓은 단일 입력란이고 개인정보 힌트가 없으면 검색창으로 본다
+    by_pos = {"structure_str": "s-pos", "activity": "co.app.Main", "views": [
+        _v("FrameLayout", "[0,0][1440,3040]"),   # 루트 — 화면 크기 기준
+        _v("TextView", "[0,287][1440,444]", text="매장 정보"), _v("EditText", "[70,511][1372,661]"),
+    ]}
+    assert len(p.find_fields(by_pos)) == 1
+    # 같은 모양이라도 화면에 '휴대폰 번호' 같은 폼 힌트가 있으면 제외
+    phone = {"structure_str": "s-phone", "activity": "co.app.Main", "views": [
+        _v("TextView", "[0,287][1440,444]", text="휴대폰 번호를 입력해 주세요"), _v("EditText", "[70,511][1372,661]"),
+    ]}
+    assert p.find_fields(phone) == []
+    # 화면 아래쪽의 좁은 입력란은 대상 아님
+    low = {"structure_str": "s-low", "activity": "co.app.Main", "views": [
+        _v("FrameLayout", "[0,0][1440,3040]"),
+        _v("TextView", "[0,287][1440,444]", text="프로필"), _v("EditText", "[70,2000][700,2100]"),
+    ]}
+    assert p.find_fields(low) == []
+
+
+def test_screen_texts_drop_system_ui_and_sort_top_down():
+    st = {"views": [
+        dict(_v("TextView", "[0,0][300,80]", text="배터리 18퍼센트"), package="com.android.systemui"),
+        _v("TextView", "[70,700][245,808]", text="주차"),
+        _v("TextView", "[0,287][1440,444]", text="매장 정보"),
+    ]}
+    assert SearchProbe.screen_texts(st, package=APP) == ["매장 정보", "주차"]
+
+
+def test_seek_action_prefers_untried_search_entry_while_budget_remains():
+    p = SearchProbe(FakeWalker([]))
+    p.client = None
+    actions = [
+        {"desc": "click 홈", "score": 9.0, "view": {"text": "홈", "content_desc": ""}},
+        {"desc": "click 검색", "score": 4.0, "view": {"text": "", "content_desc": "검색"}},
+        {"desc": "click 매장찾기", "score": 6.0, "view": {"text": "매장찾기", "content_desc": ""}},
+    ]
+    assert p.seek_action(actions, set(), set())["desc"] == "click 매장찾기"     # 점수 높은 검색 진입
+    assert p.seek_action(actions, {"click 매장찾기"}, set())["desc"] == "click 검색"
+    assert p.seek_action(actions, {"click 매장찾기", "click 검색"}, set()) is None
+    assert p.seek_action(actions, set(), {"click 매장찾기", "click 검색"}) is None   # 블랙리스트 존중
+    p.stats["fields"] = spm.MAX_FIELDS_PER_WALK
+    assert p.seek_action(actions, set(), set()) is None                            # 예산 소진
+    # '즐겨찾기' 는 검색이 아니다
+    assert p.seek_action([{"desc": "click 즐겨찾기", "score": 5, "view": {"text": "즐겨찾기", "content_desc": ""}}], set(), set()) is None or p.stats["fields"] >= spm.MAX_FIELDS_PER_WALK
