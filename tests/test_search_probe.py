@@ -142,3 +142,57 @@ def test_annotate_dynamic_nodes_marks_search_results_and_item_action():
     assert by["page_r"]["dynamic"]["item_action"] == {"to": "page_d", "by": "text", "sample_items": ["화성조암시장점"]}
     assert by["page_e"]["dynamic"]["kind"] == "search_empty"
     assert "dynamic" not in by["page_s"]
+
+
+def test_run_retries_with_feedback_when_results_are_empty(monkeypatch):
+    empty = {"structure_str": "s-empty", "activity": "co.app.Main", "views": [
+        _v("View", "[70,457][1370,614]", clickable=True), _v("TextView", "[224,511][861,570]", text="아메리카노"),
+        _v("TextView", "[100,600][900,700]", text="검색 결과가 없습니다."), _v("TextView", "[100,700][900,780]", text="매장명, 주소로 검색해보세요."),
+        _v("View", "[100,900][900,1000]", clickable=True), _v("TextView", "[120,920][800,980]", text="클립보드에 복사했어요"),
+    ]}
+    results = {"structure_str": "s-results", "activity": "co.app.Main", "views": [
+        _v("View", "[70,457][1370,614]", clickable=True), _v("TextView", "[224,511][861,570]", text="강남"),
+        _v("View", "[70,700][1370,900]", clickable=True), _v("TextView", "[126,720][558,790]", text="강남역점"),
+    ]}
+    detail = {"structure_str": "s-detail", "activity": "co.app.Main", "views": [_v("TextView", "[100,300][900,400]", text="매장 상세")]}
+    # 1차: 아메리카노 → 빈 결과(재시도 유발), 자몽에이드 → 빈 결과, zzqx → 빈 결과, 재시도: 강남 → 결과+상세
+    w = FakeWalker([empty, empty, empty, results, detail])
+    calls = []
+
+    class C:
+        def query_json(self, system, user, max_tokens=300):
+            calls.append(user)
+            if "Previous attempt" in user:
+                assert "매장명, 주소로" in user
+                return {"queries": [{"text": "강남", "expect": "results"}, {"text": "서울", "expect": "results"}]}
+            return {"queries": [{"text": "아메리카노", "expect": "results"}, {"text": "자몽에이드", "expect": "results"}, {"text": "zzqx", "expect": "empty"}]}
+    from stage3_walk import u2_helper
+    sent = []
+    monkeypatch.setattr(u2_helper, "send_text", lambda serial, text, clear=True: sent.append(text) or True)
+    monkeypatch.setattr(u2_helper, "press_key", lambda serial, code: None)
+    p = SearchProbe(w)
+    p.client = C()
+    p.run(SEARCH_STATE, "screen_001", 0)
+    assert sent[:4] == ["아메리카노", "자몽에이드", "zzqx", "강남"]      # 피드백 재시도 1회
+    assert p.stats["retries"] == 1 and p.stats["empty"] == 3 and p.stats["details"] == 1
+    empties = [t for t in w.transitions if t.get("outcome") == "empty"]
+    assert len(empties) == 3        # 검색어마다 전이 기록 (Stage 6 에서 from→to 로 접힘)
+    assert any(t.get("list_item") for t in w.transitions)
+    # 빈 결과 화면에서는 행 탭을 하지 않는다 — 결과 행 탭은 1번뿐 (나머지는 검색창 탭)
+    assert sum(1 for b in w.taps if b != "[70,457][1370,614]") == 1
+
+
+def test_first_result_row_skips_filter_chips_and_picks_card():
+    state = {"structure_str": "s-r", "activity": "co.app.Main", "views": [
+        _v("View", "[70,457][1370,614]", clickable=True), _v("TextView", "[224,511][861,570]", text="커피"),
+        _v("View", "[64,625][226,793]", clickable=True), _v("TextView", "[112,684][184,734]", text="주차"),        # 필터 칩
+        _v("View", "[226,625][393,793]", clickable=True), _v("TextView", "[282,684][337,734]", text="DP"),
+        _v("TextView", "[56,880][400,940]", text="검색결과 11건"),
+        _v("View", "[56,980][1384,1330]", clickable=True), _v("TextView", "[126,1000][558,1067]", text="병점역점"),  # 결과 카드
+        _v("TextView", "[126,1100][735,1160]", text="경기 화성시 떡전골로 96-4"),
+    ]}
+    w = FakeWalker([])
+    p = SearchProbe(w)
+    field = {"bounds": [70, 457, 1370, 614]}
+    row = p._first_result_row(state, field)
+    assert row is not None and row["label"] == "병점역점" and row["bounds"][1] == 980
