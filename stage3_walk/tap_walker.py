@@ -1340,7 +1340,8 @@ class TapWalker(ScanMixin, CaptureMixin, GuardsMixin, DeviceSessionMixin):
             # 못 들어가 프로브 0회였던 분산을 줄인다. 미시도 필터가 있어 반복 없음.
             sp_seek = getattr(self, "search_probe", None)
             if sp_seek is not None:
-                seek = sp_seek.seek_action(actions, self.tried_actions.get(canonical_id, set()), self.external_blacklist)
+                seek = sp_seek.seek_action(actions, self.tried_actions.get(canonical_id, set()), self.external_blacklist,
+                                           views=state.get("views") or [])
                 if seek is not None and seek is not best:
                     logger.info("[search] seek override on %s — desc=%r", canonical_id, (seek.get("desc") or "")[:40])
                     best = seek

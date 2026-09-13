@@ -132,10 +132,15 @@ class SearchProbe:
         return out
 
     # ── 탐색 유도: 검색 화면으로 가는 액션을 먼저 누르게 ───────────────────
-    def seek_action(self, actions: list[dict], tried: set, blacklist) -> dict | None:
-        """미시도 액션 중 검색·돋보기로 보이는 것 (점수 높은 순). 프로브 예산이 남았을 때만."""
+    def seek_action(self, actions: list[dict], tried: set, blacklist, views: list[dict] | None = None) -> dict | None:
+        """미시도 액션 중 검색·돋보기로 보이는 것 (점수 높은 순). 프로브 예산이 남았을 때만.
+        WebView 의 클릭 컨테이너는 글자가 자식 TextView 에 있으므로, 컨테이너 안(화면 40% 이하)의 텍스트도 본다."""
         if self.stats["fields"] >= MAX_FIELDS_PER_WALK:
             return None
+        labeled = [(parse_bounds(v.get("bounds")), (v.get("text") or v.get("content_desc") or "")) for v in (views or [])]
+        labeled = [(b, t) for b, t in labeled if b and t]
+        ys = [b for b, _ in labeled]
+        screen_area = ((max(b[2] for b in ys)) * (max(b[3] for b in ys))) if ys else 0
         hits = []
         for a in actions:
             desc = a.get("desc", "")
@@ -143,6 +148,9 @@ class SearchProbe:
                 continue
             v = a.get("view") or a
             blob = f"{v.get('text') or ''} {v.get('content_desc') or ''} {v.get('resource_id') or ''}"
+            ab = parse_bounds(v.get("bounds"))
+            if ab and screen_area and (ab[2] - ab[0]) * (ab[3] - ab[1]) <= 0.4 * screen_area:
+                blob += " " + " ".join(t for b, t in labeled if b[0] >= ab[0] and b[1] >= ab[1] and b[2] <= ab[2] and b[3] <= ab[3])
             if _SEEK_RE.search(blob):
                 hits.append(a)
         if not hits:
@@ -236,6 +244,9 @@ class SearchProbe:
         if not queries:
             logger.info("[search] no queries for field %r — skipped", field.get("label"))
             return 0
+        # 빈 결과 검색어를 먼저 — 행 탭이 없어 화면이 유지된다. 결과 검색어의 행 탭으로 시트가 닫히는 흐름(퀵오더 매장 선택)에서도
+        # 최소 2개는 실행된다 (3차 실측: 검색창당 1개에서 끝남)
+        queries.sort(key=lambda q: 0 if q["expect"] == "empty" else 1)
         logger.info("[search] field %r on %s → queries %s", (field.get("label") or "")[:30], canonical_id,
                     [q["text"] for q in queries])
         used = 0

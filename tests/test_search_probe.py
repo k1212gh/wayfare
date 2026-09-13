@@ -109,8 +109,8 @@ def test_run_records_type_submit_and_list_item_transitions(monkeypatch):
     ]}
     detail = {"structure_str": "s-detail", "activity": "co.app.Main", "views": [_v("TextView", "[100,300][900,400]", text="매장 상세")]}
     empty = {"structure_str": "s-empty", "activity": "co.app.Main", "views": [_v("TextView", "[100,600][900,700]", text="검색 결과가 없습니다")]}
-    # 검색어 2개(결과·상세) + 빈 결과 1개 → 캡처 순서: results, detail, results, detail, empty
-    w = FakeWalker([results, detail, results, detail, empty])
+    # 빈 결과 1개 → 검색어 2개(결과·상세) → 캡처 순서: empty, results, detail, results, detail
+    w = FakeWalker([empty, results, detail, results, detail])
     sent = []
     monkeypatch.setattr(spm, "extract_widget_table", spm.extract_widget_table)
     from stage3_walk import u2_helper
@@ -119,13 +119,13 @@ def test_run_records_type_submit_and_list_item_transitions(monkeypatch):
     p = SearchProbe(w)
     p.client = FakeClient()
     p._live_views = lambda: SEARCH_STATE["views"]      # 검색 화면에 머문다고 가정
-    used = p.run(SEARCH_STATE, "screen_001", 10)
-    assert used > 0 and sent == ["화성조암시장점", "강남", "zzqx"]
+    used = p.run(SEARCH_STATE, "search_screen", 10)    # (가짜 해셔가 screen_000.. 을 새로 매기므로 겹치지 않는 id)
+    assert used > 0 and sent == ["zzqx", "화성조암시장점", "강남"]     # 빈 결과 검색어가 먼저
     kinds = [(t["from_screen"], t.get("event_type"), t.get("input_value"), t.get("list_item")) for t in w.transitions]
-    assert kinds[0][1] == "type_submit" and kinds[0][2] == "화성조암시장점"
+    assert kinds[0][1] == "type_submit" and kinds[0][2] == "zzqx" and kinds[1][2] == "화성조암시장점"
     assert any(k[1] == "click" and k[3] is True for k in kinds)
     assert p.stats["queries"] == 3 and p.stats["details"] >= 1
-    assert not p.should_probe(SEARCH_STATE, "screen_001")   # 같은 화면 재프로브 안 함
+    assert not p.should_probe(SEARCH_STATE, "search_screen")   # 같은 화면 재프로브 안 함
 
 
 def test_annotate_dynamic_nodes_marks_search_results_and_item_action():
@@ -175,7 +175,7 @@ def test_run_retries_with_feedback_when_results_are_empty(monkeypatch):
     p._live_views = lambda: SEARCH_STATE["views"]
     p.client = C()
     p.run(SEARCH_STATE, "screen_001", 0)
-    assert sent[:4] == ["아메리카노", "자몽에이드", "zzqx", "강남"]      # 피드백 재시도 1회
+    assert sent[:4] == ["zzqx", "아메리카노", "자몽에이드", "강남"]      # 빈 결과 먼저, 피드백 재시도 1회
     assert p.stats["retries"] == 1 and p.stats["empty"] == 3 and p.stats["details"] == 1
     empties = [t for t in w.transitions if t.get("outcome") == "empty"]
     assert len(empties) == 3        # 검색어마다 전이 기록 (Stage 6 에서 from→to 로 접힘)
@@ -292,16 +292,23 @@ def test_run_stops_when_search_screen_is_lost(monkeypatch):
         _v("View", "[70,700][1370,900]", clickable=True), _v("TextView", "[126,720][558,790]", text="화성조암시장점 매장"),
     ]}
     sheet = {"structure_str": "s-sheet", "activity": "co.app.Main", "views": [_v("TextView", "[100,300][900,400]", text="퀵오더")]}
-    w = FakeWalker([results, sheet, sheet, sheet])
+    w = FakeWalker([results, results, sheet, sheet])     # zzqx → 결과 화면(행 탭 없음), 화성조암시장점 → 결과 → 행 탭 → 시트
     sent = []
     from stage3_walk import u2_helper
     monkeypatch.setattr(u2_helper, "send_text", lambda serial, text, clear=True: sent.append(text) or True)
     monkeypatch.setattr(u2_helper, "press_key", lambda serial, code: None)
     p = SearchProbe(w)
     p.client = FakeClient()
-    p._live_views = lambda: sheet["views"]              # 상세 뒤로 돌아오지 못한 상황
+    live = {"ok": True}
+    p._live_views = lambda: SEARCH_STATE["views"] if live["ok"] else sheet["views"]
+    orig = p._capture_and_record
+    def cap(from_id, idx, extra):                        # 행 탭(list_item) 뒤부터는 검색 화면이 사라진다
+        if extra.get("list_item"):
+            live["ok"] = False
+        return orig(from_id, idx, extra)
+    p._capture_and_record = cap
     p.run(SEARCH_STATE, "screen_001", 10)
-    assert sent == ["화성조암시장점"] and p.stats.get("lost") == 1
+    assert sent == ["zzqx", "화성조암시장점"] and p.stats.get("lost") == 1   # 빈 결과 → 결과+행 탭 → 이탈 → 중단
     assert w.backs >= 3                                  # 복귀 시도는 했다
 
 
@@ -359,3 +366,13 @@ def test_same_field_is_probed_once_even_if_screen_hash_differs(monkeypatch):
     p.run(a, "screen_001", 0)
     assert not p.should_probe(b, "screen_002")          # 다른 해시, 같은 검색창 → 건너뜀
     assert p.stats["fields"] == 1
+
+
+def test_seek_action_reads_child_texts_of_webview_containers():
+    p = SearchProbe(FakeWalker([]))
+    p.client = None
+    views = [_v("FrameLayout", "[0,0][1440,3040]"), _v("View", "[70,457][1370,614]", clickable=True),
+             _v("TextView", "[224,511][861,570]", text="매장 찾기"), _v("TextView", "[0,2900][1440,3000]", text="검색")]
+    actions = [{"desc": "click View@[70,457][1370,614]", "score": 1.0, "view": views[1]},
+               {"desc": "click FrameLayout@[0,0][1440,3040]", "score": 9.0, "view": views[0]}]   # 화면 전체 컨테이너는 자식 텍스트를 보지 않는다
+    assert p.seek_action(actions, set(), set(), views=views)["desc"] == "click View@[70,457][1370,614]"
